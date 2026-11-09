@@ -93,8 +93,21 @@ model CandidateImport {
   rollbackLeaseToken     String?   @map("rollback_lease_token") @db.Uuid
   rollbackLeaseExpiresAt DateTime? @map("rollback_lease_expires_at") @db.Timestamptz(3)
   rollbackResult         Json?     @map("rollback_result")
+  // Automatic recovery of an interrupted import (importRecoveryService.js, migration 20261113120000): the commit
+  // lease every chunk transaction renews (database time), the browser's heartbeat, and the recovery's own state.
+  commitLeaseExpiresAt   DateTime? @map("commit_lease_expires_at") @db.Timestamptz(3)
+  heartbeatAt            DateTime? @map("heartbeat_at") @db.Timestamptz(3)
+  recoveryStatus         String?   @map("recovery_status")
+  recoveryReason         String?   @map("recovery_reason")
+  recoveryAttempts       Int       @default(0) @map("recovery_attempts")
+  recoveryStartedAt      DateTime? @map("recovery_started_at") @db.Timestamptz(3)
+  recoveryCompletedAt    DateTime? @map("recovery_completed_at") @db.Timestamptz(3)
+  recoveryNextAttemptAt  DateTime? @map("recovery_next_attempt_at") @db.Timestamptz(3)
+  recoveryNotifiedAt      DateTime? @map("recovery_notified_at") @db.Timestamptz(3)
+  recoveryLastError      String?   @map("recovery_last_error")
+  recoveryResult         Json?     @map("recovery_result")
 
-  admin     User                         @relation(fields: [adminId], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  admin     User                        @relation(fields: [adminId], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
   changes   CandidateImportChange[]
   approvals SheetSyncDeletionApproval[]
 

@@ -7,6 +7,7 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import { trustProxyHops } from "./config/env.js";
 import { createAdminFrontendRouter, DEFAULT_ADMIN_DIST_DIR } from "./adminFrontend.js";
 import { createPublicCandidateDetailsRouter, PUBLIC_CANDIDATE_DETAILS_PATH } from "./routes/publicCandidateDetails.js";
+import { createTaskRouter } from "./routes/tasks.js";
 
 // Candidate documents are uploaded from the admin's browser straight to
 // Supabase Storage, to a signed URL the API issues, so the admin page may
@@ -25,7 +26,7 @@ export const FORM_BRANDING_API_PATH = "/api/admin/settings/form-branding";
 // Options exist for tests: another admin build folder, fake-DB routers, and
 // the /admin rate limiter (its default counts in PostgreSQL), and the public
 // Candidate Extra Details router.
-export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes, adminApiRouter = createAdminRouter(), adminFrontendLimiter, publicCandidateRouter = createPublicCandidateDetailsRouter() } = {}) {
+export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes, adminApiRouter = createAdminRouter(), adminFrontendLimiter, publicCandidateRouter = createPublicCandidateDetailsRouter(), taskRouter = createTaskRouter() } = {}) {
     const app = express();
 
     // Don't advertise the framework (SEC-015).
@@ -76,6 +77,10 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
 
     app.use("/auth", authRouter);
     app.use("/whatsapp", whatsappRoutes);
+
+    // Scheduled tasks (Cloud Scheduler, OIDC): the automatic recovery of interrupted imports (routes/tasks.js).
+    // Disabled (404) unless its scheduler audience and invoker are configured.
+    app.use("/api/tasks", taskRouter);
 
     // Admin dashboard API (a Supabase session of an ACTIVE application user required).
     app.use("/api/admin", adminApiRouter);

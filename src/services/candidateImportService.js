@@ -60,8 +60,22 @@ const FINISHED = new Set([
     IMPORT_STATUS.ROLLING_BACK, IMPORT_STATUS.ROLLED_BACK, IMPORT_STATUS.ROLLED_BACK_WITH_CONFLICTS,
 ]);
 // A COMMITTING import with no chunk for this long has stopped (closed tab, lost network): its owner may
-// resume it, and an ADMIN may abort it. Nothing is aborted automatically.
+// resume it, and an ADMIN may abort it. Nothing is aborted automatically; an import that committed under the
+// commit lease below is rolled back automatically long before this (importRecoveryService.js).
 export const IMPORT_STALE_MS = 15 * 60_000;
+// The COMMIT LEASE (migration 20261113120000): every chunk transaction, and every row transaction of a chunk that
+// falls back to row by row, sets candidate_import.commit_lease_expires_at to database now() + this, in the statement
+// that locks the import row. Only real backend work renews it (the browser's heartbeat does not). Longer than the
+// longest chunk transaction (30 s) plus the pause between two chunk requests. An import whose lease has run out (and
+// whose browser has stopped answering) is rolled back automatically by importRecoveryService.js.
+export const IMPORT_COMMIT_LEASE_MS = 2 * 60_000;
+
+// An import the automatic recovery has taken over (it stopped before it finished): nothing more is accepted for it.
+const recoveryStartedError = () => new CandidateImportError(
+    409, "IMPORT_RECOVERY_STARTED",
+    "This import stopped before it finished, so it is being undone automatically. Nothing from it is kept. Upload the sheet again to import it.",
+);
+const isRecovered = (record) => Boolean(record?.recoveryStatus);
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
 export const isValidIdempotencyKey = (value) => typeof value === "string" && IDEMPOTENCY_KEY.test(value);
 
@@ -96,6 +110,8 @@ const activeDetails = (record, actor, now) => ({
     importId: record.importId, status: record.status, fileName: record.fileName, totalRows: record.totalRows, chunkSize: record.chunkSize,
     chunkCount: Array.isArray(record.chunkHashes) ? record.chunkHashes.length : 0, committedChunks: committedChunkIndexes(record),
     ownedByYou: record.adminId === actor?.adminId, stale: isStaleImport(record, now), updatedAt: new Date(record.updatedAt).toISOString(),
+    // Taken over by the automatic recovery (importRecoveryService.js): being undone in the background.
+    recovery: record.recoveryStatus ?? null,
 });
 
 // A request for a file that already has an import: still committing (resume it) or already finished.
@@ -227,22 +243,35 @@ const isProblem = (plan) => plan.status !== ROW_STATUS.VALID || plan.action === 
 const rowIssuesOf = (plans) => plans.filter((plan) => plan.issues.length).map((plan) => ({ rowNumber: plan.rowNumber, ...describeIssues(plan.issues) }));
 
 // A Job Role in the sheet that is not a job type (and has no alias) becomes a new job type, so no
-// role is lost. Preview (create = false) only counts them as if they existed; the commit creates them.
-// Returns the active job type names to validate with.
-async function jobTypesWithSheetRoles(db, canonical, { create, beforeCreate = null }) {
-    const activeJobTypes = await activeJobTypeNames(db);
+// role is lost. The job types the rows would need that do not exist yet: { name, code }.
+function newJobTypesFor(canonical, activeJobTypes) {
     const fresh = new Set();
     for (const row of canonical) {
         for (const name of unknownJobRoles(sourceCells(row.values).jobRole, { activeJobTypes, aliases: JOB_ROLE_ALIASES })) fresh.add(name);
     }
-    if (!fresh.size) return activeJobTypes;
-    const added = [...fresh].map((name) => ({ name, code: name.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") })).filter((type) => type.code);
-    if (!create) return [...activeJobTypes, ...added.map((type) => type.name)];
-    await beforeCreate?.();
-    // One statement; only the rows actually created come back (a code that already exists, e.g. an
-    // inactive type, is skipped and its role stays unmatched, as an inactive type should).
-    const created = await db.jobType.createManyAndReturn({ data: added.map((type) => ({ ...type, isActive: true })), skipDuplicates: true, select: { name: true } });
-    return [...activeJobTypes, ...created.map((row) => row.name)];
+    return [...fresh].map((name) => ({ name, code: name.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") })).filter((type) => type.code);
+}
+
+// Preview: the new job types are only counted as if they existed (nothing is created). Returns the active
+// job type names to validate with.
+async function jobTypesWithSheetRoles(db, canonical) {
+    const activeJobTypes = await activeJobTypeNames(db);
+    return [...activeJobTypes, ...newJobTypesFor(canonical, activeJobTypes).map((type) => type.name)];
+}
+
+// Commit: the new job types are created INSIDE the chunk's (or the row's) transaction, so they are committed,
+// rolled back and recorded in the change ledger together with the rows that need them (a chunk that fails, or an
+// import that is refused, leaves no job type behind; a rollback can remove exactly the ones this import made).
+// One statement; only the rows actually created come back (a code that already exists, e.g. an inactive type or one
+// another import created at the same moment, is skipped: the list is read again, and an inactive type's role stays
+// unmatched, as it should). Returns { activeJobTypes, created: [{ id, name, code, isActive }] }.
+async function ensureSheetJobTypes(tx, canonical) {
+    const activeJobTypes = await activeJobTypeNames(tx);
+    const added = newJobTypesFor(canonical, activeJobTypes);
+    if (!added.length) return { activeJobTypes, created: [] };
+    const created = await tx.jobType.createManyAndReturn({ data: added.map((type) => ({ ...type, isActive: true })), skipDuplicates: true, select: { id: true, name: true, code: true, isActive: true } });
+    const names = created.length === added.length ? [...activeJobTypes, ...created.map((row) => row.name)] : await activeJobTypeNames(tx);
+    return { activeJobTypes: names, created };
 }
 
 // The allow-list for the browser.
@@ -278,7 +307,7 @@ export async function previewImport({ db, actor, fileName, headers, rows, idempo
         const running = await db.candidateImport.findFirst({ where: { adminId: actor.adminId, status: IMPORT_STATUS.COMMITTING } });
         if (running && sameFile(running)) throw importActiveError(running, now);
     }
-    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: false });
+    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical);
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
     const sourceFlags = findSourceFlags(validated);
     const snapshot = await loadImportSnapshot(db, validated, { activeJobTypes });
@@ -362,9 +391,13 @@ const auditEntry = (actor, data) => ({ auditId: crypto.randomUUID(), adminId: ac
 
 // The plans' writes, inside the caller's transaction. Returns the plans' outcomes. Every change is also
 // recorded in the import's change ledger (candidateImportLedger.js), in this same transaction.
-async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [], chunkIndex = 0, ledgerKeyring = null }) {
+async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [], chunkIndex = 0, ledgerKeyring = null, createdJobTypes = [] }) {
     const audits = [];
     const ledger = createLedger({ importId, chunkIndex, keyring: ledgerKeyring });
+    // The job types this transaction created for the rows' Job Roles (ensureSheetJobTypes): CREATED by this import.
+    for (const type of createdJobTypes) {
+        ledger.add({ entityType: LEDGER_ENTITY.JOB_TYPE, entityKey: type.id, op: LEDGER_OP.CREATE, changes: changesOf({ name: type.name, code: type.code, isActive: type.isActive }, null, { hash: false }) });
+    }
     // Every candidate these rows touch, by its internal unique_id (the ledger names no passport number).
     for (const plan of plans) if (plan.prior?.uniqueId) ledger.registerCandidate(plan.prior.passportId, plan.prior.uniqueId);
     const creates = plans.filter((p) => p.action === ROW_ACTION.CREATE);
@@ -698,6 +731,7 @@ async function requireImport(db, { importId, actor, now }) {
     if (!record) throw new CandidateImportError(404, "IMPORT_NOT_FOUND", "Import not found.");
     // Only the person who previewed the file commits it.
     if (record.adminId !== actor.adminId) throw new CandidateImportError(403, "NOT_YOUR_IMPORT", "This import was started by another user.");
+    if (isRecovered(record)) throw recoveryStartedError();
     if (FINISHED.has(record.status)) throw new CandidateImportError(409, "IMPORT_FINISHED", "This import is already finished.");
     if (record.status === IMPORT_STATUS.PREVIEWED && now.getTime() - new Date(record.createdAt).getTime() > IMPORT_PREVIEW_TTL_MS) {
         throw new CandidateImportError(410, "PREVIEW_EXPIRED", "This preview has expired. Upload the sheet again.");
@@ -726,19 +760,25 @@ const failureCode = (error) => {
 // interleave (the second waits, then finds the first one's result).
 // otherCommitting (same query, no extra round trip): the id of ANOTHER import of the SAME administrator that is
 // COMMITTING, if any (imports of other administrators never matter here).
+// The same statement renews the COMMIT LEASE in database time (an UPDATE locks the row exactly as FOR UPDATE does):
+// a transaction that then refuses (finished, recovered) rolls the renewal back with everything else. While this
+// transaction holds the lock, the recovery's FOR UPDATE SKIP LOCKED scan passes the import by: an import whose chunk
+// is being processed is never taken for an abandoned one, however slow.
 async function lockImport(tx, importId) {
     const [locked] = await tx.$queryRaw`
-        SELECT c."status", c."chunk_results" AS "chunkResults",
-               (SELECT o."import_id"::text FROM "candidate_import" o WHERE o."status" = 'COMMITTING' AND o."admin_id" = c."admin_id" AND o."import_id" <> c."import_id" LIMIT 1) AS "otherCommitting"
-        FROM "candidate_import" c WHERE c."import_id" = ${importId}::uuid FOR UPDATE OF c`;
+        UPDATE "candidate_import" c SET "commit_lease_expires_at" = now() + make_interval(secs => ${IMPORT_COMMIT_LEASE_MS / 1000}::double precision)
+        WHERE c."import_id" = ${importId}::uuid
+        RETURNING c."status", c."chunk_results" AS "chunkResults", c."recovery_status" AS "recoveryStatus",
+               (SELECT o."import_id"::text FROM "candidate_import" o WHERE o."status" = 'COMMITTING' AND o."admin_id" = c."admin_id" AND o."import_id" <> c."import_id" LIMIT 1) AS "otherCommitting"`;
     const chunkResults = typeof locked.chunkResults === "string" ? JSON.parse(locked.chunkResults) : locked.chunkResults ?? {};
-    return { status: locked.status, chunkResults, otherCommitting: locked.otherCommitting ?? null };
+    return { status: locked.status, chunkResults, recoveryStatus: locked.recoveryStatus ?? null, otherCommitting: locked.otherCommitting ?? null };
 }
 
 // Under the import row's lock: the import must still accept chunks (it may have been finished or
-// aborted since the request was checked), and an import that has not started may start only when no
-// other import is committing.
+// aborted since the request was checked, or taken over by the automatic recovery), and an import that has not
+// started may start only when no other import is committing.
 async function guardCommit(tx, locked, { importId, actor, now }) {
+    if (isRecovered(locked)) throw recoveryStartedError();
     if (FINISHED.has(locked.status)) throw new CandidateImportError(409, "IMPORT_FINISHED", "This import is already finished.");
     if (locked.status === IMPORT_STATUS.PREVIEWED && locked.otherCommitting) await assertNoOtherCommitting(tx, { importId, actor, now });
 }
@@ -776,23 +816,23 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     if (previous?.status === "COMMITTED") return present(chunkIndex, previous, canonical, { alreadyCommitted: true });
     // No valid ledger key: nothing is written, not even a job type (see loadLedgerKeyring).
     const keyring = loadLedgerKeyring(ledgerKeyring);
-    // The one write made outside the chunk's transaction (new job types for unknown roles) is not made
-    // for an import that this administrator's other committing import blocks; the lock below decides authoritatively.
-    const beforeCreate = record.status === IMPORT_STATUS.PREVIEWED ? () => assertNoOtherCommitting(db, { importId, actor, now }) : null;
-    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: true, beforeCreate });
-    const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
     const context = { importId, actor, now, chunkIndex, ledgerKeyring: keyring, jobGroups: Array.isArray(record.jobGroups) ? record.jobGroups : [] };
 
-    // The whole chunk in one transaction; a unique-ID race is retried with fresh numbers.
+    // The whole chunk in one transaction; a unique-ID race is retried with fresh numbers. The new job types for
+    // the rows' unknown Job Roles are created inside it, after the import is locked and allowed to go on: an import
+    // that is refused (finished, recovered, blocked by another of this administrator's imports) creates none.
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             const result = await db.$transaction(async (tx) => {
                 const locked = await lockImport(tx, importId);
+                if (isRecovered(locked)) throw recoveryStartedError();
                 if (locked.chunkResults[chunkIndex]?.status === "COMMITTED") return { ...locked.chunkResults[chunkIndex], alreadyCommitted: true };
                 await guardCommit(tx, locked, { importId, actor, now });
                 await setAuditActor(tx, actor);
+                const { activeJobTypes, created } = await ensureSheetJobTypes(tx, canonical);
+                const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
                 const snapshot = await loadImportSnapshot(tx, validated, { activeJobTypes });
-                const outcomes = await executePlans(tx, planRows(validated, snapshot, record.sourceFlags), context);
+                const outcomes = await executePlans(tx, planRows(validated, snapshot, record.sourceFlags), { ...context, createdJobTypes: created });
                 return recordChunk(tx, locked, { importId, chunkIndex, actor, rows: outcomes, now });
             }, CHUNK_TRANSACTION);
             return present(chunkIndex, result, canonical, result.alreadyCommitted ? { alreadyCommitted: true } : {});
@@ -809,14 +849,22 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     const outcomes = [];
     // Still allowed? (finished or aborted, or another import started, while the chunk was failing)
     await db.$transaction(async (tx) => guardCommit(tx, await lockImport(tx, importId), { importId, actor, now }), CHUNK_TRANSACTION);
-    for (const row of validated) {
+    // Each row's transaction locks the import row and checks again (so the automatic recovery can never take the import
+    // over while one of its rows is being written, and no row is written once it has), renews the commit lease, and
+    // creates the job types that row needs, recorded in that row's ledger entries.
+    for (const row of canonical) {
         try {
             outcomes.push(...await db.$transaction(async (tx) => {
+                await guardCommit(tx, await lockImport(tx, importId), { importId, actor, now });
                 await setAuditActor(tx, actor);
-                const snapshot = await loadImportSnapshot(tx, [row], { activeJobTypes });
-                return executePlans(tx, planRows([row], snapshot, record.sourceFlags), context);
+                const { activeJobTypes, created } = await ensureSheetJobTypes(tx, [row]);
+                const validated = [validateLegacyRow(row, { activeJobTypes, today: now })];
+                const snapshot = await loadImportSnapshot(tx, validated, { activeJobTypes });
+                return executePlans(tx, planRows(validated, snapshot, record.sourceFlags), { ...context, createdJobTypes: created });
             }, CHUNK_TRANSACTION));
         } catch (error) {
+            // A refusal (finished, aborted, recovered meanwhile) stops the chunk: nothing more is written.
+            if (error instanceof CandidateImportError) throw error;
             outcomes.push({ r: row.rowNumber, o: ROW_OUTCOME.FAILED, c: [failureCode(error)], w: false });
         }
     }
@@ -844,6 +892,16 @@ function present(chunkIndex, result, canonical, extra = {}) {
 
 const addCounts = (a, b) => Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map((k) => [k, (a[k] ?? 0) + (b[k] ?? 0)]));
 
+// The totals of an import from its chunk results (what finish, abort and the automatic recovery record).
+export function importCountsOf(record) {
+    const chunkCount = Array.isArray(record.chunkHashes) ? record.chunkHashes.length : 0;
+    const results = record.chunkResults ?? {};
+    const counts = Object.values(results).reduce((sum, result) => addCounts(sum, result.counts ?? {}), {});
+    counts.uncommittedChunks = chunkCount - Object.keys(results).length;
+    counts.uncommittedRows = record.totalRows - (counts.rows ?? 0);
+    return counts;
+}
+
 // Totals, final status, lifecycle audit, and (when anything was written) the existing RECONCILE run.
 // Idempotent and safe against a second request at the same moment: the import row is locked, so only
 // the call that moves it out of PREVIEWED / COMMITTING writes the audit entry and asks for the sync;
@@ -863,13 +921,12 @@ async function closeImport({ db, actor, importId, abort, now = new Date() }) {
         if (existing.adminId !== actor.adminId && !(abort && isStaleImport(existing, now))) {
             throw new CandidateImportError(403, "NOT_YOUR_IMPORT", abort ? "This import belongs to another user and has not stopped yet." : "This import was started by another user.");
         }
+        // Taken over by the automatic recovery: it is being undone, so it can neither be completed nor aborted (an
+        // import is completed only by a finish that reaches the backend before the recovery does).
+        if (isRecovered(existing)) throw recoveryStartedError();
         if (FINISHED.has(existing.status)) return { record: existing, transitioned: false };
 
-        const chunkCount = Array.isArray(existing.chunkHashes) ? existing.chunkHashes.length : 0;
-        const results = existing.chunkResults ?? {};
-        const counts = Object.values(results).reduce((sum, result) => addCounts(sum, result.counts ?? {}), {});
-        counts.uncommittedChunks = chunkCount - Object.keys(results).length;
-        counts.uncommittedRows = existing.totalRows - (counts.rows ?? 0);
+        const counts = importCountsOf(existing);
         const written = (counts.created ?? 0) + (counts.filled ?? 0);
         const errors = (counts.failed ?? 0) + counts.uncommittedRows;
         const status = abort ? IMPORT_STATUS.ABORTED
@@ -915,6 +972,7 @@ export async function getImport({ db, actor, importId, now = new Date() }) {
         chunks: Object.fromEntries(Object.entries(results).map(([index, result]) => [index, { status: result.status, counts: result.counts }])),
         committedChunks: committedChunkIndexes(record), stale: isStaleImport(record, now),
         resultCounts: record.resultCounts ?? null, syncRunId: record.syncRunId ?? null, createdAt: record.createdAt, completedAt: record.completedAt,
+        recovery: record.recoveryStatus ? { status: record.recoveryStatus, reason: record.recoveryReason, startedAt: record.recoveryStartedAt, completedAt: record.recoveryCompletedAt } : null,
     };
 }
 
@@ -925,4 +983,28 @@ export async function getActiveImport({ db, actor, now = new Date() }) {
     // Also a rollback of one of your imports that was interrupted (status ROLLING_BACK): to continue it.
     const active = await db.candidateImport.findFirst({ where: { status: { in: [IMPORT_STATUS.COMMITTING, IMPORT_STATUS.ROLLING_BACK] }, adminId: actor.adminId }, orderBy: { updatedAt: "desc" } });
     return { active: active ? activeDetails(active, actor, now) : null };
+}
+
+// ---------------------------------------------------------------- heartbeat
+
+// POST /:importId/heartbeat, about every 20 s while the Upload dialog is committing: "the browser is still here".
+// Records heartbeat_at in database time and NOTHING else: it never renews the commit lease (only a chunk does), so a
+// browser that stays open while nothing reaches the backend delays the automatic recovery only for a bounded time
+// (importRecoveryService.js). It never waits for a chunk: an import row locked by a chunk transaction is skipped (that
+// chunk renews the lease anyway). Answers { status, recorded }; 409 IMPORT_RECOVERY_STARTED once the recovery has
+// taken the import over (the dialog then stops), 409 IMPORT_FINISHED for a finished one.
+export async function recordImportHeartbeat({ db, actor, importId }) {
+    const updated = await db.$queryRaw`
+        UPDATE "candidate_import" SET "heartbeat_at" = now()
+        WHERE "import_id" = (SELECT "import_id" FROM "candidate_import"
+                             WHERE "import_id" = ${importId}::uuid AND "admin_id" = ${actor.adminId} AND "status" = 'COMMITTING' AND "recovery_status" IS NULL
+                             FOR UPDATE SKIP LOCKED)
+        RETURNING "status"`;
+    if (updated.length) return { status: updated[0].status, recorded: true };
+    const record = await db.candidateImport.findUnique({ where: { importId }, select: { adminId: true, status: true, recoveryStatus: true } });
+    if (!record || record.adminId !== actor.adminId) throw new CandidateImportError(404, "IMPORT_NOT_FOUND", "Import not found.");
+    if (isRecovered(record)) throw recoveryStartedError();
+    if (FINISHED.has(record.status)) throw new CandidateImportError(409, "IMPORT_FINISHED", "This import is already finished.");
+    // PREVIEWED (the first chunk has not committed yet), or COMMITTING with a chunk being written right now.
+    return { status: record.status, recorded: false };
 }
