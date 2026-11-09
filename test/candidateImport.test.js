@@ -2,6 +2,7 @@
 // PostgreSQL (PGlite, every migration incl. the sheet-sync and verification triggers): preview,
 // classification, chunked commit, merge, audit, the existing reconciliation, and the API's roles.
 // SYNTHETIC candidates only. Google is an in-memory Sheet (test/helpers/fakeGoogleSheet.js).
+import "./helpers/importLedgerKey.js";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
@@ -323,6 +324,9 @@ describe("chunked commit", () => {
         assert.equal(first.counts.created, 3);
         assert.equal(second.alreadyCommitted, true);
         assert.equal(await prisma.candidate.count(), 3);
+        // The first import must be finished before the same file can be imported again (while it is
+        // still committing, the second preview is refused: IMPORT_ALREADY_ACTIVE, see candidateImportConcurrency).
+        await finishImport({ db: prisma, actor: ADMIN, importId: p.importId });
         const again = await importRows(rows);
         assert.equal(again.chunks[0].counts.created, 0);
         assert.equal(again.chunks[0].counts.noChange, 3);

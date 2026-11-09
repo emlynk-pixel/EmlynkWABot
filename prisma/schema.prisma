@@ -78,14 +78,79 @@ model CandidateImport {
   jobGroups     Json      @default("[]") @map("job_groups")
   resultCounts  Json?     @map("result_counts")
   syncRunId     String?   @map("sync_run_id")
+  // Client key per file choice (header Idempotency-Key). Unique per admin (partial unique index in
+  // migration 20261112120000, which also allows each admin only one COMMITTING import at a time).
+  idempotencyKey String?  @map("idempotency_key")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @default(now()) @map("updated_at")
   completedAt   DateTime? @map("completed_at")
+  // Rollback (candidateImportRollback.js, migration 20261112140000): who, from which status, when, the
+  // lease that lets exactly one call work at a time, and the report (counts and codes only).
+  rollbackAdminId        String?   @map("rollback_admin_id")
+  rollbackPreviousStatus String?   @map("rollback_previous_status")
+  rollbackStartedAt      DateTime? @map("rollback_started_at") @db.Timestamptz(3)
+  rollbackCompletedAt    DateTime? @map("rollback_completed_at") @db.Timestamptz(3)
+  rollbackLeaseToken     String?   @map("rollback_lease_token") @db.Uuid
+  rollbackLeaseExpiresAt DateTime? @map("rollback_lease_expires_at") @db.Timestamptz(3)
+  rollbackResult         Json?     @map("rollback_result")
 
-  admin User @relation(fields: [adminId], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  admin     User                         @relation(fields: [adminId], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+  changes   CandidateImportChange[]
+  approvals SheetSyncDeletionApproval[]
 
   @@index([adminId, createdAt])
   @@map("candidate_import")
+}
+
+// The per-import change ledger (candidateImportLedger.js, migration 20261112130000_import_change_ledger):
+// one row per change an import made to one entity, written in the same transaction as the change, so a
+// rollback can reverse exactly what the import did and only where the record is unchanged. Internal ids
+// only; candidate / Client / Agent values are stored as keyed HMACs (see the migration header).
+model CandidateImportChange {
+  changeId           String    @id @default(dbgenerated("gen_random_uuid()")) @map("change_id") @db.Uuid
+  importId           String    @map("import_id") @db.Uuid
+  chunkIndex         Int       @map("chunk_index")
+  rowNumber          Int?      @map("row_number")
+  entityType         String    @map("entity_type")
+  entityKey          String    @map("entity_key")
+  candidateUniqueId  String?   @map("candidate_unique_id")
+  op                 String
+  preExisting        Boolean   @map("pre_existing")
+  changes            Json      @default("{}")
+  relatedJobId       String?   @map("related_job_id") @db.Uuid
+  jobCreatedByImport Boolean?  @map("job_created_by_import")
+  auditIds           String[]  @default([]) @map("audit_ids")
+  rollbackAction     String    @map("rollback_action")
+  status             String    @default("APPLIED")
+  revertDetail       Json?     @map("revert_detail")
+  revertedAt         DateTime? @map("reverted_at") @db.Timestamptz(3)
+  changesDigest      String    @map("changes_digest")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  import CandidateImport @relation(fields: [importId], references: [importId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([importId, entityType, entityKey, op, changesDigest], map: "candidate_import_change_unique_entry")
+  @@index([importId, status], map: "candidate_import_change_import_status_idx")
+  @@index([importId, chunkIndex], map: "candidate_import_change_import_chunk_idx")
+  @@index([entityType, entityKey], map: "candidate_import_change_entity_idx")
+  @@index([candidateUniqueId], map: "candidate_import_change_candidate_idx")
+  @@map("candidate_import_change")
+}
+
+// Candidates a rollback deleted (candidateImportRollback.js, migration 20261112140000): the sheet worker may mark
+// the Sheet row of exactly these unique_ids inactive beyond the deletion guard, once, then marks the approval
+// consumed. An internal id only, no candidate data.
+model SheetSyncDeletionApproval {
+  approvalId String    @id @default(dbgenerated("gen_random_uuid()")) @map("approval_id") @db.Uuid
+  uniqueId   String    @map("unique_id")
+  importId   String    @map("import_id") @db.Uuid
+  approvedAt DateTime  @default(now()) @map("approved_at") @db.Timestamptz(3)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+
+  import CandidateImport @relation(fields: [importId], references: [importId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([importId, uniqueId], map: "sheet_deletion_approval_import_unique_id_key")
+  @@map("sheet_deletion_approval")
 }
 
 // Review actions taken by admins (Phase 10). Append-only: rows are never

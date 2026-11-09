@@ -406,7 +406,9 @@ export async function assignCandidates({ db, actor, candidateIds, allocations, r
 // deactivation can't slip in (the chunk then fails and is retried row by row). Fill-only: a candidate
 // that is already allocated (to anyone) keeps its allocation. ASSIGN_CANDIDATE is audited as for a
 // manual allocation. entries: [{ passportId, analystId }]. Returns the passport IDs allocated.
-export async function allocateImportedCandidates(tx, { actor, entries }) {
+// auditIds (optional Map): receives passportId -> the audit_logs id of that ASSIGN_CANDIDATE row, so the import's
+// change ledger can name the audit row of each allocation it made.
+export async function allocateImportedCandidates(tx, { actor, entries, auditIds = null }) {
     if (!entries.length) return [];
     const officerIds = [...new Set(entries.map((entry) => entry.analystId))];
     const rows = await tx.$queryRaw`
@@ -424,7 +426,9 @@ export async function allocateImportedCandidates(tx, { actor, entries }) {
     const fresh = entries.filter((entry) => !taken.has(entry.passportId));
     if (!fresh.length) return [];
     await tx.candidateAllocation.createMany({ data: fresh.map((entry) => ({ passportId: entry.passportId, analystId: entry.analystId, assignedDate: new Date() })), skipDuplicates: true });
-    await audit(tx, fresh.map((entry) => auditRow({ actor, action: ALLOCATION_AUDIT_ACTION.ASSIGN, passportId: entry.passportId, from: null, to: officers.get(entry.analystId) })));
+    const rowsToAudit = fresh.map((entry) => auditRow({ actor, action: ALLOCATION_AUDIT_ACTION.ASSIGN, passportId: entry.passportId, from: null, to: officers.get(entry.analystId) }));
+    await audit(tx, rowsToAudit);
+    for (const row of rowsToAudit) auditIds?.set(row.passportId, row.auditId);
     return fresh.map((entry) => entry.passportId);
 }
 

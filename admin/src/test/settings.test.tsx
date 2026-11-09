@@ -148,6 +148,13 @@ describe("Google Sheet Sync section", () => {
         expect(screen.getByText(/Duplicate candidate id \(2\)/)).toBeInTheDocument();
     });
 
+    test("a missing status record is explained as a database setup problem, not an offline worker", async () => {
+        signedInBackend({ [`GET ${STATUS_PATH}`]: { status: 200, body: { ...STATUS, worker: { online: false, lastHeartbeatAt: null, problem: "STATE_ROW_MISSING" } } } });
+        renderApp("/settings/sheet-sync");
+        expect(await screen.findByText(/status record is missing from the database/)).toBeInTheDocument();
+        expect(screen.queryByText(/The sheet-sync worker is not reporting/)).toBeNull();
+    });
+
     test("the status is refreshed while a run is active", async () => {
         let polls = 0;
         signedInBackend({ [`GET ${STATUS_PATH}`]: () => { polls += 1; return { status: 200, body: { ...STATUS, activeRuns: { reconcile: { ...RUN, status: "QUEUED" }, testConnection: null } } }; } });

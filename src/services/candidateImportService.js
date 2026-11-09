@@ -33,6 +33,8 @@ import { requestSheetSyncRun } from "./sheetSyncStatusService.js";
 import { allocateImportedCandidates } from "./workAllocationService.js";
 import { AGENT_AUDIT_ACTION, ENTITY_STATUS, auditRow as entityAuditRow } from "./agentService.js";
 import { CLIENT_AUDIT_ACTION } from "./clientService.js";
+import { LEDGER_ENTITY, LEDGER_OP, changesOf, createLedger } from "./candidateImportLedger.js";
+import { LedgerKeyConfigError, readLedgerKeyring } from "./importLedgerKeys.js";
 
 export const IMPORT_CHUNK_SIZE = 100;
 export const MAX_IMPORT_ROWS = 3000;
@@ -46,13 +48,25 @@ const MAX_ROW_KEYS = 200;
 const UNIQUE_ID_LOCK = 724_310_001;
 const PASSPORT_HEADER = SUPPORTED_SOURCE_COLUMNS.find((c) => c.field === "passport").header;
 
+// ABORTED: stopped on purpose, the rows already imported are kept. ROLLING_BACK / ROLLED_BACK /
+// ROLLED_BACK_WITH_CONFLICTS belong to the rollback of an import (not used before that work).
 export const IMPORT_STATUS = Object.freeze({
     PREVIEWED: "PREVIEWED", COMMITTING: "COMMITTING", COMPLETED: "COMPLETED", COMPLETED_WITH_ERRORS: "COMPLETED_WITH_ERRORS", FAILED: "FAILED",
+    ABORTED: "ABORTED", ROLLING_BACK: "ROLLING_BACK", ROLLED_BACK: "ROLLED_BACK", ROLLED_BACK_WITH_CONFLICTS: "ROLLED_BACK_WITH_CONFLICTS",
 });
-const FINISHED = new Set([IMPORT_STATUS.COMPLETED, IMPORT_STATUS.COMPLETED_WITH_ERRORS, IMPORT_STATUS.FAILED]);
+// Every state in which no more chunks may be committed.
+const FINISHED = new Set([
+    IMPORT_STATUS.COMPLETED, IMPORT_STATUS.COMPLETED_WITH_ERRORS, IMPORT_STATUS.FAILED, IMPORT_STATUS.ABORTED,
+    IMPORT_STATUS.ROLLING_BACK, IMPORT_STATUS.ROLLED_BACK, IMPORT_STATUS.ROLLED_BACK_WITH_CONFLICTS,
+]);
+// A COMMITTING import with no chunk for this long has stopped (closed tab, lost network): its owner may
+// resume it, and an ADMIN may abort it. Nothing is aborted automatically.
+export const IMPORT_STALE_MS = 15 * 60_000;
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,100}$/;
+export const isValidIdempotencyKey = (value) => typeof value === "string" && IDEMPOTENCY_KEY.test(value);
 
 export const IMPORT_AUDIT_ACTION = Object.freeze({
-    STARTED: "BULK_IMPORT_STARTED", COMPLETED: "BULK_IMPORT_COMPLETED", FAILED: "BULK_IMPORT_FAILED",
+    STARTED: "BULK_IMPORT_STARTED", COMPLETED: "BULK_IMPORT_COMPLETED", FAILED: "BULK_IMPORT_FAILED", ABORTED: "BULK_IMPORT_ABORTED",
 });
 
 // A row's outcome in a commit (stored per chunk, by row number).
@@ -70,6 +84,58 @@ export class CandidateImportError extends Error {
         this.code = code;
         Object.assign(this, extra);
     }
+}
+
+// ---------------------------------------------------------------- active imports
+
+const committedChunkIndexes = (record) => Object.entries(record.chunkResults ?? {}).filter(([, result]) => result?.status === "COMMITTED").map(([index]) => Number(index)).sort((a, b) => a - b);
+export const isStaleImport = (record, now = new Date()) => record.status === IMPORT_STATUS.COMMITTING && now.getTime() - new Date(record.updatedAt).getTime() > IMPORT_STALE_MS;
+
+// What the browser needs to resume or abort an import (counts and ids only).
+const activeDetails = (record, actor, now) => ({
+    importId: record.importId, status: record.status, fileName: record.fileName, totalRows: record.totalRows, chunkSize: record.chunkSize,
+    chunkCount: Array.isArray(record.chunkHashes) ? record.chunkHashes.length : 0, committedChunks: committedChunkIndexes(record),
+    ownedByYou: record.adminId === actor?.adminId, stale: isStaleImport(record, now), updatedAt: new Date(record.updatedAt).toISOString(),
+});
+
+// A request for a file that already has an import: still committing (resume it) or already finished.
+function importActiveError(record, now) {
+    const committing = record.status === IMPORT_STATUS.COMMITTING;
+    return new CandidateImportError(
+        409, committing ? "IMPORT_ALREADY_ACTIVE" : "IMPORT_ALREADY_FINISHED",
+        committing ? "This file is already being imported. Resume that import or abort it first." : "This request was already used by an import that has finished.",
+        { details: { importId: record.importId, status: record.status, chunkSize: record.chunkSize, chunkCount: Array.isArray(record.chunkHashes) ? record.chunkHashes.length : 0, committedChunks: committedChunkIndexes(record), stale: isStaleImport(record, now) } },
+    );
+}
+
+// The ledger's HMAC key (importLedgerKeys.js). An import that cannot record what it changed in a way a
+// rollback can verify is not started: with no valid key nothing is written (no job type, no candidate, no
+// ledger entry), and the answer says what is wrong with the configuration (codes only, never a secret).
+// `injected`: a keyring passed by a caller (tests); otherwise the server's environment.
+function loadLedgerKeyring(injected = null) {
+    if (injected) return injected;
+    try {
+        return readLedgerKeyring();
+    } catch (error) {
+        if (!(error instanceof LedgerKeyConfigError)) throw error;
+        throw new CandidateImportError(503, "LEDGER_KEY_NOT_CONFIGURED", "Imports are unavailable until the server's change-ledger key is configured. Nothing was imported.", { details: { problems: error.problems } });
+    }
+}
+
+// Each administrator has at most ONE import committing (the partial unique index on admin_id enforces it
+// too), so an accidental second Upload by the same person (second tab, retry, double click) never runs
+// beside the first. Different administrators DO import at the same time: what they share is protected in
+// the database, not by this rule: a chunk's unique IDs are allocated under one advisory lock, a Job group
+// is read and written under a per-date advisory lock, and passports, NICs, Client / Agent names and
+// Job-group keys are unique constraints (a chunk that loses such a race is retried row by row and finds
+// the other import's row). Called before an import's first chunk; `client` is the database or the transaction.
+async function assertNoOtherCommitting(client, { importId, actor, now }) {
+    const other = await client.candidateImport.findFirst({ where: { status: IMPORT_STATUS.COMMITTING, adminId: actor.adminId, NOT: { importId } } });
+    if (!other) return;
+    throw new CandidateImportError(
+        409, "IMPORT_IN_PROGRESS", "You have another import in progress. Resume it or abort it first.",
+        { details: activeDetails(other, actor, now) },
+    );
 }
 
 // ---------------------------------------------------------------- request bodies
@@ -163,7 +229,7 @@ const rowIssuesOf = (plans) => plans.filter((plan) => plan.issues.length).map((p
 // A Job Role in the sheet that is not a job type (and has no alias) becomes a new job type, so no
 // role is lost. Preview (create = false) only counts them as if they existed; the commit creates them.
 // Returns the active job type names to validate with.
-async function jobTypesWithSheetRoles(db, canonical, { create }) {
+async function jobTypesWithSheetRoles(db, canonical, { create, beforeCreate = null }) {
     const activeJobTypes = await activeJobTypeNames(db);
     const fresh = new Set();
     for (const row of canonical) {
@@ -172,6 +238,7 @@ async function jobTypesWithSheetRoles(db, canonical, { create }) {
     if (!fresh.size) return activeJobTypes;
     const added = [...fresh].map((name) => ({ name, code: name.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") })).filter((type) => type.code);
     if (!create) return [...activeJobTypes, ...added.map((type) => type.name)];
+    await beforeCreate?.();
     // One statement; only the rows actually created come back (a code that already exists, e.g. an
     // inactive type, is skipped and its role stays unmatched, as an inactive type should).
     const created = await db.jobType.createManyAndReturn({ data: added.map((type) => ({ ...type, isActive: true })), skipDuplicates: true, select: { name: true } });
@@ -183,19 +250,43 @@ export const importSourceColumns = () => sourceColumnsForClient();
 
 // Validates and classifies the rows; writes nothing to a candidate table. Returns the counts, the
 // problem rows (masked) and the importId the commit refers to.
-export async function previewImport({ db, actor, fileName, headers, rows, now = new Date() }) {
+//
+// idempotencyKey (header Idempotency-Key, one per file choice in the browser): the same key from the same
+// admin and file names the same import, so a repeated or retried request never makes a second one (a
+// PREVIEWED import is returned again, with its Job ID edits). A file the admin is already committing is
+// refused with IMPORT_ALREADY_ACTIVE and the details to resume it, not previewed again.
+export async function previewImport({ db, actor, fileName, headers, rows, idempotencyKey = null, ledgerKeyring = null, now = new Date() }) {
+    if (idempotencyKey !== null && !isValidIdempotencyKey(idempotencyKey)) {
+        throw new CandidateImportError(400, "INVALID_IDEMPOTENCY_KEY", "The request key is not valid.");
+    }
+    // Told at the preview, not after the person has checked everything: this server cannot run imports yet.
+    loadLedgerKeyring(ledgerKeyring);
     const columns = analyzeSourceHeaders(headers);
     if (columns.missingRequired.length) {
         throw new CandidateImportError(422, "MISSING_REQUIRED_HEADINGS", `The sheet is missing required headings: ${columns.missingRequired.join(", ")}.`, { missing: columns.missingRequired });
     }
     const canonical = canonicalRows(rows);
+    const chunks = chunkRows(canonical);
+    const chunkHashes = chunks.map(hashChunk);
+    const sameFile = (record) => JSON.stringify(record.chunkHashes) === JSON.stringify(chunkHashes);
+    const forKey = () => (idempotencyKey ? db.candidateImport.findFirst({ where: { adminId: actor.adminId, idempotencyKey } }) : null);
+    let reuse = await forKey();
+    if (reuse) {
+        if (!sameFile(reuse)) throw new CandidateImportError(409, "IDEMPOTENCY_KEY_REUSED", "This request key was already used for a different file.");
+        if (reuse.status !== IMPORT_STATUS.PREVIEWED) throw importActiveError(reuse, now);
+    } else {
+        const running = await db.candidateImport.findFirst({ where: { adminId: actor.adminId, status: IMPORT_STATUS.COMMITTING } });
+        if (running && sameFile(running)) throw importActiveError(running, now);
+    }
     const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: false });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
     const sourceFlags = findSourceFlags(validated);
     const snapshot = await loadImportSnapshot(db, validated, { activeJobTypes });
     const plans = planRows(validated, snapshot, sourceFlags);
     // Jobs (Interview Date + UNIQUE NUMBER hundreds block): planned for the whole file, stored for the commit.
-    const jobGroups = buildJobGroupPlan(plans, await loadJobGroupContext(db, [...new Set(plans.filter((p) => p.job).map((p) => p.job.interviewDate))]));
+    const plannedGroups = buildJobGroupPlan(plans, await loadJobGroupContext(db, [...new Set(plans.filter((p) => p.job).map((p) => p.job.interviewDate))]));
+    // A repeated request keeps the Job IDs the admin already chose.
+    const jobGroups = reuse && Array.isArray(reuse.jobGroups) && reuse.jobGroups.length ? reuse.jobGroups : plannedGroups;
     noteGroupOutcomes(plans, jobGroups);
     const summary = {
         ...summarizePlans(plans),
@@ -203,17 +294,27 @@ export async function previewImport({ db, actor, fileName, headers, rows, now = 
         jobMembers: plannedJobMembers(plans, jobGroups),
         ignoredSourceColumns: columns.ignored.length + columns.systemGenerated.length + columns.unresolved.length + columns.unknown.length,
     };
-    const chunks = chunkRows(canonical);
-    const importId = crypto.randomUUID();
-    await db.candidateImport.create({
-        data: {
-            importId, adminId: actor.adminId, fileName, status: IMPORT_STATUS.PREVIEWED, totalRows: canonical.length, chunkSize: IMPORT_CHUNK_SIZE,
-            chunkHashes: chunks.map(hashChunk), sourceFlags, previewCounts: summary, chunkResults: {}, jobGroups, createdAt: now, updatedAt: now,
-        },
-    });
+    let record = reuse;
+    if (!record) {
+        try {
+            record = await db.candidateImport.create({
+                data: {
+                    importId: crypto.randomUUID(), adminId: actor.adminId, fileName, status: IMPORT_STATUS.PREVIEWED, totalRows: canonical.length, chunkSize: IMPORT_CHUNK_SIZE,
+                    chunkHashes, sourceFlags, previewCounts: summary, chunkResults: {}, jobGroups, idempotencyKey, createdAt: now, updatedAt: now,
+                },
+            });
+        } catch (error) {
+            // Two requests with the same key at the same moment: the other one created it.
+            if (!isUniqueViolation(error) || !idempotencyKey) throw error;
+            record = await forKey();
+            if (!record || !sameFile(record)) throw error;
+            if (record.status !== IMPORT_STATUS.PREVIEWED) throw importActiveError(record, now);
+        }
+    }
+    const importId = record.importId;
     const problems = plans.filter(isProblem);
     return {
-        importId, chunkSize: IMPORT_CHUNK_SIZE, chunkCount: chunks.length, expiresAt: new Date(now.getTime() + IMPORT_PREVIEW_TTL_MS).toISOString(),
+        importId, chunkSize: IMPORT_CHUNK_SIZE, chunkCount: chunks.length, expiresAt: new Date(new Date(record.createdAt).getTime() + IMPORT_PREVIEW_TTL_MS).toISOString(),
         summary, columns, problems: problems.slice(0, MAX_PROBLEM_ROWS).map(problemOf), problemsTruncated: problems.length > MAX_PROBLEM_ROWS,
         rowIssues: rowIssuesOf(plans), actions: importActions(plans), jobGroups: jobGroups.map(jobGroupView),
     };
@@ -259,67 +360,128 @@ export async function allocateUniqueIds(tx, count) {
 
 const auditEntry = (actor, data) => ({ auditId: crypto.randomUUID(), adminId: actor.adminId, ...data });
 
-// The plans' writes, inside the caller's transaction. Returns the plans' outcomes.
-async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [] }) {
+// The plans' writes, inside the caller's transaction. Returns the plans' outcomes. Every change is also
+// recorded in the import's change ledger (candidateImportLedger.js), in this same transaction.
+async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [], chunkIndex = 0, ledgerKeyring = null }) {
     const audits = [];
+    const ledger = createLedger({ importId, chunkIndex, keyring: ledgerKeyring });
+    // Every candidate these rows touch, by its internal unique_id (the ledger names no passport number).
+    for (const plan of plans) if (plan.prior?.uniqueId) ledger.registerCandidate(plan.prior.passportId, plan.prior.uniqueId);
     const creates = plans.filter((p) => p.action === ROW_ACTION.CREATE);
     if (creates.length) {
         const ids = await allocateUniqueIds(tx, creates.length);
         await tx.candidate.createMany({ data: creates.map((p, i) => ({ ...p.write.candidate, uniqueId: ids[i] })) });
         const details = creates.filter((p) => Object.keys(p.write.details).length).map((p) => ({ passportId: p.write.candidate.passportId, ...p.write.details }));
         if (details.length) await tx.candidateAdditionalDetails.createMany({ data: details });
-        creates.forEach((p, i) => audits.push(auditEntry(actor, {
-            action: "CREATE_CANDIDATE", passportId: p.write.candidate.passportId, previousStatus: "NONE", newStatus: "CREATED",
-            reason: `Candidate imported from a legacy sheet (bulk import ${importId}, ${ids[i]})`,
-            // Which fields were given, never their values.
-            newValue: JSON.stringify({ uniqueId: ids[i], importId, fields: Object.keys(p.write.candidate).filter((f) => f !== "passportId"), details: Object.keys(p.write.details) }),
-        })));
+        creates.forEach((p, i) => {
+            const audit = auditEntry(actor, {
+                action: "CREATE_CANDIDATE", passportId: p.write.candidate.passportId, previousStatus: "NONE", newStatus: "CREATED",
+                reason: `Candidate imported from a legacy sheet (bulk import ${importId}, ${ids[i]})`,
+                // Which fields were given, never their values.
+                newValue: JSON.stringify({ uniqueId: ids[i], importId, fields: Object.keys(p.write.candidate).filter((f) => f !== "passportId"), details: Object.keys(p.write.details) }),
+            });
+            audits.push(audit);
+            ledger.registerCandidate(p.write.candidate.passportId, ids[i]);
+            ledger.add({
+                entityType: LEDGER_ENTITY.CANDIDATE, entityKey: ids[i], candidateUniqueId: ids[i], op: LEDGER_OP.CREATE, rowNumber: p.rowNumber,
+                changes: changesOf(p.write.candidate, null, { hash: true }), auditIds: [audit.auditId],
+            });
+            if (Object.keys(p.write.details).length) {
+                ledger.add({
+                    entityType: LEDGER_ENTITY.DETAILS, entityKey: ids[i], candidateUniqueId: ids[i], op: LEDGER_OP.CREATE, rowNumber: p.rowNumber,
+                    changes: changesOf(p.write.details, null, { hash: true }), auditIds: [audit.auditId],
+                });
+            }
+        });
     }
     for (const plan of plans.filter((p) => p.action === ROW_ACTION.FILL)) {
         const { passportId, candidate, details, detailsExists } = plan.write;
+        const uniqueId = ledger.uniqueIdOf(passportId);
         if (Object.keys(candidate).length) {
             await tx.candidate.update({ where: { passportId }, data: candidate });
-            audits.push(auditEntry(actor, {
+            const audit = auditEntry(actor, {
                 action: "UPDATE_CANDIDATE", passportId, previousStatus: "CREATED", newStatus: "UPDATED",
                 reason: `Blank fields filled from a legacy sheet (bulk import ${importId})`,
                 // The candidate history lists these keys; the values are never recorded.
                 newValue: JSON.stringify(Object.fromEntries(Object.keys(candidate).map((f) => [f, null]))),
-            }));
+            });
+            audits.push(audit);
+            // before = the blank that was there (the import only fills blanks); after = hashed.
+            ledger.add({
+                entityType: LEDGER_ENTITY.CANDIDATE, entityKey: uniqueId, candidateUniqueId: uniqueId, op: LEDGER_OP.FILL, rowNumber: plan.rowNumber,
+                changes: changesOf(candidate, plan.prior, { hash: true }), auditIds: [audit.auditId],
+            });
         }
         if (Object.keys(details).length) {
             if (detailsExists) await tx.candidateAdditionalDetails.update({ where: { passportId }, data: details });
             else await tx.candidateAdditionalDetails.create({ data: { passportId, ...details } });
-            audits.push(auditEntry(actor, {
+            const audit = auditEntry(actor, {
                 action: detailsExists ? "UPDATE_ADDITIONAL_DETAILS" : "CREATE_ADDITIONAL_DETAILS", passportId,
                 previousStatus: detailsExists ? "EXISTS" : "NONE", newStatus: detailsExists ? "UPDATED" : "CREATED",
                 reason: `Blank additional details filled from a legacy sheet (bulk import ${importId})`,
                 newValue: JSON.stringify({ importId, fields: Object.keys(details) }),
-            }));
+            });
+            audits.push(audit);
+            // A details row that did not exist is CREATED by the import (a rollback may delete it); an existing one is FILLED.
+            ledger.add({
+                entityType: LEDGER_ENTITY.DETAILS, entityKey: uniqueId, candidateUniqueId: uniqueId, op: detailsExists ? LEDGER_OP.FILL : LEDGER_OP.CREATE, rowNumber: plan.rowNumber,
+                changes: changesOf(details, detailsExists ? plan.prior?.additionalDetails : null, { hash: true }), auditIds: [audit.auditId],
+            });
         }
     }
     const effects = new Map(plans.map((plan) => [plan.rowNumber, {}]));
-    await executeOrg(tx, plans, { importId, actor, audits, effects });
-    await executeExtras(tx, plans, { importId, actor, audits, effects, now });
+    await executeOrg(tx, plans, { importId, actor, audits, effects, ledger });
+    await executeExtras(tx, plans, { importId, actor, audits, effects, now, ledger });
     // After the Test details (this chunk may have just saved the PASS) and the Clients / Agents.
-    await executeJobGroups(tx, plans, jobGroups, { actor, importId, audits, effects });
+    await executeJobGroups(tx, plans, jobGroups, { actor, importId, audits, effects, ledger });
     if (audits.length) await tx.auditLog.createMany({ data: audits });
+    // The ledger with the writes: one statement, same transaction (a chunk that fails leaves no entry).
+    await ledger.flush(tx);
     return plans.map((plan) => outcomeOf(plan, effects.get(plan.rowNumber)));
 }
 
 const passportOfPlan = (plan) => plan.write.passportId ?? plan.write.candidate.passportId;
+// The stage row an existing candidate already had (read with the plan), or null.
+const stageOf = (existing, stage) => existing?.stages?.find((row) => row.stage === stage) ?? null;
 const isoDayOf = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value ?? null);
 
 // Allocation (to the OFFICER), the Test details, the visa stage and Departed of the CREATE / FILL rows, all
 // fill-only (planned in candidateImportClassifier.js against this transaction's own snapshot).
-async function executeExtras(tx, plans, { importId, actor, audits, effects, now }) {
+async function executeExtras(tx, plans, { importId, actor, audits, effects, now, ledger }) {
     const writing = plans.filter((plan) => plan.write?.extras && (plan.action === ROW_ACTION.CREATE || plan.action === ROW_ACTION.FILL));
     const entries = writing.filter((plan) => plan.write.extras.allocation).map((plan) => ({ passportId: passportOfPlan(plan), analystId: plan.write.extras.allocation.analystId }));
-    const allocated = new Set(await allocateImportedCandidates(tx, { actor, entries }));
-    const stageAudit = (passportId, stage, { from, to, before, after }) => audits.push(auditEntry(actor, {
-        action: "UPDATE_STAGE", passportId, previousStatus: from ? "COMPLETED" : "NOT_COMPLETED", newStatus: to ? "COMPLETED" : "NOT_COMPLETED",
-        reason: `Set from a legacy sheet (bulk import ${importId})`,
-        previousValue: JSON.stringify({ stage, ...before }), newValue: JSON.stringify({ stage, ...after }),
-    }));
+    const allocationAudits = new Map();
+    const allocated = new Set(await allocateImportedCandidates(tx, { actor, entries, auditIds: allocationAudits }));
+    // Each allocation made (an existing holder is never replaced: only the candidates allocated here are recorded),
+    // with the ASSIGN_CANDIDATE audit row allocateImportedCandidates wrote for it.
+    for (const plan of writing) {
+        const passportId = passportOfPlan(plan);
+        if (!plan.write.extras.allocation || !allocated.has(passportId)) continue;
+        const uniqueId = ledger.uniqueIdOf(passportId);
+        ledger.add({
+            entityType: LEDGER_ENTITY.ALLOCATION, entityKey: uniqueId, candidateUniqueId: uniqueId, op: LEDGER_OP.CREATE, rowNumber: plan.rowNumber,
+            changes: changesOf({ analystId: plan.write.extras.allocation.analystId }, null, { hash: false }),
+            auditIds: allocationAudits.has(passportId) ? [allocationAudits.get(passportId)] : [],
+        });
+    }
+    const stageAudit = (passportId, stage, { from, to, before, after }) => {
+        const audit = auditEntry(actor, {
+            action: "UPDATE_STAGE", passportId, previousStatus: from ? "COMPLETED" : "NOT_COMPLETED", newStatus: to ? "COMPLETED" : "NOT_COMPLETED",
+            reason: `Set from a legacy sheet (bulk import ${importId})`,
+            previousValue: JSON.stringify({ stage, ...before }), newValue: JSON.stringify({ stage, ...after }),
+        });
+        audits.push(audit);
+        return audit;
+    };
+    // A stage row the import made is CREATED (a rollback may delete it); one that existed is FILLED (only the
+    // fields written, back to the blank that was there). `previous` is the stored row, null when there was none.
+    const ledgerStage = (plan, passportId, stage, written, previous, audit) => {
+        const uniqueId = ledger.uniqueIdOf(passportId);
+        ledger.add({
+            entityType: LEDGER_ENTITY.STAGE, entityKey: `${uniqueId}:${stage}`, candidateUniqueId: uniqueId, op: previous ? LEDGER_OP.FILL : LEDGER_OP.CREATE, rowNumber: plan.rowNumber,
+            changes: changesOf(written, previous, { hash: false }), auditIds: [audit.auditId],
+        });
+    };
     // A new candidate has no stage rows: its rows are inserted together. An existing one's are upserted.
     const inserts = [];
     const write = (plan, stage, create, update) => {
@@ -338,43 +500,66 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now 
             await write(plan, "TEST_DETAILS", { passportId, stage: "TEST_DETAILS", ...test.fill, completed, completedAt: completed ? now : null }, test.fill);
             const after = Object.fromEntries(Object.entries(test.fill).map(([field, value]) => [field, isoDayOf(value)]));
             const before = Object.fromEntries(Object.keys(test.fill).map((field) => [field, null]));
-            stageAudit(passportId, "TEST_DETAILS", { from: false, to: completed, before, after: completed ? { ...after, completed: true } : after });
+            const audit = stageAudit(passportId, "TEST_DETAILS", { from: false, to: completed, before, after: completed ? { ...after, completed: true } : after });
+            const stored = stageOf(plan.prior, "TEST_DETAILS");
+            ledgerStage(plan, passportId, "TEST_DETAILS", stored ? test.fill : { ...test.fill, completed, completedAt: completed ? now : null }, stored, audit);
             effect.testSet = 1;
         }
         for (const stage of stages) {
             await write(plan, stage, { passportId, stage, completed: true, completedAt: now }, { completed: true, completedAt: now });
-            stageAudit(passportId, stage, { from: false, to: true, before: { completed: false }, after: { completed: true } });
+            const audit = stageAudit(passportId, stage, { from: false, to: true, before: { completed: false }, after: { completed: true } });
+            ledgerStage(plan, passportId, stage, { completed: true, completedAt: now }, stageOf(plan.prior, stage), audit);
             effect.stagesCompleted = (effect.stagesCompleted ?? 0) + 1;
         }
     }
     if (inserts.length) await tx.candidateStage.createMany({ data: inserts });
 
     // VISA STATUS "Departed": candidate.departed_at, once (fill-only: only a candidate with no final
-    // status at all), in one statement.
+    // status at all), in one statement. UPDATE ... RETURNING names exactly the candidates it changed: an effect,
+    // an audit entry and a ledger entry exist only for those (an update count could not say which rows).
     const departing = writing.filter((plan) => plan.write.extras.departed);
     if (departing.length) {
-        const passportIds = departing.map(passportOfPlan);
-        await tx.candidate.updateMany({ where: { passportId: { in: passportIds }, departedAt: null, outcome: null }, data: { departedAt: now } });
-        for (const plan of departing) {
+        const updated = await tx.$queryRaw`
+            UPDATE "candidate" SET "departed_at" = ${now}, "updated_date" = ${now}
+            WHERE "passport_id" = ANY(${departing.map(passportOfPlan)}) AND "departed_at" IS NULL AND "outcome" IS NULL
+            RETURNING "passport_id" AS "passportId"`;
+        const changed = new Set(updated.map((row) => row.passportId));
+        for (const plan of departing.filter((p) => changed.has(passportOfPlan(p)))) {
             effects.get(plan.rowNumber).departed = 1;
-            audits.push(auditEntry(actor, {
+            const audit = auditEntry(actor, {
                 action: "CANDIDATE_DEPARTED", passportId: passportOfPlan(plan), previousStatus: "NOT_DEPARTED", newStatus: "DEPARTED",
                 reason: `Visa status Departed in a legacy sheet (bulk import ${importId})`, newValue: JSON.stringify({ importId }),
-            }));
+            });
+            audits.push(audit);
+            // Part of the candidate's own entry (created or filled by this import), written as a blank filled.
+            ledger.addCandidateFields(passportOfPlan(plan), { rowNumber: plan.rowNumber, changes: changesOf({ departedAt: now }, null, { hash: true }), auditIds: [audit.auditId] });
         }
     }
 
     // VISA STATUS "Got Visa Not Going" / "Cancelled" / "Reject": candidate.outcome, once (fill-only, as above).
+    // The rows are locked and updated in one statement that returns each changed candidate with the outcome_at it
+    // had before: the ledger records exactly those, with their exact previous values.
     for (const outcome of VISA_OUTCOMES) {
         const recording = writing.filter((plan) => plan.write.extras.outcome === outcome);
         if (!recording.length) continue;
-        await tx.candidate.updateMany({ where: { passportId: { in: recording.map(passportOfPlan) }, departedAt: null, outcome: null }, data: { outcome, outcomeAt: now } });
-        for (const plan of recording) {
+        const updated = await tx.$queryRaw`
+            UPDATE "candidate" c SET "outcome" = ${outcome}, "outcome_at" = ${now}, "updated_date" = ${now}
+            FROM (SELECT "passport_id", "outcome_at" FROM "candidate"
+                  WHERE "passport_id" = ANY(${recording.map(passportOfPlan)}) AND "departed_at" IS NULL AND "outcome" IS NULL FOR UPDATE) o
+            WHERE c."passport_id" = o."passport_id"
+            RETURNING c."passport_id" AS "passportId", o."outcome_at" AS "previousOutcomeAt"`;
+        const previousOutcomeAt = new Map(updated.map((row) => [row.passportId, row.previousOutcomeAt]));
+        for (const plan of recording.filter((p) => previousOutcomeAt.has(passportOfPlan(p)))) {
             effects.get(plan.rowNumber).outcome = 1;
-            audits.push(auditEntry(actor, {
+            const audit = auditEntry(actor, {
                 action: "SET_FINAL_STATUS", passportId: passportOfPlan(plan), previousStatus: "NONE", newStatus: outcome,
                 reason: `Visa status in a legacy sheet (bulk import ${importId})`, newValue: JSON.stringify({ importId }),
-            }));
+            });
+            audits.push(audit);
+            ledger.addCandidateFields(passportOfPlan(plan), {
+                rowNumber: plan.rowNumber, auditIds: [audit.auditId],
+                changes: changesOf({ outcome, outcomeAt: now }, { outcome: null, outcomeAt: previousOutcomeAt.get(passportOfPlan(plan)) }, { hash: true }),
+            });
         }
     }
 }
@@ -384,7 +569,7 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now 
 // chunk may have created one since the preview), else created, then linked; a blank registration
 // number filled. Through the same audit actions as Admin > Clients / Agents. A name created twice at
 // the same time fails on the unique indexes and the chunk is retried row by row (it then finds it).
-async function executeOrg(tx, plans, { importId, actor, audits, effects }) {
+async function executeOrg(tx, plans, { importId, actor, audits, effects, ledger }) {
     const agentIds = new Map();
     const clientIds = new Map();
     const reason = (what) => `${what} by a legacy sheet (bulk import ${importId})`;
@@ -401,10 +586,13 @@ async function executeOrg(tx, plans, { importId, actor, audits, effects }) {
                     const row = await tx.agent.create({ data: { name: agent.name, countryCode: null }, select: { id: true } });
                     agentId = row.id;
                     effect.agentCreated = 1;
-                    audits.push(entityAuditRow({
+                    const audit = entityAuditRow({
                         actor, action: AGENT_AUDIT_ACTION.CREATED, previousStatus: "NONE", newStatus: ENTITY_STATUS.ACTIVE, reason: reason("Agent created"),
                         newValue: JSON.stringify({ agentId, name: agent.name, countryCode: null, clientIds: [] }),
-                    }));
+                    });
+                    audits.push(audit);
+                    // An Agent the import created (a name is business data: hashed).
+                    ledger.add({ entityType: LEDGER_ENTITY.AGENT, entityKey: agentId, op: LEDGER_OP.CREATE, rowNumber: plan.rowNumber, changes: changesOf({ name: agent.name, countryCode: null }, null, { hash: true }), auditIds: [audit.auditId] });
                 }
                 agentIds.set(agent.key, agentId);
             }
@@ -418,30 +606,49 @@ async function executeOrg(tx, plans, { importId, actor, audits, effects }) {
                 clientId = (await tx.client.create({ data: { name: company.name, registrationNumber: companyNumber }, select: { id: true } })).id;
                 created = true;
                 effect.clientCreated = 1;
-                audits.push(entityAuditRow({
+                const audit = entityAuditRow({
                     actor, action: CLIENT_AUDIT_ACTION.CREATED, previousStatus: "NONE", newStatus: ENTITY_STATUS.ACTIVE, reason: reason("Client created"),
                     newValue: JSON.stringify({ clientId, name: company.name, agentIds: [agentId] }),
-                }));
+                });
+                audits.push(audit);
+                ledger.add({ entityType: LEDGER_ENTITY.CLIENT, entityKey: clientId, op: LEDGER_OP.CREATE, rowNumber: plan.rowNumber, changes: changesOf({ name: company.name, registrationNumber: companyNumber }, null, { hash: true }), auditIds: [audit.auditId] });
             }
             clientIds.set(company.key, clientId);
         }
         if (agentId) {
             const { count } = await tx.agentClient.createMany({ data: [{ agentId, clientId }], skipDuplicates: true });
-            if (count && !created) {
-                audits.push(entityAuditRow({
-                    actor, action: CLIENT_AUDIT_ACTION.AGENT_CHANGED, previousStatus: ENTITY_STATUS.ACTIVE, newStatus: ENTITY_STATUS.ACTIVE,
-                    reason: reason("Client's agents changed: 1 added, 0 removed"), newValue: JSON.stringify({ clientId, added: [agentId], removed: [] }),
-                }));
+            // A link only when this import made it (an existing link is never recorded, so never removed).
+            if (count) {
+                let auditIdsOfLink = [];
+                if (!created) {
+                    const audit = entityAuditRow({
+                        actor, action: CLIENT_AUDIT_ACTION.AGENT_CHANGED, previousStatus: ENTITY_STATUS.ACTIVE, newStatus: ENTITY_STATUS.ACTIVE,
+                        reason: reason("Client's agents changed: 1 added, 0 removed"), newValue: JSON.stringify({ clientId, added: [agentId], removed: [] }),
+                    });
+                    audits.push(audit);
+                    auditIdsOfLink = [audit.auditId];
+                }
+                ledger.add({ entityType: LEDGER_ENTITY.AGENT_CLIENT, entityKey: `${agentId}:${clientId}`, op: LEDGER_OP.LINK, rowNumber: plan.rowNumber, auditIds: auditIdsOfLink });
             }
         }
         if (companyNumber && !created) {
-            const { count } = await tx.client.updateMany({ where: { id: clientId, OR: [{ registrationNumber: null }, { registrationNumber: "" }] }, data: { registrationNumber: companyNumber } });
-            if (count) {
-                audits.push(entityAuditRow({
+            // One statement that locks the row, fills the blank and returns what was there (NULL or ""): the ledger
+            // records the exact previous value, which an update count could not give.
+            const [filled] = await tx.$queryRaw`
+                UPDATE "client" c SET "registration_number" = ${companyNumber}, "updated_at" = CURRENT_TIMESTAMP
+                FROM (SELECT "id", "registration_number" AS "previous" FROM "client"
+                      WHERE "id" = ${clientId}::uuid AND ("registration_number" IS NULL OR "registration_number" = '') FOR UPDATE) o
+                WHERE c."id" = o."id"
+                RETURNING o."previous" AS "previous"`;
+            if (filled) {
+                const audit = entityAuditRow({
                     actor, action: CLIENT_AUDIT_ACTION.UPDATED, previousStatus: ENTITY_STATUS.ACTIVE, newStatus: ENTITY_STATUS.ACTIVE,
                     reason: reason("Client updated: registrationNumber"), previousValue: JSON.stringify({ clientId, registrationNumber: null }),
                     newValue: JSON.stringify({ clientId, registrationNumber: companyNumber }),
-                }));
+                });
+                audits.push(audit);
+                // Only the filled blank (before: exactly NULL or "" as it was, after: keyed digest): the Client itself existed before the import.
+                ledger.add({ entityType: LEDGER_ENTITY.CLIENT, entityKey: clientId, op: LEDGER_OP.FILL, rowNumber: plan.rowNumber, changes: changesOf({ registrationNumber: companyNumber }, { registrationNumber: filled.previous }, { hash: true }), auditIds: [audit.auditId] });
             }
         }
     }
@@ -517,10 +724,23 @@ const failureCode = (error) => {
 
 // The import row, locked for the rest of the transaction: two requests for the same import never
 // interleave (the second waits, then finds the first one's result).
+// otherCommitting (same query, no extra round trip): the id of ANOTHER import of the SAME administrator that is
+// COMMITTING, if any (imports of other administrators never matter here).
 async function lockImport(tx, importId) {
-    const [locked] = await tx.$queryRaw`SELECT "status", "chunk_results" AS "chunkResults" FROM "candidate_import" WHERE "import_id" = ${importId}::uuid FOR UPDATE`;
+    const [locked] = await tx.$queryRaw`
+        SELECT c."status", c."chunk_results" AS "chunkResults",
+               (SELECT o."import_id"::text FROM "candidate_import" o WHERE o."status" = 'COMMITTING' AND o."admin_id" = c."admin_id" AND o."import_id" <> c."import_id" LIMIT 1) AS "otherCommitting"
+        FROM "candidate_import" c WHERE c."import_id" = ${importId}::uuid FOR UPDATE OF c`;
     const chunkResults = typeof locked.chunkResults === "string" ? JSON.parse(locked.chunkResults) : locked.chunkResults ?? {};
-    return { status: locked.status, chunkResults };
+    return { status: locked.status, chunkResults, otherCommitting: locked.otherCommitting ?? null };
+}
+
+// Under the import row's lock: the import must still accept chunks (it may have been finished or
+// aborted since the request was checked), and an import that has not started may start only when no
+// other import is committing.
+async function guardCommit(tx, locked, { importId, actor, now }) {
+    if (FINISHED.has(locked.status)) throw new CandidateImportError(409, "IMPORT_FINISHED", "This import is already finished.");
+    if (locked.status === IMPORT_STATUS.PREVIEWED && locked.otherCommitting) await assertNoOtherCommitting(tx, { importId, actor, now });
 }
 
 // The chunk's result written to the (locked) import row, with BULK_IMPORT_STARTED on the first commit.
@@ -530,15 +750,21 @@ async function recordChunk(tx, locked, { importId, chunkIndex, actor, rows, now 
     if (locked.status === IMPORT_STATUS.PREVIEWED) {
         await tx.auditLog.create({ data: auditEntry(actor, { action: IMPORT_AUDIT_ACTION.STARTED, previousStatus: IMPORT_STATUS.PREVIEWED, newStatus: IMPORT_STATUS.COMMITTING, reason: `Bulk candidate import ${importId} started`, newValue: JSON.stringify({ importId }) }) });
     }
-    await tx.candidateImport.update({
-        where: { importId },
-        data: { status: IMPORT_STATUS.COMMITTING, chunkResults: { ...results, [chunkIndex]: result }, updatedAt: now },
-    });
+    try {
+        await tx.candidateImport.update({
+            where: { importId },
+            data: { status: IMPORT_STATUS.COMMITTING, chunkResults: { ...results, [chunkIndex]: result }, updatedAt: now },
+        });
+    } catch (error) {
+        // Only the one-COMMITTING-import-per-admin index can refuse this update: this admin started another import at the same moment.
+        if (isUniqueViolation(error)) throw new CandidateImportError(409, "IMPORT_IN_PROGRESS", "You have another import in progress. Resume it or abort it first.");
+        throw error;
+    }
     return result;
 }
 
 // Commits one previewed chunk. Returns { chunkIndex, status, counts, failures: [{ rowNumber, passport, codes }] }.
-export async function commitChunk({ db, actor, importId, chunkIndex, rows, now = new Date(), maxAttempts = 3 }) {
+export async function commitChunk({ db, actor, importId, chunkIndex, rows, now = new Date(), maxAttempts = 3, ledgerKeyring = null }) {
     const record = await requireImport(db, { importId, actor, now });
     const hashes = Array.isArray(record.chunkHashes) ? record.chunkHashes : [];
     if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= hashes.length) throw new CandidateImportError(400, "INVALID_CHUNK", "Unknown chunk.");
@@ -548,10 +774,14 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     }
     const previous = record.chunkResults?.[chunkIndex];
     if (previous?.status === "COMMITTED") return present(chunkIndex, previous, canonical, { alreadyCommitted: true });
-
-    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: true });
+    // No valid ledger key: nothing is written, not even a job type (see loadLedgerKeyring).
+    const keyring = loadLedgerKeyring(ledgerKeyring);
+    // The one write made outside the chunk's transaction (new job types for unknown roles) is not made
+    // for an import that this administrator's other committing import blocks; the lock below decides authoritatively.
+    const beforeCreate = record.status === IMPORT_STATUS.PREVIEWED ? () => assertNoOtherCommitting(db, { importId, actor, now }) : null;
+    const activeJobTypes = await jobTypesWithSheetRoles(db, canonical, { create: true, beforeCreate });
     const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
-    const context = { importId, actor, now, jobGroups: Array.isArray(record.jobGroups) ? record.jobGroups : [] };
+    const context = { importId, actor, now, chunkIndex, ledgerKeyring: keyring, jobGroups: Array.isArray(record.jobGroups) ? record.jobGroups : [] };
 
     // The whole chunk in one transaction; a unique-ID race is retried with fresh numbers.
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -559,6 +789,7 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
             const result = await db.$transaction(async (tx) => {
                 const locked = await lockImport(tx, importId);
                 if (locked.chunkResults[chunkIndex]?.status === "COMMITTED") return { ...locked.chunkResults[chunkIndex], alreadyCommitted: true };
+                await guardCommit(tx, locked, { importId, actor, now });
                 await setAuditActor(tx, actor);
                 const snapshot = await loadImportSnapshot(tx, validated, { activeJobTypes });
                 const outcomes = await executePlans(tx, planRows(validated, snapshot, record.sourceFlags), context);
@@ -566,6 +797,8 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
             }, CHUNK_TRANSACTION);
             return present(chunkIndex, result, canonical, result.alreadyCommitted ? { alreadyCommitted: true } : {});
         } catch (error) {
+            // A refusal (finished, aborted, another import running) is the answer, not a row problem.
+            if (error instanceof CandidateImportError) throw error;
             if (failureCode(error) === "UNIQUE_ID_COLLISION" && attempt < maxAttempts) continue;
             break;
         }
@@ -574,6 +807,8 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     // The chunk failed as a whole (and rolled back alone): each row on its own, so a single bad or
     // conflicting row is isolated and the others are still written.
     const outcomes = [];
+    // Still allowed? (finished or aborted, or another import started, while the chunk was failing)
+    await db.$transaction(async (tx) => guardCommit(tx, await lockImport(tx, importId), { importId, actor, now }), CHUNK_TRANSACTION);
     for (const row of validated) {
         try {
             outcomes.push(...await db.$transaction(async (tx) => {
@@ -585,7 +820,11 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
             outcomes.push({ r: row.rowNumber, o: ROW_OUTCOME.FAILED, c: [failureCode(error)], w: false });
         }
     }
-    const result = await db.$transaction(async (tx) => recordChunk(tx, await lockImport(tx, importId), { importId, chunkIndex, actor, rows: outcomes, now }), CHUNK_TRANSACTION);
+    const result = await db.$transaction(async (tx) => {
+        const locked = await lockImport(tx, importId);
+        await guardCommit(tx, locked, { importId, actor, now });
+        return recordChunk(tx, locked, { importId, chunkIndex, actor, rows: outcomes, now });
+    }, CHUNK_TRANSACTION);
     return present(chunkIndex, result, canonical);
 }
 
@@ -606,43 +845,58 @@ function present(chunkIndex, result, canonical, extra = {}) {
 const addCounts = (a, b) => Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map((k) => [k, (a[k] ?? 0) + (b[k] ?? 0)]));
 
 // Totals, final status, lifecycle audit, and (when anything was written) the existing RECONCILE run.
-export async function finishImport({ db, actor, importId, now = new Date() }) {
-    const existing = await db.candidateImport.findUnique({ where: { importId } });
-    if (!existing) throw new CandidateImportError(404, "IMPORT_NOT_FOUND", "Import not found.");
-    if (existing.adminId !== actor.adminId) throw new CandidateImportError(403, "NOT_YOUR_IMPORT", "This import was started by another user.");
-    if (FINISHED.has(existing.status)) return finishedView(existing, { alreadyFinished: true });
+// Idempotent and safe against a second request at the same moment: the import row is locked, so only
+// the call that moves it out of PREVIEWED / COMMITTING writes the audit entry and asks for the sync;
+// the other one gets the finished result (alreadyFinished).
+export const finishImport = (args) => closeImport({ ...args, abort: false });
 
-    const chunkCount = Array.isArray(existing.chunkHashes) ? existing.chunkHashes.length : 0;
-    const results = existing.chunkResults ?? {};
-    const counts = Object.values(results).reduce((sum, result) => addCounts(sum, result.counts ?? {}), {});
-    counts.uncommittedChunks = chunkCount - Object.keys(results).length;
-    counts.uncommittedRows = existing.totalRows - (counts.rows ?? 0);
-    const written = (counts.created ?? 0) + (counts.filled ?? 0);
-    const errors = (counts.failed ?? 0) + counts.uncommittedRows;
-    const status = errors && !written ? IMPORT_STATUS.FAILED : errors ? IMPORT_STATUS.COMPLETED_WITH_ERRORS : IMPORT_STATUS.COMPLETED;
+// Stops an import on purpose: no more chunks are accepted, the rows already imported are KEPT, the status
+// becomes ABORTED (a rollback is a separate, explicit action). The owner may abort their import; any ADMIN
+// may abort one that has gone stale (15 minutes without a chunk), which frees the single committing slot.
+export const abortImport = (args) => closeImport({ ...args, abort: true });
 
-    // The mirror is updated by the existing reconciliation (a queued or running one is reused).
-    let sync = { requested: false, runId: null, alreadyActive: false };
-    if (written) {
-        const { run, created } = await requestSheetSyncRun({ db, kind: RUN_KIND.RECONCILE, triggerSource: RUN_TRIGGER.ADMIN, requestedBy: actor.adminId, now });
-        sync = { requested: true, runId: run.runId, alreadyActive: !created };
-    }
-    const record = await db.$transaction(async (tx) => {
-        const updated = await tx.candidateImport.update({
-            where: { importId },
-            data: { status, resultCounts: counts, syncRunId: sync.runId, completedAt: now, updatedAt: now },
-        });
+async function closeImport({ db, actor, importId, abort, now = new Date() }) {
+    const outcome = await db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT 1 FROM "candidate_import" WHERE "import_id" = ${importId}::uuid FOR UPDATE`;
+        const existing = await tx.candidateImport.findUnique({ where: { importId } });
+        if (!existing) throw new CandidateImportError(404, "IMPORT_NOT_FOUND", "Import not found.");
+        if (existing.adminId !== actor.adminId && !(abort && isStaleImport(existing, now))) {
+            throw new CandidateImportError(403, "NOT_YOUR_IMPORT", abort ? "This import belongs to another user and has not stopped yet." : "This import was started by another user.");
+        }
+        if (FINISHED.has(existing.status)) return { record: existing, transitioned: false };
+
+        const chunkCount = Array.isArray(existing.chunkHashes) ? existing.chunkHashes.length : 0;
+        const results = existing.chunkResults ?? {};
+        const counts = Object.values(results).reduce((sum, result) => addCounts(sum, result.counts ?? {}), {});
+        counts.uncommittedChunks = chunkCount - Object.keys(results).length;
+        counts.uncommittedRows = existing.totalRows - (counts.rows ?? 0);
+        const written = (counts.created ?? 0) + (counts.filled ?? 0);
+        const errors = (counts.failed ?? 0) + counts.uncommittedRows;
+        const status = abort ? IMPORT_STATUS.ABORTED
+            : errors && !written ? IMPORT_STATUS.FAILED : errors ? IMPORT_STATUS.COMPLETED_WITH_ERRORS : IMPORT_STATUS.COMPLETED;
+        const record = await tx.candidateImport.update({ where: { importId }, data: { status, resultCounts: counts, completedAt: now, updatedAt: now } });
         await tx.auditLog.create({
             data: auditEntry(actor, {
-                action: status === IMPORT_STATUS.FAILED ? IMPORT_AUDIT_ACTION.FAILED : IMPORT_AUDIT_ACTION.COMPLETED,
+                action: abort ? IMPORT_AUDIT_ACTION.ABORTED : status === IMPORT_STATUS.FAILED ? IMPORT_AUDIT_ACTION.FAILED : IMPORT_AUDIT_ACTION.COMPLETED,
                 previousStatus: existing.status, newStatus: status,
-                reason: `Bulk candidate import ${importId} finished`,
+                reason: abort ? `Bulk candidate import ${importId} aborted${existing.adminId === actor.adminId ? "" : " (stopped import, aborted by another administrator)"}` : `Bulk candidate import ${importId} finished`,
                 // Counts only: never a row.
-                newValue: JSON.stringify({ importId, totalRows: existing.totalRows, ...counts, syncRequested: sync.requested }),
+                newValue: JSON.stringify({ importId, totalRows: existing.totalRows, ...counts, syncRequested: written > 0 }),
             }),
         });
-        return updated;
-    });
+        return { record, transitioned: true, written };
+    }, CHUNK_TRANSACTION);
+    if (!outcome.transitioned) return finishedView(outcome.record, { alreadyFinished: true });
+
+    // The mirror is updated by the existing reconciliation (a queued or running one is reused). Requested
+    // after the status commit, by the one call that made the transition.
+    let sync = { requested: false, runId: null, alreadyActive: false };
+    let record = outcome.record;
+    if (outcome.written) {
+        const { run, created } = await requestSheetSyncRun({ db, kind: RUN_KIND.RECONCILE, triggerSource: RUN_TRIGGER.ADMIN, requestedBy: actor.adminId, now });
+        sync = { requested: true, runId: run.runId, alreadyActive: !created };
+        record = await db.candidateImport.update({ where: { importId }, data: { syncRunId: run.runId } });
+    }
     return finishedView(record, { sync });
 }
 
@@ -651,7 +905,7 @@ function finishedView(record, extra = {}) {
 }
 
 // The import's state (for a page reload): counts and statuses only.
-export async function getImport({ db, actor, importId }) {
+export async function getImport({ db, actor, importId, now = new Date() }) {
     const record = await db.candidateImport.findUnique({ where: { importId } });
     if (!record || record.adminId !== actor.adminId) throw new CandidateImportError(404, "IMPORT_NOT_FOUND", "Import not found.");
     const results = record.chunkResults ?? {};
@@ -659,6 +913,16 @@ export async function getImport({ db, actor, importId }) {
         importId: record.importId, status: record.status, fileName: record.fileName, totalRows: record.totalRows, chunkSize: record.chunkSize,
         chunkCount: Array.isArray(record.chunkHashes) ? record.chunkHashes.length : 0, previewCounts: record.previewCounts,
         chunks: Object.fromEntries(Object.entries(results).map(([index, result]) => [index, { status: result.status, counts: result.counts }])),
+        committedChunks: committedChunkIndexes(record), stale: isStaleImport(record, now),
         resultCounts: record.resultCounts ?? null, syncRunId: record.syncRunId ?? null, createdAt: record.createdAt, completedAt: record.completedAt,
     };
+}
+
+// The administrator's own import that is committing right now, if any (at most one per administrator): for
+// the Upload dialog to offer Resume / Abort instead of starting another. Other administrators' imports are
+// theirs and do not block this one. File name, counts and ids only.
+export async function getActiveImport({ db, actor, now = new Date() }) {
+    // Also a rollback of one of your imports that was interrupted (status ROLLING_BACK): to continue it.
+    const active = await db.candidateImport.findFirst({ where: { status: { in: [IMPORT_STATUS.COMMITTING, IMPORT_STATUS.ROLLING_BACK] }, adminId: actor.adminId }, orderBy: { updatedAt: "desc" } });
+    return { active: active ? activeDetails(active, actor, now) : null };
 }

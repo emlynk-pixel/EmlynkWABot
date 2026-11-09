@@ -3,6 +3,7 @@
 // VISA STATUS -> stages, Interview -> the Test details stage and the Test ID, COMPANY / AGENT /
 // COMPANY NUMBER -> Clients and Agents, re-import idempotency, and the API's roles.
 // SYNTHETIC candidates, users, Clients and Agents only.
+import "./helpers/importLedgerKey.js";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";

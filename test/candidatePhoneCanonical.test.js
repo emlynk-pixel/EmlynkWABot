@@ -1,6 +1,7 @@
 // Candidate phone numbers: one canonical STORAGE form (+<country code><number>), one COMPARISON
 // key (phoneKey), and the database's normalized uniqueness (migration 20261104120000).
 // SYNTHETIC numbers only. Real PostgreSQL (PGlite) for everything that touches the database.
+import "./helpers/importLedgerKey.js";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
