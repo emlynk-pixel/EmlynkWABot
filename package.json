@@ -11,6 +11,7 @@
     "sheet:worker": "node src/sheetSyncWorker.js",
     "sheet:request": "node src/sheetSyncRequest.js",
     "sheet:demo": "node scripts/sheetSyncLocalDemo.mjs",
+    "sheet:verify-schema": "node scripts/verifySheetSyncSchema.mjs",
     "postinstall": "prisma generate",
     "test": "node --test \"test/**/*.test.js\"",
     "diagnose:document": "node scripts/diagnoseDocument.js",

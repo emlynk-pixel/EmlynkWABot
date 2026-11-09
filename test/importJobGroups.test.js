@@ -1,6 +1,7 @@
 // Jobs from the Google Sheet upload (importJobGroups.js): Interview Date + the UNIQUE NUMBER's hundreds
 // block -> one Job JOB-YYYY-MMDDNN. Pure rules first, then end to end on PostgreSQL (PGlite, every
 // migration) with SYNTHETIC candidates, Clients and Agents only.
+import "./helpers/importLedgerKey.js";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";

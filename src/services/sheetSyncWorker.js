@@ -28,6 +28,13 @@
 // Google writes happen only while holding the writer lease (one writer per
 // Sheet, whatever the number of processes).
 //
+// The single sheet_sync_state row ('sheet-sync', seeded by migration 20261006120000) holds the
+// heartbeat and the lease. If it is missing every state write is a silent no-op, so the worker
+// checks the heartbeat's result: it logs sheet_sync.state_row_missing (at most once a minute) and
+// fails a run that needs the lease with STATE_ROW_MISSING (never reports it as WRITER_BUSY). It
+// recreates the row only when autoInitState is set (SHEET_SYNC_AUTO_INIT_STATE=true; off by default).
+// After `stuckAfterSkips` consecutive WRITER_BUSY skips it logs sheet_sync.reconcile_stuck.
+//
 // Sync Destination: every run resolves the ACTIVE destination when it starts
 // (sheet_sync_state.active_destination_key; null = the first configured one)
 // and records it on the run (destination_key). A writing reconciliation
@@ -157,7 +164,7 @@ function testFailure(result) {
 export function createSheetSyncWorker({
     store, engine, healthCheck, forDestination = null, destinations = null, config, tuning, targetHint = null, formSubmissions = null,
     clock = () => new Date(), log = console, owner = `${os.hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
-    timings = WORKER_TIMINGS,
+    timings = WORKER_TIMINGS, autoInitState = false, stuckAfterSkips = 6,
 } = {}) {
     if (!store || !config || !tuning || (!forDestination && (!engine || !healthCheck))) {
         throw new Error("store, config, tuning and either forDestination or engine and healthCheck are required");
@@ -168,6 +175,8 @@ export function createSheetSyncWorker({
     const runnerFor = (destination) => (forDestination ? forDestination(destination) : { engine, healthCheck });
     const activeDestination = async () => resolveDestination(destinationList, (await store.getState())?.activeDestinationKey ?? null);
     let lastPruneAt = 0;
+    let stateMissingLoggedAt = 0;
+    let consecutiveSkips = 0;
 
     const emit = (level, event, fields = {}) => {
         const line = JSON.stringify({ event, ...fields });
@@ -187,6 +196,39 @@ export function createSheetSyncWorker({
     const renewWriterLease = async () => {
         if (!(await store.acquireWriterLease({ owner, now: clock(), leaseMs: timings.writerLeaseMs }))) throw new WriterLeaseLostError();
     };
+
+    // Written every tick and during a long reconciliation, so Settings does not show a busy worker
+    // as offline. false = the state row is missing (nothing was stored).
+    async function publishHeartbeat(active = null) {
+        const destination = active ?? (await activeDestination());
+        return store.heartbeat({
+            writeGate: config.gate, configured, now: clock(),
+            targetHint: targetHint ?? (destination ? sheetTargetHint(destination) : null),
+            destinations: destinationList.map(publicDestination),
+        });
+    }
+
+    function logStateMissing(now) {
+        if (now.getTime() - stateMissingLoggedAt < 60_000) return;
+        stateMissingLoggedAt = now.getTime();
+        emit("error", "sheet_sync.state_row_missing", { stateId: "sheet-sync", autoInit: autoInitState });
+    }
+
+    // The lease was refused. A missing state row is a failure of its own; otherwise another writer
+    // really holds the lease and the run is skipped (a streak of skips is reported).
+    async function skipBusy(run, { dryRun = null } = {}) {
+        const now = clock();
+        if (!(await store.stateExists())) {
+            await store.finishRun(run, { status: RUN_STATUS.FAILED, errorClass: "STATE_ROW_MISSING", dryRun, now });
+            logStateMissing(now);
+            emit("error", "sheet_sync.reconcile_failed", { runId: run.runId, errorClass: "STATE_ROW_MISSING", errorCode: null });
+            return;
+        }
+        await store.finishRun(run, { status: RUN_STATUS.SKIPPED, errorClass: "WRITER_BUSY", dryRun, now });
+        emit("info", "sheet_sync.reconcile_skipped", { runId: run.runId, reason: "WRITER_BUSY" });
+        consecutiveSkips += 1;
+        if (consecutiveSkips % stuckAfterSkips === 0) emit("error", "sheet_sync.reconcile_stuck", { consecutiveSkips, reason: "WRITER_BUSY" });
+    }
 
     async function recordFailure(classified) {
         const now = clock();
@@ -278,6 +320,7 @@ export function createSheetSyncWorker({
         const onlyUniqueIds = tuning.pilotCandidateIds ?? null;
         emit("info", "sheet_sync.reconcile_started", { runId: run.runId, trigger: run.triggerSource, dryRun, pilot: Boolean(onlyUniqueIds) });
         let covered = [];
+        let approved = new Set();
         let destination = null;
         const execute = async () => {
             // The active destination, resolved now (inside the writer lease
@@ -288,12 +331,17 @@ export function createSheetSyncWorker({
             // Read before the engine reads the database: every change these
             // rows stand for is in the snapshot the engine mirrors.
             if (!dryRun) covered = await store.openQueueItems({ onlyUniqueIds });
+            // Candidates a rollback of a bulk import deleted: their Sheet rows may be marked inactive beyond the
+            // deletion guard (only these, only when absent from the complete snapshot).
+            if (!dryRun && !onlyUniqueIds) approved = await store.openDeletionApprovals();
             return runnerFor(destination).engine.reconcile({
                 dryRun,
                 onlyUniqueIds,
+                approvedInactive: approved,
                 guard: { max: tuning.deletionGuardMax, fraction: tuning.deletionGuardFraction },
                 beforeWrite: async () => {
                     await renewWriterLease();
+                    await publishHeartbeat(destination).catch(() => {});
                     if (!(await store.renewRun(run, { now: clock(), leaseMs: timings.runLeaseMs }))) throw new WriterLeaseLostError();
                 },
             });
@@ -302,12 +350,15 @@ export function createSheetSyncWorker({
             const outcome = dryRun ? { busy: false, value: await execute() } : await withWriterLease(execute);
             const now = clock();
             if (outcome.busy) {
-                await store.finishRun(run, { status: RUN_STATUS.SKIPPED, errorClass: "WRITER_BUSY", dryRun, now });
-                emit("info", "sheet_sync.reconcile_skipped", { runId: run.runId, reason: "WRITER_BUSY" });
+                await skipBusy(run, { dryRun });
                 return;
             }
+            consecutiveSkips = 0;
             const summary = outcome.value;
             if (!dryRun) summary.queueSettled = await store.settleReconciled(covered, { now });
+            // The approvals this run was given are used up (a candidate still in the database was approved for nothing),
+            // but only when the engine could judge them: against an empty snapshot it approves nothing, so they wait.
+            if (!dryRun && approved.size && summary.databaseCandidates > 0) await store.consumeDeletionApprovals(approved, { now });
             await store.finishRun(run, { status: RUN_STATUS.SUCCEEDED, summary, dryRun, now });
             await store.setIntegrationState({ state: INTEGRATION_STATE.OK, now });
             if (!dryRun) {
@@ -343,11 +394,13 @@ export function createSheetSyncWorker({
     async function tick() {
         const now = clock();
         const active = await activeDestination();
-        await store.heartbeat({
-            writeGate: config.gate, configured, now,
-            targetHint: targetHint ?? (active ? sheetTargetHint(active) : null),
-            destinations: destinationList.map(publicDestination),
-        });
+        let stateRow = await publishHeartbeat(active);
+        if (!stateRow && autoInitState) {
+            // Opt-in only (SHEET_SYNC_AUTO_INIT_STATE=true): the seed row, never an existing one.
+            if (await store.ensureStateRow({ now })) emit("warn", "sheet_sync.state_row_created", { stateId: "sheet-sync" });
+            stateRow = await publishHeartbeat(active);
+        }
+        if (!stateRow) logStateMissing(now);
         // No queue processing here: queue rows wait for the next reconciliation.
         const runId = await processRun();
         // The Candidate Form submissions: their own outbox and tab (never the mirror's), after the

@@ -75,6 +75,9 @@ export async function getSheetSyncStatus({ db, now = new Date() }) {
         worker: {
             online: Boolean(heartbeat) && now.getTime() - new Date(heartbeat).getTime() <= WORKER_STALE_MS,
             lastHeartbeatAt: iso(heartbeat),
+            // Without the single state row the worker can store no heartbeat and no lease, whatever
+            // it does: say so instead of just "offline". null = no known problem.
+            problem: state ? null : "STATE_ROW_MISSING",
         },
         configured: state?.configured ?? null,
         writeGate: state?.writeGate ?? "UNKNOWN",

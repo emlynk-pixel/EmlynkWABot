@@ -28,7 +28,8 @@ export type SheetSyncRun = {
 export type SyncDestination = { key: string; name: string; hint: string | null; tabName: string | null };
 
 export type SheetSyncStatus = {
-    worker: { online: boolean; lastHeartbeatAt: string | null };
+    // problem: STATE_ROW_MISSING = the database has no sheet_sync_state row, so no heartbeat can be stored (older servers omit it).
+    worker: { online: boolean; lastHeartbeatAt: string | null; problem?: "STATE_ROW_MISSING" | null };
     configured: boolean | null;
     writeGate: "ENABLED" | "DISABLED" | "UNKNOWN";
     target: string | null;

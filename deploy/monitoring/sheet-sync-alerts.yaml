@@ -1,0 +1,40 @@
+# Cloud Monitoring alert definitions for the Google Sheet sync worker (Cloud Run service
+# emlynk-sheet-sync-worker). DEFINITIONS ONLY: nothing here is applied automatically. Review, then
+# create the policies yourself (console: Logging > Log-based alerts, or gcloud with a JSON policy).
+# Notification channels are yours to attach.
+#
+# The worker's own heartbeat lives in the database, so "worker silent" cannot be detected from the
+# worker. The signals below come from its structured logs (one JSON object per line, jsonPayload.event)
+# and from the absence of successful reconciliations while Cloud Scheduler keeps triggering.
+
+alerts:
+  - name: sheet-sync-state-row-missing
+    severity: CRITICAL
+    meaning: The single sheet_sync_state row is missing; the worker cannot report or sync (the cause found on 2026-11-09).
+    log_filter: >
+      resource.type="cloud_run_revision" AND resource.labels.service_name="emlynk-sheet-sync-worker"
+      AND jsonPayload.event="sheet_sync.state_row_missing"
+    trigger: any matching entry; notification rate limit 1h
+    runbook: scripts/verifySheetSyncSchema.mjs (read-only) and Deployment/08-GOOGLE-SHEET-SYNC-DEPLOYMENT.md
+
+  - name: sheet-sync-reconcile-stuck
+    severity: ERROR
+    meaning: Several consecutive reconcile runs were skipped because another writer holds the lease.
+    log_filter: >
+      resource.type="cloud_run_revision" AND resource.labels.service_name="emlynk-sheet-sync-worker"
+      AND jsonPayload.event="sheet_sync.reconcile_stuck"
+    trigger: any matching entry; notification rate limit 1h
+
+  - name: sheet-sync-no-successful-reconcile
+    severity: ERROR
+    meaning: No reconcile completed for 6 hours although the scheduler keeps triggering (catches every cause, including a stale worker image).
+    metric: log-based counter on jsonPayload.event="sheet_sync.reconcile_completed" (same resource filter)
+    trigger: metric absence for 6h (the scheduler runs every 10 minutes in production)
+
+  - name: sheet-sync-worker-start-failure
+    severity: ERROR
+    meaning: The worker could not start (bad configuration).
+    log_filter: >
+      resource.type="cloud_run_revision" AND resource.labels.service_name="emlynk-sheet-sync-worker"
+      AND jsonPayload.event="sheet_sync.worker_start_failed"
+    trigger: any matching entry

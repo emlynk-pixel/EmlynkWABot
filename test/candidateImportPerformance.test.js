@@ -4,6 +4,7 @@
 // operation counts, heap) and the existing reconciliation writing the mirror (in-memory Sheet).
 // PGlite has no network latency and one connection: absolute times are a lower bound; the
 // operation counts are what carries over to Supabase.
+import "./helpers/importLedgerKey.js";
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -109,7 +110,10 @@ describe("bulk import performance (synthetic, PGlite)", () => {
 
             // No N+1: operations per chunk and for the preview don't grow with the row count.
             assert.ok(previewOps <= 12, `preview operations ${previewOps}`);
-            assert.ok(metrics.maxChunkOps <= 15, `operations per chunk ${metrics.maxChunkOps}`);
+            // 17, not 15: a fixed +1 on the first chunk of a cold database (the other-import-committing check
+            // before new job types are created) and a fixed +1 per chunk for the change ledger (ONE createMany
+            // for the whole chunk, candidateImportLedger.js). The point is no growth with the row count.
+            assert.ok(metrics.maxChunkOps <= 17, `operations per chunk ${metrics.maxChunkOps}`);
             assert.ok(metrics.maxChunkMs < CHUNK_BUDGET_MS, `slowest chunk ${metrics.maxChunkMs} ms`);
             // Google: batched (200 rows per append), never one request per candidate.
             assert.ok(googleWrites <= Math.ceil(size / 200), `Google write requests ${googleWrites}`);
