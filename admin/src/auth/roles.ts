@@ -156,6 +156,11 @@ const BELOW_OWNER: readonly Role[] = [ROLES.ADMIN, ...BELOW_ADMIN];
 export const assignableRoles = (user: WithRole): readonly Role[] => (isOwner(user) ? BELOW_OWNER : isAdmin(user) ? BELOW_ADMIN : []);
 export const invitableRoles = assignableRoles;
 export const canInviteUsers = isAdmin;
+// Whether the user may change `target`'s NAME (only the name): their own always (the profile); another
+// user's when they are an OWNER or ADMIN and the target is not the Owner (an ADMIN may rename another ADMIN).
+// The server enforces it (userAccountService.js updateUserName).
+export const canRenameUser = (user: (WithRole & { userId?: string }) | null | undefined, target: { userId: string; role: string }) =>
+    Boolean(user && (user.userId === target.userId || (isAdmin(user) && target.role !== ROLES.OWNER)));
 // Whether the user may change `target` (its role, its status, a re-invite): never their own
 // account, never an Owner's. An account holding a retired role: an OWNER only.
 export const canManageUser = (user: (WithRole & { userId?: string }) | null | undefined, target: { userId: string; role: string }) =>

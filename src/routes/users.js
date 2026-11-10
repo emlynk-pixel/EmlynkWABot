@@ -8,6 +8,7 @@
 //   GET  /                     list application users
 //   POST /invite               invite (or re-invite / reactivate) a user
 //   PUT  /:userId/role         change a user's role
+//   PUT  /:userId/name         change a user's name (any account but the Owner's)
 //   POST /:userId/deactivate   deactivate a user (also revokes a pending invite)
 
 import express from "express";
@@ -19,6 +20,8 @@ import {
     inviteUser,
     listUsers,
     parseInviteBody,
+    parseNameBody,
+    updateUserName,
     updateUserRole,
     UserAccountError,
 } from "../services/userAccountService.js";
@@ -88,6 +91,13 @@ export function createUsersRouter({ db, authAdmin, env = process.env } = {}) {
     router.put("/:userId/role", handle(async (req, res, client) => {
         if (!validUserId(req, res)) return undefined;
         return res.json({ user: await updateUserRole({ db: client, actor: req.user, userId: req.params.userId, role: req.body?.role }) });
+    }));
+
+    router.put("/:userId/name", handle(async (req, res, client) => {
+        if (!validUserId(req, res)) return undefined;
+        const parsed = parseNameBody(req.body);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid name", errors: parsed.errors });
+        return res.json({ user: await updateUserName({ db: client, actor: req.user, userId: req.params.userId, name: parsed.values.name }) });
     }));
 
     router.post("/:userId/deactivate", handle(async (req, res, client) => {

@@ -952,6 +952,8 @@ The tiers in `src/routes/admin.js` name ADMIN only; OWNER passes each of them th
 
 `GET /auth/me` and `POST /auth/complete-invite` need a Supabase session but not a particular role.
 
+`PUT /auth/me/name` `{ name }`: the signed-in user changes their own display name (every role, an ACTIVE account; only the name). Trimmed, inner spaces collapsed, 1 to 100 characters (400 otherwise). Answers `{ user }` (the profile, as `GET /auth/me`). Audited `UPDATE_USER_NAME` (old -> new); the same name again writes nothing.
+
 ### 12.3 Transport and CSRF
 
 Every request authenticates with `Authorization: Bearer <Supabase access token>`. No cookie authenticates a request, so CSRF protection does not apply (decision recorded in `SUPABASE_AUTH.md`).
@@ -977,6 +979,7 @@ Summary of the rules (all enforced server-side on the database rows, inside the 
 | `GET` | `/api/admin/users` | List application users (profile fields only) |
 | `POST` | `/api/admin/users/invite` | Invite a user: `{ name, email, role }` (OWNER: ADMIN and below; ADMIN: below ADMIN; nobody invites an OWNER) |
 | `PUT` | `/api/admin/users/:userId/role` | Change a user's role (not your own; 403 `OWNER_LOCKED` for an OWNER account or the OWNER role; 403 `OWNER_REQUIRED` for an ADMIN touching an ADMIN or giving ADMIN) |
+| `PUT` | `/api/admin/users/:userId/name` | Change another user's display name `{ name }` (only the name). OWNER: any account but an Owner's; ADMIN: any account but an Owner's, another ADMIN included. 403 `OWNER_LOCKED` for an OWNER account (the Owner changes their own name through `PUT /auth/me/name`); 400 `SELF_CHANGE` for your own account; 400 for a blank or too long name. Audited `UPDATE_USER_NAME` |
 | `POST` | `/api/admin/users/:userId/deactivate` | Deactivate a user (not your own account; same rules) |
 
 **Invitation flow.**

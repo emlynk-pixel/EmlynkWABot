@@ -88,6 +88,7 @@ const ACTION_LABELS: Record<string, string> = {
     REACTIVATE_USER: "User reactivated",
     COMPLETE_INVITATION: "Invitation accepted",
     UPDATE_USER_ROLE: "Role changed",
+    UPDATE_USER_NAME: "Name changed",
     DEACTIVATE_USER: "User deactivated",
     ...Object.fromEntries(Object.entries(REVIEW_ACTIONS).map(([action, { label }]) => [action, label])),
 };

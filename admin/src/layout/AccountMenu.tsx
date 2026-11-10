@@ -1,29 +1,40 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../auth/AuthProvider";
 import { ROLE_LABELS, type Role } from "../auth/roles";
+import { updateOwnName } from "../api/auth";
+import { EditNameForm } from "../components/EditNameDialog";
 import { Icon } from "../components/Icon";
 
 function initials(name: string, email: string) {
     return (name.trim() || email).split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join("") || "A";
 }
 
-// The account card at the foot of the sidebar: who is signed in, with Sign out
+// The account card at the foot of the sidebar: who is signed in, with Edit name and Sign out
 // in a menu that opens upward. The icon rail shows only the avatar.
 export function AccountMenu({ railOnly }: { railOnly: boolean }) {
-    const { user, signOut } = useAuth();
+    const { user, token, signOut, refreshUser } = useAuth();
     const [open, setOpen] = useState(false);
+    // Edit name: a small panel opening upward from the card, like the menu (not a centred dialog).
+    const [editing, setEditing] = useState(false);
+    const [saving, setSaving] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
 
     useEffect(() => {
-        if (!open) return;
+        if (!open && !editing) return;
+        // While a name is being saved the panel stays open.
+        const close = () => {
+            if (saving) return false;
+            setOpen(false);
+            setEditing(false);
+            return true;
+        };
         const closeOutside = (event: MouseEvent) => {
-            if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+            if (!containerRef.current?.contains(event.target as Node)) close();
         };
         const closeOnEscape = (event: KeyboardEvent) => {
             if (event.key !== "Escape") return;
-            setOpen(false);
-            triggerRef.current?.focus();
+            if (close()) triggerRef.current?.focus();
         };
         document.addEventListener("mousedown", closeOutside);
         document.addEventListener("keydown", closeOnEscape);
@@ -31,7 +42,7 @@ export function AccountMenu({ railOnly }: { railOnly: boolean }) {
             document.removeEventListener("mousedown", closeOutside);
             document.removeEventListener("keydown", closeOnEscape);
         };
-    }, [open]);
+    }, [open, editing, saving]);
 
     if (!user) return null;
     const role = ROLE_LABELS[user.role as Role] ?? user.role;
@@ -70,12 +81,31 @@ export function AccountMenu({ railOnly }: { railOnly: boolean }) {
                     <div className="-mx-1 my-1 h-px bg-border" />
                     <button
                         type="button"
+                        onClick={() => { setOpen(false); setEditing(true); }}
+                        className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-body-sm hover:bg-canvas"
+                    >
+                        <Icon name="edit" />
+                        Edit name
+                    </button>
+                    <button
+                        type="button"
                         onClick={signOut}
                         className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-body-sm hover:bg-canvas"
                     >
                         <Icon name="logout" />
                         Sign out
                     </button>
+                </div>
+            )}
+            {editing && token && (
+                <div role="dialog" aria-label="Edit name" className="absolute bottom-full left-0 z-50 mb-2 w-64 rounded-lg border border-border bg-surface p-3 text-ink shadow-popover">
+                    <p className="mb-2 text-label-md">Edit name</p>
+                    <EditNameForm
+                        currentName={user.name}
+                        onSave={async (name) => { await updateOwnName(token, name); await refreshUser(); }}
+                        onClose={() => { setEditing(false); triggerRef.current?.focus(); }}
+                        onBusy={setSaving}
+                    />
                 </div>
             )}
         </div>
