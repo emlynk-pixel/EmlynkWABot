@@ -193,7 +193,7 @@ A generic `Welder` is never mapped to TIG / MIG / ARC.
 
 ## 5a. Officer, visa, Test, Client and Agent (`candidateImportClassifier.js`)
 
-All of these are **fill-only** for an existing candidate, and none is written for a candidate whose details are verified (`SKIPPED_VERIFIED`). The preview lists them under **Automatic actions** before anything is confirmed.
+All of these are **fill-only** for an existing candidate. For a candidate whose details are verified (`SKIPPED_VERIFIED`) only the Test details and the visa status are written (they are stages, not details, and never clear a verification); the allocation and the details are left alone. The preview lists them under **Automatic actions** before anything is confirmed.
 
 **OFFICER → allocation.**
 - The cell's first word and each user's first name are compared trimmed and case-insensitively (`firstNameKey`). Any role can be the officer (Admin, Owner, Team Lead, Analyst, Registration Desk, Job Handler); the retired MANAGER role never matches.
@@ -203,7 +203,7 @@ All of these are **fill-only** for an existing candidate, and none is written fo
 - Already allocated: to the same user → nothing; to another user → WARNING `OFFICER_DIFFERS`, never reassigned.
 - Analyst visibility is unchanged (an Analyst sees only their own candidates). In Work Allocation a non-Analyst holder is listed with the unavailable Analysts, so the candidates can be moved.
 
-**VISA STATUS.** Every value is the candidate's Status (`20-candidate-management.md` §4.0). `Got Visa` completes the existing **Visa approval** stage (when not completed yet), giving `VISA_APPROVED`. `Got Visa Not Going`, `Cancelled` and `Reject` are imported and record the final outcome (`candidate.outcome`, audited `SET_FINAL_STATUS`): `VISA_NOT_GOING`, `CANCELLED`, `REJECTED`, which outrank every other status. `Not Submit` does nothing and reports nothing. Status columns are applied to a candidate whose details are verified too (they never clear a verification); only the details are left alone (`SKIPPED_VERIFIED`). `Submit` completes **Visa submission** when it is not completed yet; completing it by hand in the candidate's stages gives the same Status (`VISA_SUBMITTED`); there is no second workflow. `Departed` records the candidate as departed (`candidate.departed_at`, set once, audited `CANDIDATE_DEPARTED`), giving `DEPARTED` (`20-candidate-management.md` §4.0). The Finalizing job and IVS interview stages were retired (migration `20261109120000_candidate_status_cleanup`).
+**VISA STATUS.** Every value is the candidate's Status (`20-candidate-management.md` §4.0). `Got Visa` completes the existing **Visa approval** stage (when not completed yet), giving `VISA_APPROVED`. `Got Visa Not Going`, `Cancelled` and `Reject` are imported and record the final outcome (`candidate.outcome`, audited `SET_FINAL_STATUS`): `VISA_NOT_GOING`, `CANCELLED`, `REJECTED`, which outrank every other status. `Not Submit` does nothing and reports nothing. Status columns and the Test details are applied to a candidate whose details are verified too (they never clear a verification); only the details and the allocation are left alone (`SKIPPED_VERIFIED`). **A visa step means the test was passed:** a row whose VISA STATUS is `Submit`, `Got Visa` or `Got Visa Not Going` (or a candidate whose Visa submission or Visa approval stage is already completed) is put on its Job whatever the INTERVIEW PASS FAIL cell says, and its Test result is written as PASS (fill-only: a saved result is never overwritten). A FAIL in the sheet or in Emlynk is reported (`TEST_FAIL_WITH_VISA`). A visa row with no Interview Date or Unique Number is still imported with its visa status, and reported (`VISA_WITHOUT_JOB`): its Job is assigned by hand. `Submit` completes **Visa submission** when it is not completed yet; completing it by hand in the candidate's stages gives the same Status (`VISA_SUBMITTED`); there is no second workflow. `Departed` records the candidate as departed (`candidate.departed_at`, set once, audited `CANDIDATE_DEPARTED`), giving `DEPARTED` (`20-candidate-management.md` §4.0). The Finalizing job and IVS interview stages were retired (migration `20261109120000_candidate_status_cleanup`).
 
 **Interview → Test details (TEST_DETAILS stage).** There is no separate Interview entity.
 - A row has a test when it has an Interview Date or says PASS / FAIL. An empty result is PASS only for a test held on or before today: a row with neither invents no test, and a test scheduled for later gets no result.
@@ -226,15 +226,15 @@ The upload creates and fills Jobs. Manual Job creation is unchanged and keeps `J
 - **Job ID:** `JOB-YYYY-MMDD` from the Interview Date plus a two-digit suffix. On a date with no Job yet, the date's blocks in ascending order get 01, 02, 03 (3100, 3300, 3500 → 01, 02, 03). Each date starts again at 01. Row order never matters.
 - **Stable:** a created group is stored (`import_job_group`, unique per date + block, per date + suffix, and per Job). Every later upload reuses it, so the same date and range always go to the same Job, and an edited suffix is never recalculated. A block that first appears on a date that already has Jobs gets the lowest unused suffix (warning `JOB_GROUP_ADDED_LATER`). A suffix whose full code is used by any Job, manual ones included, is skipped.
 - **The Job:** Client = the group's COMPANY, responsible Agent = its AGENT, Job Types = its Job roles, From Country RO. To Country = the Agent's country, or **RO** when the Agent has none (new Agents from the upload have none).
-- **Who joins it:** only candidates whose Test result is PASS. The others are imported and reported (`NOT_PASSED_NO_JOB`). A candidate a user removed from the Job is not added back (`JOB_MEMBER_REMOVED_KEPT`).
+- **Who joins it:** only candidates who passed: Test result PASS, or a visa step (see VISA STATUS above). The others are imported and reported (`NOT_PASSED_NO_JOB`). A candidate a user removed from the Job is not added back (`JOB_MEMBER_REMOVED_KEPT`). A row with a Unique Number but no Interview Date is reported (`JOB_GROUP_NO_INTERVIEW_DATE`, only when the sheet has both columns), like a date without a number (`JOB_GROUP_INCOMPLETE`).
+- **The group's company and agent:** the one most of its rows name (for an existing group, the existing Job's Client). A row naming a different company or agent is an **odd row**: imported, but left off the Job (`JOB_GROUP_ROW_MISMATCH`); the rest of the group still gets the Job, and only the other rows count for it. A row naming none is not odd.
 - **Problems (the group gets no Job; its rows are still imported):**
-  - different companies or agents in one group;
+  - a tie between companies or agents in one group (no way to tell which one is right);
   - no company;
-  - no usable Client and Agent;
-  - an existing Job for another Client.
+  - no usable Client and Agent.
   - A group where nobody passed gets no Job yet (SKIPPED).
 - **Preview:** the "Jobs from this upload" table shows date, range, Job ID, candidates passed and the result. Only a NEW Job's last two digits can be changed (`PUT /import/:id/job-groups`). The change is checked before any chunk is committed: 01–99, unique in the upload and against every job code. The plan is stored on `candidate_import.job_groups` and every chunk applies it.
-- **Commit:** inside each chunk's transaction, under a per-date advisory lock: the group is read (reused if a concurrent or earlier upload created it) or its Job is created, and the PASS candidates are added in one batch. This adds about 15 operations per new group and 6 per existing group touched by a chunk, never per row. Audited: `CREATE_JOB` and `ADD_CANDIDATE_TO_JOB`.
+- **Commit:** inside each chunk's transaction, under a per-date advisory lock: the group is read (reused if a concurrent or earlier upload created it) or its Job is created, and the candidates who passed (saved Test result PASS, or a visa step), except odd rows, are added in one batch. This adds about 15 operations per new group and 6 per existing group touched by a chunk, never per row. Audited: `CREATE_JOB` and `ADD_CANDIDATE_TO_JOB`.
 - **After the import:** `PATCH /api/admin/jobs/:jobId/import-suffix { suffix }` changes only the last two digits. Allowed for ADMIN, OWNER and JOB_HANDLER, and for an ANALYST on a Job holding one of their candidates. Audited `UPDATE_JOB`. It is shown on the Job page and in the candidate's job panel.
 
 ## 6. Validation (import only; registration unchanged)
@@ -259,11 +259,12 @@ Normal registration keeps `^[PN]\d{7}$`, a required NIC and a required WhatsApp 
 | NIC | — (NIC conflict: CONFLICT, not imported) | missing; invalid format; changed by Excel |
 | Officer | no matching user; several active users; only inactive users | blank; already assigned to someone else |
 | Visa status | — | a final status already recorded differs (`FINAL_STATUS_KEPT`); a value Emlynk doesn't map |
-| Interview | — | invalid date; result not PASS / FAIL / empty; different test details on record |
+| Interview | — | invalid date; result not PASS / FAIL / empty; different test details on record; FAIL with a visa step (treated as PASS) |
 | Company / Agent / Number | — | new Company without an Agent; Agent without a Company; ambiguous or inactive Agent; number conflict or without a Company |
 
 **Codes.** All are safe to show; none carries a value:
 - `MISSING_JOB_ROLE`, `FINAL_STATUS_KEPT`, `UNKNOWN_VISA_STATUS`, `INVALID_TEST_RESULT`, `TEST_DETAILS_DIFFER`
+- Jobs: `NOT_PASSED_NO_JOB`, `TEST_FAIL_WITH_VISA`, `VISA_WITHOUT_JOB`, `JOB_GROUP_INCOMPLETE`, `JOB_GROUP_NO_INTERVIEW_DATE`, `JOB_GROUP_ROW_MISMATCH`, `JOB_GROUP_NOT_CREATED`, `JOB_GROUP_JOB_CLOSED`, `JOB_MEMBER_REMOVED_KEPT`
 - `OFFICER_MISSING`, `OFFICER_NOT_FOUND`, `OFFICER_AMBIGUOUS`, `OFFICER_NOT_ACTIVE`, `OFFICER_DIFFERS`
 - `CLIENT_NEEDS_AGENT`, `AGENT_NEEDS_COMPANY`, `AGENT_AMBIGUOUS`, `AGENT_INACTIVE`, `COMPANY_NUMBER_CONFLICT`, `COMPANY_NUMBER_WITHOUT_COMPANY`
 - `LEGACY_PASSPORT_FORMAT`, `MISSING_NIC`, `INVALID_NIC`, `NIC_CORRUPTED`
@@ -304,7 +305,7 @@ A name is never used as an identity key.
 - A non-empty field is never overwritten. A differing value is only counted (`fieldsDiffering`) and never shown.
 - Never touched: passport, unique ID, documents, verification, job assignments, Candidate Form data. Allocation, Test details and the visa stages are only filled when empty (§5a).
 
-**Verified candidates.** If the record's details are verified and the import would change anything (including an allocation, Test or stage), the row is `SKIPPED_VERIFIED`. The verification-reset trigger is neither bypassed nor fired.
+**Verified candidates.** If the record's details are verified and the import would change anything, the row is `SKIPPED_VERIFIED`: the details and the allocation are not changed, while the Test details, a visa stage and a final status are still written (stages are not details). The verification-reset trigger is neither bypassed nor fired.
 
 ## 8. Commit architecture
 
