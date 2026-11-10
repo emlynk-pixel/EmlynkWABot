@@ -76,11 +76,11 @@ describe("roles.ts: the shared permission mapping", () => {
         expect([FOLLOW_UP_VIEW_ROLES, FOLLOW_UP_ROLES]).toEqual([["ADMIN", "TEAM_LEAD", "ANALYST"], ["ADMIN", "TEAM_LEAD", "ANALYST"]]);
     });
 
-    test("the bell's source: the review queue for ADMIN, Need Attention for TEAM_LEAD and ANALYST, none otherwise", () => {
+    test("the bell's source: the review queue for ADMIN, Need Attention for TEAM_LEAD and ANALYST, an empty bell otherwise", () => {
         const source = (role: string) => notificationSource(userWithRole(role));
         expect(["OWNER", "ADMIN"].map(source)).toEqual(["review", "review"]);
         expect(["TEAM_LEAD", "ANALYST"].map(source)).toEqual(["follow-ups", "follow-ups"]);
-        expect(["REGISTRATION_DESK", "JOB_HANDLER", "MANAGER"].map(source)).toEqual([null, null, null]);
+        expect(["REGISTRATION_DESK", "JOB_HANDLER", "MANAGER"].map(source)).toEqual(["none", "none", "none"]);
     });
 
     test("landing pages (also where a page a role can't open takes it)", () => {
@@ -154,12 +154,13 @@ describe("TEAM_LEAD: the notification bell without the Review Queue", () => {
 });
 
 describe("REGISTRATION_DESK: the registration workflow only", () => {
-    test("the sidebar is Add Candidate only; it lands on Add Candidate; no bell; the form links nowhere else", { timeout: 20_000 }, async () => {
+    test("the sidebar is Add Candidate only; it lands on Add Candidate; an empty bell; the form links nowhere else", { timeout: 20_000 }, async () => {
         const { calls } = backend("REGISTRATION_DESK");
         renderApp("/");
         expect(await screen.findByRole("heading", { name: "Add candidate", level: 1 }, RENDER_STEP)).toBeInTheDocument();
         expect(navLinks()).toEqual(["Add Candidate"]);
-        expect(screen.queryByRole("button", { name: /^Notifications/ })).not.toBeInTheDocument();
+        await userEvent.setup().click(screen.getByRole("button", { name: "Notifications" }));
+        expect(await screen.findByText("You have no notifications.")).toBeInTheDocument();
         expect(within(screen.getByRole("main")).queryByRole("link", { name: "Candidates" })).not.toBeInTheDocument();
         expect(requested(calls, /\/api\/admin\/(candidates\?|candidates$|review|overview|follow-ups)/)).toBe(false);
     });
@@ -189,7 +190,7 @@ describe("JOB_HANDLER: views candidates, changes none", () => {
         const dialog = await screen.findByRole("dialog");
         expect(await within(dialog).findByText("Asked for the medical")).toBeInTheDocument();
         for (const name of [/Add call/, /No Answer/, /Need Attention/, /Mark as needs attention/]) expect(within(dialog).queryByRole("button", { name })).not.toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: /^Notifications/ })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
     });
 
     test("Need Attention and the other non-job pages stay blocked", { timeout: 60_000 }, async () => {
