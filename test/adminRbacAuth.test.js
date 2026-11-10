@@ -58,8 +58,8 @@ const MATRIX = [
     ["POST", `/candidates/N1023757/documents/${DOCUMENT_ID}/remove`, {}, CANDIDATE_STAFF],
     ["GET", "/candidates/N1023757/call-logs", undefined, CANDIDATE_READERS],
     ["POST", "/candidates/N1023757/call-logs", {}, CANDIDATE_STAFF],
-    // Need Attention: REGISTRATION_DESK reads it (no flag, complete or delete).
-    ["GET", "/follow-ups", undefined, [...CANDIDATE_STAFF, "REGISTRATION_DESK"]],
+    // Need Attention: the Candidates area roles only (not REGISTRATION_DESK).
+    ["GET", "/follow-ups", undefined, CANDIDATE_STAFF],
     ["POST", "/follow-ups/11111111-1111-4111-8111-111111111111/complete", {}, CANDIDATE_STAFF],
     ["DELETE", "/follow-ups/11111111-1111-4111-8111-111111111111", undefined, ["ADMIN"]],
     ["GET", "/candidates/N1023757/additional-details", undefined, CANDIDATE_READERS],

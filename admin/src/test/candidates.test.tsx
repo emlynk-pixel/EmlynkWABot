@@ -2497,21 +2497,21 @@ describe("Candidate Document Submission: Police Slip", () => {
     });
 });
 
-describe("REGISTRATION_DESK: the registration workflow, Need Attention read only", () => {
+describe("REGISTRATION_DESK: the registration workflow only", () => {
     const asDesk = (routes: Record<string, { status: number; body?: unknown }> = {}) =>
         signedInBackend({ "GET /auth/me": { status: 200, body: { user: DESK } }, "GET /api/admin/candidates": { status: 200, body: LIST }, ...routes });
     const nav = () => within(screen.getByRole("navigation", { name: "Main navigation" }));
 
-    test("sees Add Candidate and Need Attention in the sidebar; lands on Add Candidate; no bell", async () => {
+    test("sees only Add Candidate in the sidebar; lands on Add Candidate; an empty bell", async () => {
         const { calls } = asDesk();
         renderApp("/");
         expect(await screen.findByRole("button", { name: "Register candidate" })).toBeEnabled();
-        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Add Candidate", "Need Attention"]);
+        expect(nav().getAllByRole("link").map((l) => l.textContent)).toEqual(["Add Candidate"]);
         expect(nav().getByRole("link", { name: "Add Candidate" })).toHaveAttribute("href", "/candidates/new");
-        for (const name of ["Candidates", "Invite User", "Change Roles", "Audit Logs", "Settings", "Review Queue", "Overview"]) {
+        for (const name of ["Need Attention", "Candidates", "Invite User", "Change Roles", "Audit Logs", "Settings", "Review Queue", "Overview"]) {
             expect(nav().queryByRole("link", { name })).toBeNull();
         }
-        expect(screen.queryByRole("button", { name: /notification/i })).toBeNull();
+        expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
         expect(calls.some((c) => c.path.startsWith("/api/admin/review"))).toBe(false);
     });
 

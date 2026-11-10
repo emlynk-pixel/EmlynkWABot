@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import type { CandidateDetails, DocumentStatusEntry } from "../api/candidates";
 import { CANDIDATE_STAGES } from "../api/candidates";
 import type { FollowUpGroup, FollowUpItem, FollowUpList } from "../api/followUps";
-import { ADMIN, RENDER_STEP, renderApp, renderAppSignedIn, signedInBackend } from "./helpers";
+import { ADMIN, RENDER_STEP, expectRedirectedHome, renderApp, renderAppSignedIn, signedInBackend } from "./helpers";
 
 // Need Attention page (the Priority Follow-Ups feature). Synthetic candidates and calls only; the backend
 // is a stub (the API's own rules are in test/callLogFollowUps.test.js).
@@ -167,16 +167,11 @@ describe("Need Attention page", () => {
         });
     }
 
-    test("REGISTRATION_DESK sees Need Attention read only: the follow-ups, no Mark complete, no Delete, no candidate links", async () => {
+    test("REGISTRATION_DESK has no Need Attention: blocked by URL, with no request for it", async () => {
         const { calls } = signedInBackend({ ...asRole("REGISTRATION_DESK"), ...listRoute() });
         renderApp("/follow-ups");
-        const saman = await group("SAMAN SILVA");
-        expect(within(saman).getByText("Passport not uploaded")).toBeInTheDocument();
-        expect(screen.getByText(/require action \(view only\)/)).toBeInTheDocument();
-        expect(within(saman).queryByRole("link", { name: "SAMAN SILVA" })).toBeNull();
-        expect(screen.queryByRole("button", { name: "Mark complete" })).toBeNull();
-        expect(screen.queryByRole("button", { name: "Delete follow-up" })).toBeNull();
-        expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+        await expectRedirectedHome("REGISTRATION_DESK");
+        expect(calls.some((c) => c.path.startsWith("/api/admin/follow-ups"))).toBe(false);
     });
 
     test("22-23. Delete asks first; Cancel keeps it; confirming removes the follow-up only", async () => {
