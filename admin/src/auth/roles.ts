@@ -50,9 +50,9 @@ export const CANDIDATE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, R
 // Opening the Candidates list and a candidate's page (CANDIDATE_READERS): JOB_HANDLER read only.
 export const CANDIDATE_VIEW_ROLES: readonly Role[] = [...CANDIDATE_ROLES, ROLES.JOB_HANDLER];
 export const CANDIDATE_LIST_ROLES: readonly Role[] = CANDIDATE_VIEW_ROLES;
-// Need Attention: seeing it (REGISTRATION_DESK too, read only: FOLLOW_UP_READERS), and flagging
-// and completing (the Candidates area roles).
-export const FOLLOW_UP_VIEW_ROLES: readonly Role[] = [...CANDIDATE_ROLES, ROLES.REGISTRATION_DESK];
+// Need Attention: seeing it, and flagging and completing (the Candidates area roles; not
+// REGISTRATION_DESK, whose only page is Add Candidate).
+export const FOLLOW_UP_VIEW_ROLES: readonly Role[] = CANDIDATE_ROLES;
 export const FOLLOW_UP_ROLES: readonly Role[] = CANDIDATE_ROLES;
 // The REGISTRATION_DESK's own "Add Candidate" sidebar entry, its only page (the roles with the
 // Candidates list reach registration from there and from the header).
@@ -126,14 +126,15 @@ export const MASTER_DATA_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD,
 export const canManageMasterData = (user: WithRole) => hasRole(user, MASTER_DATA_ROLES);
 // Registering a new candidate.
 export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRATION_ROLES);
-// What the header's notification bell reads, if anything. The review queue's role (ADMIN): the
-// review queue (GET /review). TEAM_LEAD and ANALYST: their open Need Attention follow-ups (GET
+// What the header's notification bell reads. Every role has the bell. The review queue's role (ADMIN):
+// the review queue (GET /review). TEAM_LEAD and ANALYST: their open Need Attention follow-ups (GET
 // /follow-ups; an Analyst's are their own candidates'), never the review queue, which they can't
-// open. Every other role: no bell (REGISTRATION_DESK and JOB_HANDLER).
-export type NotificationSource = "review" | "follow-ups";
+// open. Every other role (REGISTRATION_DESK, JOB_HANDLER): "none", an empty bell that requests
+// nothing, until that role has a feed of its own.
+export type NotificationSource = "review" | "follow-ups" | "none";
 export const FOLLOW_UP_NOTIFICATION_ROLES: readonly Role[] = [ROLES.TEAM_LEAD, ROLES.ANALYST];
-export const notificationSource = (user: WithRole): NotificationSource | null =>
-    hasRole(user, REVIEW_ROLES) ? "review" : hasRole(user, FOLLOW_UP_NOTIFICATION_ROLES) ? "follow-ups" : null;
+export const notificationSource = (user: WithRole): NotificationSource =>
+    hasRole(user, REVIEW_ROLES) ? "review" : hasRole(user, FOLLOW_UP_NOTIFICATION_ROLES) ? "follow-ups" : "none";
 // Where a signed-in role lands ("/"), and where a page it can't open sends it: the Overview for
 // the dashboard roles (null), otherwise its own first area.
 export const landingPath = (user: WithRole): string | null =>

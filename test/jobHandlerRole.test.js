@@ -314,7 +314,7 @@ const ROUTES = [
     ["POST", `/candidates/${P}/documents/upload-target`, T.REGISTRATION_WORKFLOW, false], ["POST", `/candidates/${P}/documents/finalize`, T.REGISTRATION_WORKFLOW, false],
     ["POST", `/candidates/${P}/documents/${NO_ID}/remove`, T.CANDIDATE_STAFF, false], ["GET", `/candidates/${P}/call-logs`, T.CANDIDATE_STAFF, true],
     ["POST", `/candidates/${P}/call-logs`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/call-logs/${NO_ID}/follow-up`, T.CANDIDATE_STAFF, false],
-    ["GET", "/follow-ups", T.REGISTRATION_WORKFLOW, false], ["POST", `/follow-ups/${NO_ID}/complete`, T.CANDIDATE_STAFF, false], ["DELETE", `/follow-ups/${NO_ID}`, T.ADMINS_ONLY, false],
+    ["GET", "/follow-ups", T.CANDIDATE_STAFF, false], ["POST", `/follow-ups/${NO_ID}/complete`, T.CANDIDATE_STAFF, false], ["DELETE", `/follow-ups/${NO_ID}`, T.ADMINS_ONLY, false],
     ["GET", `/candidates/${P}/additional-details`, T.CANDIDATE_STAFF, true], ["PUT", `/candidates/${P}/additional-details`, T.CANDIDATE_STAFF, false],
     ["GET", `/candidates/${P}/form-submission`, T.CANDIDATE_STAFF, true], ["GET", `/candidates/${P}/form-share`, T.CANDIDATE_STAFF, false],
     ["POST", `/candidates/${P}/form-share`, T.CANDIDATE_STAFF, false], ["POST", `/candidates/${P}/form-share/revoke`, T.CANDIDATE_STAFF, false],

@@ -219,8 +219,8 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         const groups = (who) => api(who, "GET", "/follow-ups").then(({ body }) => body.groups.map((g) => g.candidate.passportId).sort());
         assert.deepEqual(await groups(USERS.ANN), [pid(1)]);
         assert.deepEqual(await groups(USERS.ADMIN), [pid(1), pid(4), pid(20)]);
-        assert.deepEqual(await groups(USERS.DESK), [pid(1), pid(4), pid(20)], "the Registration Desk reads every follow-up");
-        assert.equal((await api(USERS.DESK, "POST", `/follow-ups/${followUps[4]}/complete`)).status, 403, "but completes none");
+        assert.equal((await api(USERS.DESK, "GET", "/follow-ups")).status, 403, "the Registration Desk has no Need Attention");
+        assert.equal((await api(USERS.DESK, "POST", `/follow-ups/${followUps[4]}/complete`)).status, 403, "and completes none");
         assert.equal((await api(USERS.ANN, "POST", `/follow-ups/${followUps[4]}/complete`)).status, 404, "Ben's");
         assert.equal((await api(USERS.ANN, "POST", `/follow-ups/${followUps[20]}/complete`)).status, 404, "unallocated");
         assert.equal((await api(USERS.ANN, "POST", `/follow-ups/${followUps[1]}/complete`)).status, 200, "their own");

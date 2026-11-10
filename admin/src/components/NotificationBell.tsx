@@ -12,6 +12,8 @@ import { reviewReasonLabel } from "./reviewLabels";
 //   review      the Review Queue (GET /review), each item linking to its review page
 //   follow-ups  the open Need Attention follow-ups (GET /follow-ups?status=OPEN), each
 //               linking to Need Attention: TEAM_LEAD, which has no Review Queue
+//   none        no feed yet (REGISTRATION_DESK, JOB_HANDLER): the bell is shown empty and
+//               requests nothing
 
 // Extract base type for items from the queue
 type ReviewItem = {
@@ -121,6 +123,7 @@ async function loadFollowUpNotifications(token: string, signal?: AbortSignal): P
 const LOADERS: Record<NotificationSource, (token: string, signal?: AbortSignal) => Promise<NotificationItem[]>> = {
     review: loadReviewNotifications,
     "follow-ups": loadFollowUpNotifications,
+    none: async () => [],
 };
 
 export function NotificationBell({ source = "review" }: { source?: NotificationSource }) {

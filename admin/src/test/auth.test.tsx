@@ -230,9 +230,9 @@ describe("dashboard shell", () => {
         expect(navLinks()).toEqual(["Candidates", "Need Attention"]);
     });
 
-    test("REGISTRATION_DESK: Add Candidate and Need Attention only, and lands on Add Candidate instead of the Overview", async () => {
+    test("REGISTRATION_DESK: Add Candidate only, and lands on Add Candidate instead of the Overview", async () => {
         await signedIn("/", userWithRole("REGISTRATION_DESK"));
-        expect(navLinks()).toEqual(["Add Candidate", "Need Attention"]);
+        expect(navLinks()).toEqual(["Add Candidate"]);
         expect(await screen.findByRole("heading", { name: "Add candidate", level: 1 })).toBeInTheDocument();
     });
 
