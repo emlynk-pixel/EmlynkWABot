@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import express from "express";
 
 import { createTestDatabase } from "./helpers/pgliteDatabase.js";
+import { giveTestPassAndJob } from "./helpers/visaPrerequisites.js";
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
@@ -345,6 +346,7 @@ describe("details and documents need an explicit manual verification; Visa Docum
     });
 
     test("completing Visa submission = Visa Submitted, Visa approval = Visa Approved; Departed is a recorded fact, never a stage", async () => {
+        for (const id of [P, Q]) await giveTestPassAndJob(prisma, id, USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         await addDocument(P, "PASSPORT");
         await completeDocumentSubmission(P, "REVIEW_REQUIRED");
         assert.equal((await completeStage(P, "VISA_SUBMISSION")).status, 200);

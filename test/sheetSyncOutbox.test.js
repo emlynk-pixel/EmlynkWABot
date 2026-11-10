@@ -6,6 +6,7 @@ import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createTestDatabase, migrationNames } from "./helpers/pgliteDatabase.js";
+import { giveTestPassAndJob } from "./helpers/visaPrerequisites.js";
 import {
     createCandidate,
     parseCandidateBody,
@@ -118,6 +119,7 @@ describe("change capture through the real candidate service (Section 4.4 writers
 
     test("details edit and stage saves (single statements, no transaction of their own) coalesce into that one row", async () => {
         const { passportId, uniqueId } = await register();
+        await giveTestPassAndJob(prisma, passportId); // the visa stages need a PASS and a Job
         await updateCandidateDetails({ db: prisma, passportId, values: parseCandidateBody({ ...REGISTRATION, address: "12 Galle Road" }, { creating: false }).values });
         await updateStage({ db: prisma, passportId, stage: "VISA_APPROVAL", values: parseStageBody({ completed: true }, "VISA_APPROVAL").values });
         await updateStage({ db: prisma, passportId, stage: "TEST_DETAILS", values: parseStageBody({ notes: "Sat the test" }, "TEST_DETAILS").values });
@@ -144,6 +146,7 @@ describe("change capture through the real candidate service (Section 4.4 writers
 
     test("a change while the candidate's row is PROCESSING adds a new pending row (the change is never lost)", async () => {
         const { passportId, uniqueId } = await register();
+        await giveTestPassAndJob(prisma, passportId); // the visa stages need a PASS and a Job
         const [row] = await queue();
         await prisma.sheetSyncQueue.update({ where: { queueId: row.queueId }, data: { status: "PROCESSING" } });
         await updateStage({ db: prisma, passportId, stage: "VISA_APPROVAL", values: parseStageBody({ completed: true }, "VISA_APPROVAL").values });
@@ -153,6 +156,7 @@ describe("change capture through the real candidate service (Section 4.4 writers
 
     test("a pending row keeps its retry schedule when more changes arrive (no backoff bypass)", async () => {
         const { passportId } = await register();
+        await giveTestPassAndJob(prisma, passportId); // the visa stages need a PASS and a Job
         const later = new Date(Date.now() + 10 * 60_000);
         await prisma.sheetSyncQueue.updateMany({ data: { nextAttemptAt: later, attempts: 2 } });
         await updateStage({ db: prisma, passportId, stage: "VISA_APPROVAL", values: parseStageBody({ completed: true }, "VISA_APPROVAL").values });

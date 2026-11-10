@@ -1164,6 +1164,31 @@ export async function updateCandidateDetails({ db, passportId, values, actor = n
     return getCandidate({ db, passportId });
 }
 
+// The visa stages need a passed test and a Job: a candidate who failed the test can't go to visa,
+// and a candidate without a Job can't be submitted or approved (the business rule; the Status ladder,
+// candidateWorkflowStatus.js, relies on it). Checked only when a visa stage becomes completed:
+// un-completing it, its notes, and an already completed stage stay editable.
+export const VISA_STAGES = Object.freeze(["VISA_SUBMISSION", "VISA_APPROVAL"]);
+// An active Job assignment: the same signal the Status uses for Job Assigned (WORKFLOW_STATUS_SELECT).
+const hasActiveJob = async (db, passportId) => (await db.jobCandidate.findMany({ where: { passportId, isActive: true }, select: { jobId: true }, take: 1 })).length > 0;
+
+// candidate: getCandidate's result (its saved Test details result is on the TEST_DETAILS stage).
+async function requireVisaPrerequisites(db, candidate) {
+    if (candidate.stages.find((s) => s.stage === "TEST_DETAILS")?.testResult !== TEST_RESULT_PASS) {
+        throw new CandidateError(409, "VISA_NEEDS_TEST_PASS", "The candidate must pass the test before the visa stage can be completed.");
+    }
+    if (!(await hasActiveJob(db, candidate.candidate.passportId))) {
+        throw new CandidateError(409, "VISA_NEEDS_JOB", "Assign the candidate to a Job before completing the visa stage.");
+    }
+}
+
+// Scans need a Job: a candidate without one can't upload them (the other documents stay open).
+export const SCAN_NEEDS_JOB_MESSAGE = "Scans can be uploaded once the candidate is assigned to a Job.";
+async function requireJobForScan(db, passportId, documentType) {
+    if (documentType !== "SCAN") return;
+    if (!(await hasActiveJob(db, passportId))) throw new CandidateError(409, "SCAN_NEEDS_JOB", SCAN_NEEDS_JOB_MESSAGE);
+}
+
 // PUT /api/admin/candidates/:passportId/stages/:stage. Automatic stages take
 // notes only; their completion follows their data.
 export async function updateStage({ db, passportId, stage, values, actor = null, now = new Date() }) {
@@ -1197,6 +1222,7 @@ export async function updateStage({ db, passportId, stage, values, actor = null,
     if (stage === "JOB_DETAILS" && values.jobDate !== undefined) data.jobDetailsDate = values.jobDate;
 
     const changes = diffFields(STAGE_AUDIT_FIELDS, current, values);
+    if (VISA_STAGES.includes(stage) && values.completed === true && !current.completed) await requireVisaPrerequisites(db, candidate);
     await db.$transaction(async (tx) => {
         await tx.candidateStage.upsert({
             where: { passportId_stage: { passportId, stage } },
@@ -1465,6 +1491,7 @@ async function storeCandidateDocument({ db, bucket, admin, passportId, documentT
 // directly (createUploadTarget, then finalizeUpload, below).
 export async function uploadCandidateDocument({ db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now = new Date() }) {
     await requireCandidate(db, passportId);
+    await requireJobForScan(db, passportId, documentType);
     return storeCandidateDocument({
         db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now,
         place: (target) => uploadToFreeName({ bucket, buffer, mimeType, ...target }),
@@ -1517,6 +1544,7 @@ async function removeStaleStagedUploads({ bucket, folder, now }) {
 // POST /api/admin/candidates/:passportId/documents/upload-target
 export async function createUploadTarget({ db, bucket, passportId, documentType, mimeType, fileSize, now = new Date() }) {
     await requireCandidate(db, passportId);
+    await requireJobForScan(db, passportId, documentType);
     const rejection = checkDeclaredFile({ documentType, mimeType, fileSize });
     if (rejection) throw new CandidateError(422, "FILE_REJECTED", rejection);
 
@@ -1541,6 +1569,13 @@ export async function finalizeUpload({ db, bucket, admin, passportId, uploadId, 
 
     const stagedPath = stagedUploadPath(passportId, documentType, uploadId, extensionForMimeType(mimeType));
     const discard = () => removeObject(stagedPath, { bucket });
+    // (the Job may have been removed after the target was issued: the staged file is discarded)
+    try {
+        await requireJobForScan(db, passportId, documentType);
+    } catch (error) {
+        await discard();
+        throw error;
+    }
     const refuse = async (message) => {
         await discard();
         throw new CandidateError(422, "FILE_REJECTED", message);

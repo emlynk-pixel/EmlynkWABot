@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import express from "express";
 
 import { createTestDatabase } from "./helpers/pgliteDatabase.js";
+import { giveTestPassAndJob } from "./helpers/visaPrerequisites.js";
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createFakeAuthAdmin } from "./helpers/fakeSupabaseAuth.js";
 import { createAdminRouter } from "../src/routes/admin.js";
@@ -174,6 +175,7 @@ describe("Candidates: full operational access to every candidate", () => {
     });
 
     test("edits stages and records calls on an unallocated candidate (audited as the Team Lead)", async () => {
+        await giveTestPassAndJob(prisma, FREE, USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         ok(await api(TL, "PUT", `/candidates/${FREE}/stages/VISA_APPROVAL`, { completed: true }));
         assert.equal((await prisma.candidateStage.findUnique({ where: { passportId_stage: { passportId: FREE, stage: "VISA_APPROVAL" } } })).completed, true);
         ok(await api(TL, "POST", `/candidates/${FREE}/call-logs`, { note: "Called about the test" }), 201);
