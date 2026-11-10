@@ -956,6 +956,13 @@ model CandidateAdditionalDetails {
   guardianPhone        String?   @map("guardian_phone")
   guardianAddress      String?   @map("guardian_address")
 
+  // The optional fields (Physical details & skills, Clothing & sizes, Employment / skills; see
+  // NOT_APPLICABLE_FIELDS in candidateAdditionalDetailsService.js) that staff marked N/A because the
+  // value is unknown or does not apply. The field itself stays NULL (its typed column and CHECK
+  // constraint can't hold the text "N/A"); the Additional details step counts a marked field as
+  // filled. Migration 20261114120000_additional_details_not_applicable.
+  notApplicableFields  String[]  @default([]) @map("not_applicable_fields")
+
   candidate Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
 
   @@map("candidate_additional_details")

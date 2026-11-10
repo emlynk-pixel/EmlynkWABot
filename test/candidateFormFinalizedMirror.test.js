@@ -495,6 +495,10 @@ describe(`migration ${MIGRATION}`, () => {
             assert.ok(added.every((column) => detailsAfter[0][column] === null), "the new columns are NULL on existing rows");
             assert.deepEqual((await oldPg.query(`SELECT "unique_id", "status" FROM "sheet_sync_queue" ORDER BY "unique_id"`)).rows, before.queue, "the migration queues nothing itself");
 
+            // The current Prisma client also selects the later not_applicable_fields column of this table: apply
+            // that one additive migration (the rehearsal of this migration is done above).
+            await oldPg.exec(fs.readFileSync(path.join(HERE, "..", "prisma", "migrations", "20261114120000_additional_details_not_applicable", "migration.sql"), "utf8"));
+
             // Historical rows map safely (blank new cells).
             const reader = createCandidateAggregateReader({ db: oldPrisma });
             for (const uniqueId of ["8201", "8202"]) {

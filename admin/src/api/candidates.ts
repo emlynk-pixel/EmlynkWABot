@@ -396,6 +396,9 @@ export type AdditionalDetails = {
     child2Name: string | null;
     child3Name: string | null;
     otherJobSkills: string | null;
+    // The optional fields (Physical details & skills, Clothing & sizes, Employment / skills) marked N/A:
+    // such a field is empty and counts as filled. Optional: an older server does not send it.
+    notApplicableFields?: string[];
 } & Partial<CandidateFormAnswerDetails>;
 
 // The Candidate Form's other answers, kept in the same row (a Confirm writes them; Admin edits them

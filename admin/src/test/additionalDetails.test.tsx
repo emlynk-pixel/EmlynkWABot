@@ -40,6 +40,17 @@ const SUGGESTED = { nameAsInPassport: "SAMAN SILVA", permanentAddress: "1 Main S
 const NEW_VIEW: AdditionalDetailsView = { passportId: "N0000002", details: null, suggested: SUGGESTED, updatedDate: null };
 const SAVED: AdditionalDetails = { ...EMPTY, nameAsInPassport: "SAMAN K SILVA", tshirtSize: "L", pantSize: "31", shoeSize: "42", fatherAlive: true, fatherFullName: "Sunil Silva", maritalStatus: "SINGLE" };
 const SAVED_VIEW: AdditionalDetailsView = { passportId: "N0000002", details: SAVED, suggested: SUGGESTED, updatedDate: "2026-10-09T05:00:00.000Z" };
+// Every field the form shows filled (father alive, mother not, single): the step is completed.
+const COMPLETE: AdditionalDetails = {
+    ...EMPTY, nameAsInPassport: "SAMAN K SILVA", permanentAddress: "1 Main Street", birthday: "1990-03-12",
+    bloodGroup: "O+", height: "175 cm", weightKg: "70.5", drivingLicence: true, canReadDrawings: false, teamLeadingSkills: false, otherLanguages: "Tamil", englishKnowledge: "GOOD",
+    email: "saman@example.invalid", city: "Kandy", district: "Kandy", dsDivision: "Gangawata Korale", gnDivision: "Mahaiyawa", cityInRomania: "Bucharest",
+    tshirtSize: "L", pantSize: "31", shoeSize: "42",
+    fatherAlive: true, fatherFullName: "Sunil Silva", fatherBirthday: "1960-01-01", fatherPassportNumber: "N1111111", motherAlive: false,
+    maritalStatus: "SINGLE", otherJobSkills: "Welding", otherJobSkills2: "Forklift", otherJobCategory: "Mason",
+    guardianName: "Sunil Silva", guardianRelationship: "Father", guardianNic: "600011111V", guardianBirthday: "1960-01-01", guardianPhone: "+94771234567", guardianAddress: "1 Main Street",
+};
+const COMPLETE_VIEW: AdditionalDetailsView = { ...SAVED_VIEW, details: COMPLETE };
 
 const PATH = "/api/admin/candidates/N0000002/additional-details";
 
@@ -91,7 +102,7 @@ describe("Additional Details", () => {
 
         await userEvent.setup().click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
-        expect(puts(calls)[0].body).toEqual({ ...EMPTY, ...SUGGESTED, expectedUpdatedDate: null });
+        expect(puts(calls)[0].body).toEqual({ ...EMPTY, ...SUGGESTED, notApplicableFields: [], expectedUpdatedDate: null });
         expect(await screen.findByText("Additional details saved.")).toBeInTheDocument();
         expect(calls.some((c) => c.method === "PUT" && c.path === "/api/admin/candidates/N0000002")).toBe(false);
     });
@@ -394,20 +405,36 @@ describe("progress stepper", () => {
         expect(stepper().getByRole("button", { name: /^5. Document submission/ })).toHaveAttribute("aria-current", "step");
     });
 
-    test("the step is completed when details are saved", async () => {
-        backend(SAVED_VIEW);
+    test("the step is completed when every field the form shows is filled", async () => {
+        backend(COMPLETE_VIEW);
         renderApp("/candidates/N0000002");
         await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
         await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/), RENDER_STEP);
     });
 
     test("the step turns completed right after Save", async () => {
-        backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: COMPLETE_VIEW } });
         renderApp("/candidates/N0000002?tab=additional");
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
         expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
         await userEvent.setup().click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/));
+    });
+
+    test("a details row with only some fields (as a sheet import creates it) leaves the step incomplete", async () => {
+        backend({ ...SAVED_VIEW, details: { ...EMPTY, city: "Kandy", district: "Kandy", bloodGroup: "O+", tshirtSize: "L" } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
+    });
+
+    test("a save that still leaves fields empty keeps the step incomplete", async () => {
+        backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        await userEvent.setup().click(screen.getByRole("button", { name: "Save additional details" }));
+        expect(await screen.findByText("Additional details saved.")).toBeInTheDocument();
+        expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
     });
 
     test("a link to a retired stage (IVS interview, Finalizing the job) opens the first open step instead", async () => {
@@ -585,7 +612,7 @@ describe("one load, versions and resets", () => {
         let release!: () => void;
         const held = new Promise<void>((resolve) => { release = resolve; });
         const B_DETAILS = { ...DETAILS, candidate: { ...DETAILS.candidate, passportId: "N0000003", uniqueId: "0003", name: "NIMAL FERNANDO" } };
-        backend(SAVED_VIEW, {
+        backend(COMPLETE_VIEW, {
             "GET /api/admin/candidates/N0000003": { status: 200, body: B_DETAILS },
             "GET /api/admin/candidates/N0000003/additional-details": async () => {
                 await held;
@@ -612,5 +639,98 @@ describe("one load, versions and resets", () => {
         expect(await screen.findByRole("heading", { name: "NIMAL FERNANDO" }, RENDER_STEP)).toBeInTheDocument();
         expect(nav().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
         release();
+    });
+});
+
+describe("N/A on the optional fields", () => {
+    const stepper = () => within(screen.getByRole("navigation", { name: "Deployment stages" }));
+    const open = async (view: AdditionalDetailsView, routes: FetchRoutes = {}) => {
+        const { calls } = backend(view, routes);
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        return calls;
+    };
+    const save = async (calls: { method: string; path: string; body: unknown }[]) => {
+        await userEvent.setup().click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        return puts(calls)[0].body;
+    };
+    const naBox = (label: string) => screen.getByRole("checkbox", { name: `${label} not applicable` });
+
+    test("ticking N/A disables the control; Save sends the field empty and lists it", async () => {
+        const calls = await open(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        const user = userEvent.setup();
+        await user.click(naBox("Blood Group"));
+        await user.click(naBox("Driving Licence"));
+        await user.click(naBox("Other Skills 2"));
+        expect(screen.getByLabelText("Blood Group")).toBeDisabled();
+        expect(screen.getByLabelText("Blood Group")).toHaveValue("N/A");
+        const body = await save(calls);
+        expect(body).toMatchObject({ bloodGroup: null, drivingLicence: null, otherJobSkills2: null });
+        expect((body as { notApplicableFields: string[] }).notApplicableFields.sort()).toEqual(["bloodGroup", "drivingLicence", "otherJobSkills2"]);
+    });
+
+    test("clothing sizes, weight and the skills box can be marked too; a marked weight raises no validation error", async () => {
+        const calls = await open(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        const user = userEvent.setup();
+        for (const label of ["T-shirt size", "Pant size", "Shoe size (EU)", "Weight (kg)", "Other job skills"]) await user.click(naBox(label));
+        const body = (await save(calls)) as { notApplicableFields: string[]; weightKg: unknown; pantSize: unknown };
+        expect(body.notApplicableFields.sort()).toEqual(["otherJobSkills", "pantSize", "shoeSize", "tshirtSize", "weightKg"]);
+        expect([body.weightKg, body.pantSize]).toEqual([null, null]);
+        expect(screen.queryByText(/Enter the weight/)).toBeNull();
+    });
+
+    test("a loaded N/A shows ticked; unticking gives the control back, empty", async () => {
+        await open({ ...SAVED_VIEW, details: { ...SAVED, notApplicableFields: ["weightKg", "englishKnowledge"] } });
+        expect(naBox("Weight (kg)")).toBeChecked();
+        expect(screen.getByLabelText("Weight (kg)")).toBeDisabled();
+        expect(naBox("English Knowledge")).toBeChecked();
+        expect(naBox("Blood Group")).not.toBeChecked();
+        await userEvent.setup().click(naBox("Weight (kg)"));
+        expect(screen.getByLabelText("Weight (kg)")).toBeEnabled();
+        expect(screen.getByLabelText("Weight (kg)")).toHaveValue("");
+    });
+
+    test("only the optional fields offer N/A: none of the required sections has the checkbox", async () => {
+        await open(NEW_VIEW);
+        expect(screen.getAllByRole("checkbox").map((box) => box.getAttribute("aria-label")).sort()).toEqual([
+            "Blood Group not applicable", "Can Read Drawings not applicable", "Driving Licence not applicable", "English Knowledge not applicable",
+            "Height not applicable", "Other Job Category not applicable", "Other Languages not applicable", "Other Skills 2 not applicable",
+            "Other job skills not applicable", "Pant size not applicable", "Shoe size (EU) not applicable", "T-shirt size not applicable",
+            "Team Leading Skills not applicable", "Weight (kg) not applicable",
+        ].sort());
+        for (const label of ["City", "Email", "Guardian Name", "Name according to passport", "Marital status", "Is father alive?"]) {
+            expect(screen.queryByRole("checkbox", { name: `${label} not applicable` })).toBeNull();
+        }
+    });
+
+    test("text typed into a required field stays literal text, never a mark", async () => {
+        const calls = await open(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        await userEvent.setup().type(screen.getByLabelText("City"), "N/A");
+        const body = (await save(calls)) as { city: string; notApplicableFields: string[] };
+        expect(body.city).toBe("N/A");
+        expect(body.notApplicableFields).toEqual([]);
+    });
+
+    test("a viewer who cannot edit sees the marks but cannot change them", async () => {
+        backend({ ...SAVED_VIEW, details: { ...SAVED, notApplicableFields: ["bloodGroup"] } }, {}, { ...ADMIN, role: "JOB_HANDLER" });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        expect(naBox("Blood Group")).toBeChecked();
+        expect(naBox("Blood Group")).toBeDisabled();
+    });
+
+    test("the step is completed with an N/A in place of an optional value, and not with one on a required field", async () => {
+        backend({ ...COMPLETE_VIEW, details: { ...COMPLETE, bloodGroup: null, weightKg: null, notApplicableFields: ["bloodGroup", "weightKg"] } });
+        renderApp("/candidates/N0000002");
+        await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
+        await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/), RENDER_STEP);
+    });
+
+    test("an optional field left empty and unmarked keeps the step incomplete", async () => {
+        backend({ ...COMPLETE_VIEW, details: { ...COMPLETE, bloodGroup: null, notApplicableFields: [] } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
     });
 });

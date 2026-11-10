@@ -631,6 +631,9 @@ Enforced by `parseAdditionalDetailsBody` in `candidateAdditionalDetailsService.j
 | Father / mother alive | `true` / `false` / not recorded; full name required when `true`, and accepted whatever the answer; birthday accepted whatever the answer |
 | Marital status | `SINGLE`, `MARRIED`, `DIVORCED`, `WIDOWED`, `SEPARATED`; wife full name required when `MARRIED`; wife details refused otherwise |
 | Children | In order: no 2nd without a 1st, no 3rd without a 2nd; refused when the marital status is `SINGLE` |
+| N/A (`notApplicableFields`) | A list of field names; only the optional fields (Physical details & skills, Clothing & sizes, Employment / skills: `bloodGroup, height, weightKg, drivingLicence, canReadDrawings, teamLeadingSkills, otherLanguages, englishKnowledge, tshirtSize, pantSize, shoeSize, otherJobSkills, otherJobSkills2, otherJobCategory`) may be listed; a listed field is stored empty, and a field that also has a value loses its mark |
+
+**When the Additional details step counts as completed** (admin app, `additionalDetailsCompletion.ts`): every field the form shows has a real value, except that an optional field (the N/A list above) may be marked N/A instead. A parent's name, birthday and passport number are required only when that parent is alive, and the spouse's only when married; the child names are never required. A details row that exists but is only partly filled (for example one created by the sheet import) leaves the step incomplete.
 
 ---
 

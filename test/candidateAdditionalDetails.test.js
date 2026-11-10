@@ -243,6 +243,80 @@ describe("the Candidate Form's other answers on the Additional Details form", ()
     });
 });
 
+describe("N/A on the optional fields (notApplicableFields)", () => {
+    const NA = ["bloodGroup", "weightKg", "drivingLicence", "tshirtSize", "otherJobSkills2"];
+    const bodyWithNa = { ...FULL, tshirtSize: null, otherJobSkills: null, bloodGroup: null, weightKg: null, drivingLicence: null, otherJobSkills2: null, notApplicableFields: NA };
+
+    test("a marked field is stored empty, the list is saved sorted and returned, and it is audited", async () => {
+        await withServer("ADMIN", async (call) => {
+            const { status, body } = await call("/N1023757/additional-details", { method: "PUT", body: { ...bodyWithNa, notApplicableFields: [...NA, "bloodGroup"] } });
+            assert.equal(status, 200, JSON.stringify(body));
+            assert.deepEqual(body.details.notApplicableFields, [...NA].sort(), "de-duplicated and sorted");
+            assert.deepEqual([body.details.bloodGroup, body.details.weightKg, body.details.drivingLicence, body.details.tshirtSize], [null, null, null, null]);
+            assert.deepEqual((await call("/N1023757/additional-details")).body.details, body.details);
+        });
+        const [audit] = await auditRows();
+        assert.equal(JSON.parse(audit.newValue).notApplicableFields, [...NA].sort().join(","));
+    });
+
+    test("a row with nothing marked returns an empty list, and a first save adds no N/A change to the audit", async () => {
+        await withServer("ADMIN", async (call) => {
+            const { body } = await call("/N1023757/additional-details", { method: "PUT", body: FULL });
+            assert.deepEqual(body.details.notApplicableFields, []);
+        });
+        const [audit] = await auditRows();
+        assert.equal(Object.hasOwn(JSON.parse(audit.newValue), "notApplicableFields"), false);
+    });
+
+    test("only the optional fields can be marked: any other, or a non-list, is a 400 and writes nothing", async () => {
+        for (const notApplicableFields of [["city"], ["guardianName", "bloodGroup"], ["nameAsInPassport"], "bloodGroup", [1]]) {
+            const { errors } = parseAdditionalDetailsBody({ notApplicableFields });
+            assert.deepEqual(errors.map((e) => e.field), ["notApplicableFields"], JSON.stringify(notApplicableFields));
+        }
+        await withServer("ADMIN", async (call) => {
+            const { status, body } = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, notApplicableFields: ["city"] } });
+            assert.equal(status, 400);
+            assert.match(JSON.stringify(body), /cannot be marked N\/A: city/);
+        });
+        assert.equal(await prisma.candidateAdditionalDetails.count(), 0);
+    });
+
+    test("a marker is dropped when the field has a value (the value wins); null or [] clears the list", async () => {
+        const { values } = parseAdditionalDetailsBody({ bloodGroup: "O+", drivingLicence: false, notApplicableFields: ["bloodGroup", "drivingLicence", "height"] });
+        assert.deepEqual(values.notApplicableFields, ["height"], "false is a value");
+        assert.deepEqual(parseAdditionalDetailsBody({ notApplicableFields: null }).values.notApplicableFields, []);
+        assert.deepEqual(parseAdditionalDetailsBody({ notApplicableFields: [] }).values.notApplicableFields, []);
+    });
+
+    test("a page that leaves the list out keeps it; one that sends a value for a marked field drops that marker", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: "N1023757", notApplicableFields: ["bloodGroup", "height"] } });
+        await withServer("ADMIN", async (call) => {
+            const view = (await call("/N1023757/additional-details")).body;
+            const kept = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, expectedUpdatedDate: view.updatedDate } });
+            assert.equal(kept.status, 200, JSON.stringify(kept.body));
+            assert.deepEqual(kept.body.details.notApplicableFields, ["bloodGroup", "height"]);
+            const filled = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, bloodGroup: "O+", expectedUpdatedDate: kept.body.updatedDate } });
+            assert.deepEqual([filled.body.details.bloodGroup, filled.body.details.notApplicableFields], ["O+", ["height"]], "the kept list is cleaned of the field this save fills");
+        });
+    });
+
+    test("marking and unmarking is an audited change; the same save again writes nothing", async () => {
+        await withServer("ADMIN", async (call) => {
+            const first = await call("/N1023757/additional-details", { method: "PUT", body: FULL });
+            const marked = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, notApplicableFields: ["bloodGroup"], expectedUpdatedDate: first.body.updatedDate } });
+            assert.equal(marked.status, 200);
+            const again = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, notApplicableFields: ["bloodGroup"], expectedUpdatedDate: marked.body.updatedDate } });
+            assert.equal(again.body.updatedDate, marked.body.updatedDate, "unchanged: no write");
+            await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, notApplicableFields: [], expectedUpdatedDate: marked.body.updatedDate } });
+        });
+        const rows = await auditRows();
+        assert.equal(rows.length, 3, "create, mark, unmark");
+        assert.deepEqual(JSON.parse(rows[1].newValue), { notApplicableFields: "bloodGroup" });
+        assert.deepEqual(JSON.parse(rows[2].previousValue), { notApplicableFields: "bloodGroup" });
+        assert.deepEqual(JSON.parse(rows[2].newValue), { notApplicableFields: null });
+    });
+});
+
 describe("audit", () => {
     test("the first save is CREATE_ADDITIONAL_DETAILS with the fields given, by req.user", async () => {
         await withServer("ADMIN", async (call) => {
