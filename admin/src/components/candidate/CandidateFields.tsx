@@ -127,23 +127,38 @@ export function completionGaps(value: CandidateDetailsInput): Record<string, str
 // submitted: the Candidate Form path of this field; shows "Candidate submitted: ... [Confirm]" when the candidate sent a different value.
 // While the field has an unresolved Candidate Form change it is outlined (more strongly when it is the
 // field the page was opened for); the outline goes as soon as the change is confirmed or revoked.
-export function Field({ label, required, error, htmlFor, children, className = "", help, submitted }: { label: string; required?: boolean; error?: string; htmlFor: string; children: ReactNode; className?: string; help?: string; submitted?: string }) {
+// notApplicable: an "N/A" checkbox on the label row for a field that may be unknown (Additional details). Ticked, the
+// control is replaced by a disabled "N/A" box; the caller keeps the field empty and records the mark.
+export type NotApplicableToggle = { checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean };
+
+export function Field({ label, required, error, htmlFor, children, className = "", help, submitted, notApplicable }: { label: string; required?: boolean; error?: string; htmlFor: string; children: ReactNode; className?: string; help?: string; submitted?: string; notApplicable?: NotApplicableToggle }) {
     const text = <>{label}{required && <span className="text-critical"> *</span>}</>;
+    const labelRow = help ? (
+        <div className="flex items-center gap-1.5">
+            <label htmlFor={htmlFor} className="block text-label-sm text-ink-muted">{text}</label>
+            <HelpTip label={label} text={help} />
+        </div>
+    ) : (
+        <label htmlFor={htmlFor} className="block text-label-sm text-ink-muted">{text}</label>
+    );
     const conflict = useFieldConflict(submitted);
     const highlight = conflict.focused
         ? "rounded-lg bg-critical-bg p-2 -m-2 ring-2 ring-critical"
         : conflict.pending ? "rounded-lg bg-review-bg p-2 -m-2 ring-1 ring-review-border" : "";
     return (
         <div className={`${className} ${highlight}`.trim()} data-conflict-field={submitted} data-conflict={conflict.pending ? (conflict.focused ? "focused" : "pending") : undefined}>
-            {help ? (
-                <div className="mb-1 flex items-center gap-1.5">
-                    <label htmlFor={htmlFor} className="block text-label-sm text-ink-muted">{text}</label>
-                    <HelpTip label={label} text={help} />
-                </div>
-            ) : (
-                <label htmlFor={htmlFor} className="mb-1 block text-label-sm text-ink-muted">{text}</label>
-            )}
-            {children}
+            <div className="mb-1 flex items-center justify-between gap-2">
+                {labelRow}
+                {notApplicable && (
+                    <label className="flex shrink-0 items-center gap-1 text-label-sm text-ink-muted">
+                        <input type="checkbox" aria-label={`${label} not applicable`} checked={notApplicable.checked} onChange={(e) => notApplicable.onChange(e.target.checked)} disabled={notApplicable.disabled} className="size-3.5" />
+                        N/A
+                    </label>
+                )}
+            </div>
+            {notApplicable?.checked
+                ? <input id={htmlFor} value="N/A" readOnly disabled aria-label={`${label}: not applicable`} className={`${fieldControl} bg-canvas text-ink-muted`} />
+                : children}
             {submitted && <SubmittedHint field={submitted} />}
             {error && <p className="mt-1 text-label-sm text-critical">{error}</p>}
         </div>

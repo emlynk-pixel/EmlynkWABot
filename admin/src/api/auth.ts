@@ -17,6 +17,12 @@ export async function fetchCurrentUser(token: string, signal?: AbortSignal): Pro
     return user;
 }
 
+// PUT /auth/me/name: the signed-in user's own name (every role; only the name). Answers the new profile.
+export async function updateOwnName(token: string, name: string): Promise<AppUser> {
+    const { user } = await apiRequest<{ user: AppUser }>("/auth/me/name", { method: "PUT", token, body: { name } });
+    return user;
+}
+
 // GET /auth/invitation — the status of the signed-in identity's own account, asked BEFORE a
 // password is set, so a revoked invitation never gets one. null: no account for this identity.
 export async function fetchInvitationStatus(token: string): Promise<"INVITED" | "ACTIVE" | "INACTIVE" | null> {

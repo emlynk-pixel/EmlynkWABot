@@ -1,6 +1,7 @@
 import { screen, within } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
-import { ALL_ROLES, ROLES, assignableRoles, canManageUser, hasRole, invitableRoles, isAdmin, roleLabel, ADMIN_ONLY, DASHBOARD_ROLES, MASTER_DATA_ROLES } from "../auth/roles";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, test, vi } from "vitest";
+import { ALL_ROLES, ROLES, assignableRoles, canManageUser, canRenameUser, hasRole, invitableRoles, isAdmin, roleLabel, ADMIN_ONLY, DASHBOARD_ROLES, MASTER_DATA_ROLES } from "../auth/roles";
 import { ADMIN, RENDER_STEP, renderApp, signedInBackend, userWithRole } from "./helpers";
 
 // The OWNER role in the admin app: every ADMIN page, plus managing Admin accounts. Nobody gives the
@@ -19,10 +20,10 @@ const USERS = [
     account("desk-1", "Dee Desk", "REGISTRATION_DESK"),
     account("analyst-1", "Ann Analyst", "ANALYST", "INACTIVE"),
 ];
-const as = (role: string) => {
+const as = (role: string, routes: Parameters<typeof signedInBackend>[0] = {}) => {
     const me = { ...userWithRole(role) };
     const users = USERS.map((u) => (u.userId === me.userId ? { ...u, role } : u));
-    return signedInBackend({ "GET /auth/me": { status: 200, body: { user: me } }, "GET /api/admin/users": { status: 200, body: { users } } });
+    return signedInBackend({ "GET /auth/me": { status: 200, body: { user: me } }, "GET /api/admin/users": { status: 200, body: { users } }, ...routes });
 };
 const rowOf = async (name: string) => (await screen.findByText(name, {}, RENDER_STEP)).closest("tr") as HTMLElement;
 const optionsOf = (select: HTMLElement) => within(select).getAllByRole("option").map((o) => o.getAttribute("value"));
@@ -124,7 +125,7 @@ describe("ADMIN: no control over Admin and Owner accounts", () => {
         const deskSelect = screen.getByRole("combobox", { name: "Change role for Dee Desk" });
         expect(deskSelect).toBeEnabled();
         expect(optionsOf(deskSelect)).toEqual(["TEAM_LEAD", "ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]);
-        expect(screen.getByText(/Admin accounts can be changed by an Owner only/)).toBeInTheDocument();
+        expect(screen.getByText(/Admin roles can be changed by an Owner only/)).toBeInTheDocument();
         expect(within(await rowOf("Olga Owner")).getByText("Owner", { selector: "span" })).toBeInTheDocument();
     });
 
@@ -137,5 +138,87 @@ describe("ADMIN: no control over Admin and Owner accounts", () => {
         for (const name of ["Adam Admin", "Olga Owner"]) expect(within(await rowOf(name)).queryAllByRole("button")).toEqual([]);
         expect(within(await rowOf("Dee Desk")).getByRole("button", { name: "Deactivate" })).toBeInTheDocument();
         expect(within(await rowOf("Ann Analyst")).getByRole("button", { name: "Re-invite" })).toBeInTheDocument();
+    });
+});
+
+describe("names: your own (profile) and other users' (Change Roles)", () => {
+    const editButton = (row: HTMLElement) => within(row).queryByRole("button", { name: /^Edit name of / });
+
+    test("canRenameUser: your own always; an Owner or Admin any account but the Owner's; nobody else another's", () => {
+        const target = (userId: string, role: string) => ({ userId, role });
+        const admin = userWithRole("ADMIN");
+        expect(canRenameUser(admin, target(admin.userId, "ADMIN"))).toBe(true);
+        expect(canRenameUser(admin, target("admin-2", "ADMIN"))).toBe(true);
+        expect(canRenameUser(admin, target("desk-1", "REGISTRATION_DESK"))).toBe(true);
+        expect(canRenameUser(admin, target("owner-2", "OWNER"))).toBe(false);
+        expect(canRenameUser(OWNER, target("admin-2", "ADMIN"))).toBe(true);
+        const analyst = userWithRole("ANALYST");
+        expect(canRenameUser(analyst, target(analyst.userId, "ANALYST"))).toBe(true);
+        expect(canRenameUser(analyst, target("desk-1", "REGISTRATION_DESK"))).toBe(false);
+    });
+
+    test("ADMIN: an Edit name button on every row but the Owner's (another Admin included)", async () => {
+        as("ADMIN");
+        renderApp("/settings/roles");
+        expect(editButton(await rowOf("Olga Owner"))).toBeNull();
+        for (const name of ["Adam Admin", "Dee Desk", "Ann Analyst", "Test User"]) expect(editButton(await rowOf(name)), name).not.toBeNull();
+    });
+
+    test("OWNER: renames an Admin through user management; the list reloads with a confirmation", async () => {
+        const { calls } = as("OWNER", { "PUT /api/admin/users/admin-2/name": { status: 200, body: { user: account("admin-2", "Adam Smith", "ADMIN", "INACTIVE") } } });
+        renderApp("/settings/roles");
+        const user = userEvent.setup();
+        await user.click(editButton(await rowOf("Adam Admin"))!);
+        const dialog = await screen.findByRole("dialog", { name: "Edit name of Adam Admin" });
+        const input = within(dialog).getByLabelText(/^Name/);
+        await user.clear(input);
+        await user.type(input, "  Adam   Smith ");
+        await user.click(within(dialog).getByRole("button", { name: "Save" }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ name: "Adam Smith" }));
+        expect(calls.find((c) => c.method === "PUT")?.path).toBe("/api/admin/users/admin-2/name");
+        expect(await screen.findByText("Name updated.")).toBeInTheDocument();
+        expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    test("your own row saves through your profile (PUT /auth/me/name) and refreshes the signed-in user", async () => {
+        const { calls } = as("ADMIN", { "PUT /auth/me/name": { status: 200, body: { user: { ...userWithRole("ADMIN"), name: "Renamed Me" } } } });
+        renderApp("/settings/roles");
+        const user = userEvent.setup();
+        await user.click(editButton(await rowOf("Test User"))!);
+        const dialog = await screen.findByRole("dialog", { name: "Edit your name" });
+        await user.clear(within(dialog).getByLabelText(/^Name/));
+        await user.type(within(dialog).getByLabelText(/^Name/), "Renamed Me");
+        await user.click(within(dialog).getByRole("button", { name: "Save" }));
+        await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.path === "/auth/me/name")).toBe(true));
+        expect(calls.some((c) => c.method === "PUT" && c.path.startsWith("/api/admin/users/"))).toBe(false);
+        await vi.waitFor(() => expect(calls.filter((c) => c.method === "GET" && c.path === "/auth/me").length).toBeGreaterThan(1));
+    });
+
+    test("a server refusal is shown in the dialog and nothing is confirmed", async () => {
+        as("ADMIN", { "PUT /api/admin/users/desk-1/name": { status: 403, body: { message: "Insufficient permissions", code: "FORBIDDEN" } } });
+        renderApp("/settings/roles");
+        const user = userEvent.setup();
+        await user.click(editButton(await rowOf("Dee Desk"))!);
+        const dialog = await screen.findByRole("dialog");
+        await user.type(within(dialog).getByLabelText(/^Name/), " X");
+        await user.click(within(dialog).getByRole("button", { name: "Save" }));
+        expect(await within(dialog).findByText("Insufficient permissions")).toBeInTheDocument();
+        expect(screen.queryByText("Name updated.")).toBeNull();
+    });
+
+    test("the profile menu: Edit name for any role; saved through PUT /auth/me/name", async () => {
+        const { calls } = as("ANALYST", { "PUT /auth/me/name": { status: 200, body: { user: { ...userWithRole("ANALYST"), name: "New Name" } } } });
+        renderApp("/");
+        const user = userEvent.setup();
+        await user.click(await screen.findByRole("button", { name: /^Account: / }, RENDER_STEP));
+        await user.click(screen.getByRole("button", { name: "Edit name" }));
+        const dialog = await screen.findByRole("dialog", { name: "Edit name" });
+        const input = within(dialog).getByLabelText(/^Name/);
+        expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+        await user.clear(input);
+        await user.type(input, "New Name");
+        await user.click(within(dialog).getByRole("button", { name: "Save" }));
+        await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT" && c.path === "/auth/me/name")?.body).toEqual({ name: "New Name" }));
+        await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     });
 });

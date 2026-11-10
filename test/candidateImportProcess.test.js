@@ -500,18 +500,32 @@ describe("re-import and row atomicity", () => {
         assert.equal(await prisma.agent.count(), 0);
     });
 
-    test("verified details: no detail, allocation or Test is written (SKIPPED_VERIFIED), but the visa status still becomes the Status", async () => {
+    test("verified details: no detail or allocation is written (SKIPPED_VERIFIED), but the Test details and the visa status are", async () => {
         await importRows(renumber([row(1, { OFFICER: "" })]));
         await prisma.candidateVerification.create({ data: { passportId: passportOf(1), detailsVerifiedAt: new Date(), detailsVerifiedById: "admin-ADMIN" } });
         const { preview: p } = await importRows(renumber([row(1, { OFFICER: "John", "VISA STATUS": "Submit", "INTERVIEW DATE": "01.11.2026" })]));
-        assert.ok(issuesOf(p, 2).warnings.includes("Candidate details are verified in Emlynk: details not changed (a visa status is still applied)"));
+        assert.ok(issuesOf(p, 2).warnings.includes("Candidate details are verified in Emlynk: details not changed (the Test details and a visa status are still applied)"));
         assert.equal(await allocationOf(1), null);
-        assert.deepEqual((await prisma.candidateStage.findMany({ select: { stage: true, completed: true } })), [{ stage: "VISA_SUBMISSION", completed: true }]);
+        const stages = await prisma.candidateStage.findMany({ select: { stage: true, completed: true, testResult: true }, orderBy: { stage: "asc" } });
+        assert.deepEqual(stages, [{ stage: "TEST_DETAILS", completed: true, testResult: "PASS" }, { stage: "VISA_SUBMISSION", completed: true, testResult: null }], "the Test is written (PASS: the visa step)");
         assert.equal(await statusOf(1), "VISA_SUBMITTED");
         assert.ok((await prisma.candidateVerification.findUnique({ where: { passportId: passportOf(1) } })).detailsVerifiedAt, "the verification is kept");
-        // No visa status at all: nothing is written (SKIPPED_VERIFIED as before).
+        // Nothing new (the same Test, no visa status): nothing is written (SKIPPED_VERIFIED as before).
         const { preview: plain } = await importRows(renumber([row(1, { OFFICER: "John", "INTERVIEW DATE": "01.11.2026" })]));
         assert.equal(plain.summary.skippedVerified, 1);
+    });
+
+    test("verified details with only a Test to write: the Test details are filled, details and verification stay", async () => {
+        await importRows(renumber([row(2, { OFFICER: "" })]));
+        await prisma.candidateVerification.create({ data: { passportId: passportOf(2), detailsVerifiedAt: new Date(), detailsVerifiedById: "admin-ADMIN" } });
+        const before = await prisma.candidate.findUnique({ where: { passportId: passportOf(2) } });
+        const { preview: p } = await importRows(renumber([row(2, { OFFICER: "John", "INTERVIEW DATE": "02.11.2026", "INTERVIEW PASS FAIL": "PASS", "OTHER NAME": "CHANGED NAME" })]));
+        assert.ok(issuesOf(p, 2).warnings.includes("Candidate details are verified in Emlynk: details not changed (the Test details and a visa status are still applied)"));
+        assert.equal((await prisma.candidateStage.findFirst({ where: { passportId: passportOf(2), stage: "TEST_DETAILS" } })).testResult, "PASS");
+        const after = await prisma.candidate.findUnique({ where: { passportId: passportOf(2) } });
+        assert.equal(after.otherName, before.otherName, "verified details unchanged");
+        assert.equal(await allocationOf(2), null);
+        assert.ok((await prisma.candidateVerification.findUnique({ where: { passportId: passportOf(2) } })).detailsVerifiedAt);
     });
 });
 

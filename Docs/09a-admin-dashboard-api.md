@@ -678,10 +678,11 @@ Extra details of a candidate (Admin > Candidates > **Additional Details** tab), 
 
 ### `PUT /api/admin/candidates/:passportId/additional-details`
 
-The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtSize, pantSize, shoeSize, fatherAlive, fatherFullName, fatherBirthday, motherAlive, motherFullName, motherBirthday, maritalStatus, wifeFullName, wifeBirthday, child1Name, child2Name, child3Name, otherJobSkills`. It responds with the same shape as GET.
+The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtSize, pantSize, shoeSize, fatherAlive, fatherFullName, fatherBirthday, motherAlive, motherFullName, motherBirthday, maritalStatus, wifeFullName, wifeBirthday, child1Name, child2Name, child3Name, otherJobSkills`, the Candidate Form answers, and `notApplicableFields`. It responds with the same shape as GET.
 
 - **Full replacement**: a field left out or blank is cleared. Unknown fields, including a `passportId` in the body, are ignored; the candidate is the one in the URL.
 - **Version check**: the body may carry `expectedUpdatedDate`, the `updatedDate` the form was loaded with (`null` when nothing was saved yet). If the stored version is different, the save is refused with **409** `{ code: "DETAILS_CHANGED" }` and nothing is written, so one person's save never silently undoes another's. A stale form whose values already equal the stored ones is accepted as a no-op. Omitting the field skips the check. The write is compare-and-swap on that version, so two saves at the same moment can't both win.
+- **N/A on the optional fields**: `notApplicableFields` is a list of the optional fields marked N/A because the value is unknown or does not apply. Only `bloodGroup, height, weightKg, drivingLicence, canReadDrawings, teamLeadingSkills, otherLanguages, englishKnowledge, tshirtSize, pantSize, shoeSize, otherJobSkills, otherJobSkills2, otherJobCategory` may be listed (any other name is a 400 `cannot be marked N/A`). A listed field is stored empty, and the admin app counts it as filled. A listed field that also carries a value loses its mark (the value wins). Left out of the body, the stored list is kept; `null` or `[]` clears it. GET always returns the list (`[]` when nothing is marked).
 - **Never creates a candidate** (404 for an unknown passport ID) and **never changes the candidate's own record**.
 - **400** `{ message, errors: [{ field, message }] }` for invalid values (rules in `Docs/20-candidate-management.md` §8.1). Nothing is written.
 - **Audit**: the first save that stores anything writes `CREATE_ADDITIONAL_DETAILS` (`NONE` → `CREATED`); later changes write `UPDATE_ADDITIONAL_DETAILS` (`CREATED` → `UPDATED`).
@@ -951,6 +952,8 @@ The tiers in `src/routes/admin.js` name ADMIN only; OWNER passes each of them th
 
 `GET /auth/me` and `POST /auth/complete-invite` need a Supabase session but not a particular role.
 
+`PUT /auth/me/name` `{ name }`: the signed-in user changes their own display name (every role, an ACTIVE account; only the name). Trimmed, inner spaces collapsed, 1 to 100 characters (400 otherwise). Answers `{ user }` (the profile, as `GET /auth/me`). Audited `UPDATE_USER_NAME` (old -> new); the same name again writes nothing.
+
 ### 12.3 Transport and CSRF
 
 Every request authenticates with `Authorization: Bearer <Supabase access token>`. No cookie authenticates a request, so CSRF protection does not apply (decision recorded in `SUPABASE_AUTH.md`).
@@ -976,6 +979,7 @@ Summary of the rules (all enforced server-side on the database rows, inside the 
 | `GET` | `/api/admin/users` | List application users (profile fields only) |
 | `POST` | `/api/admin/users/invite` | Invite a user: `{ name, email, role }` (OWNER: ADMIN and below; ADMIN: below ADMIN; nobody invites an OWNER) |
 | `PUT` | `/api/admin/users/:userId/role` | Change a user's role (not your own; 403 `OWNER_LOCKED` for an OWNER account or the OWNER role; 403 `OWNER_REQUIRED` for an ADMIN touching an ADMIN or giving ADMIN) |
+| `PUT` | `/api/admin/users/:userId/name` | Change another user's display name `{ name }` (only the name). OWNER: any account but an Owner's; ADMIN: any account but an Owner's, another ADMIN included. 403 `OWNER_LOCKED` for an OWNER account (the Owner changes their own name through `PUT /auth/me/name`); 400 `SELF_CHANGE` for your own account; 400 for a blank or too long name. Audited `UPDATE_USER_NAME` |
 | `POST` | `/api/admin/users/:userId/deactivate` | Deactivate a user (not your own account; same rules) |
 
 **Invitation flow.**

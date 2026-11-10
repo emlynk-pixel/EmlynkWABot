@@ -601,6 +601,11 @@ export function updateUserRole(token: string, userId: string, role: string): Pro
 }
 
 // Also revokes a pending invitation: an inactive account can't use the app.
+// Another user's name (OWNER / ADMIN; never the Owner's account: 403 OWNER_LOCKED).
+export function updateUserName(token: string, userId: string, name: string): Promise<{ user: UserSummary }> {
+    return apiRequest<{ user: UserSummary }>(`/api/admin/users/${encodeURIComponent(userId)}/name`, { method: "PUT", token, body: { name } });
+}
+
 export function deactivateUser(token: string, userId: string): Promise<{ user: UserSummary }> {
     return apiRequest<{ user: UserSummary }>(`/api/admin/users/${encodeURIComponent(userId)}/deactivate`, { method: "POST", token });
 }

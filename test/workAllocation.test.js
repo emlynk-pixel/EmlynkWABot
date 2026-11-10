@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import express from "express";
 
 import { createTestDatabase } from "./helpers/pgliteDatabase.js";
+import { giveTestPassAndJob } from "./helpers/visaPrerequisites.js";
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
@@ -146,6 +147,7 @@ describe("RBAC: candidate lists", () => {
 describe("RBAC: editing", () => {
     test("2, 5, 8. ADMIN and OWNER can edit any candidate, allocated or not; REGISTRATION_DESK looks any one up but edits no stage beyond Candidate Details", async () => {
         await seedAllocations();
+        for (const i of [1, 4]) await giveTestPassAndJob(prisma, pid(i), USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         for (const [who, i] of [[USERS.ADMIN, 1], [USERS.OWNER, 4]]) {
             assert.equal((await api(who, "PUT", `/candidates/${pid(i)}/stages/VISA_APPROVAL`, { completed: true })).status, 200, who.role);
             assert.equal((await api(who, "GET", `/candidates/${pid(i)}`)).status, 200, who.role);
@@ -156,6 +158,7 @@ describe("RBAC: editing", () => {
 
     test("13-14. an ANALYST edits their own candidate; another Analyst's or an unallocated one is 404, and nothing changes", async () => {
         await seedAllocations();
+        await giveTestPassAndJob(prisma, pid(1), USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         assert.equal((await api(USERS.ANN, "PUT", `/candidates/${pid(1)}/stages/VISA_APPROVAL`, { completed: true })).status, 200);
         for (const i of [4, 20]) {
             const { status, body } = await api(USERS.ANN, "PUT", `/candidates/${pid(i)}/stages/VISA_APPROVAL`, { completed: true });

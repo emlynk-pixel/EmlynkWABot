@@ -65,8 +65,11 @@ const VALID_BODY = Object.freeze({
 // exercise the candidate behaviour itself; the scoping (an Analyst never
 // reaches a candidate that is not theirs) is tested on PostgreSQL in
 // workAllocation.test.js. null: no candidate is allocated.
-function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], admins = [ADMIN], allocatedTo = ADMIN.adminId } = {}) {
-    const state = { users: users.map((u) => ({ ...u })), documents: [...documents], stages: [...stages], callLogs: [...callLogs], auditLogs: [], admins };
+// activeJobs: the candidates holding an active Job (Scans and the visa stages need one). By default the
+// candidate these tests register (N1023757) holds one, so a test about something else can upload Scans; the
+// rule itself is tested with activeJobs: [].
+function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], admins = [ADMIN], allocatedTo = ADMIN.adminId, activeJobs = ["N1023757"] } = {}) {
+    const state = { users: users.map((u) => ({ ...u })), documents: [...documents], stages: [...stages], callLogs: [...callLogs], auditLogs: [], admins, activeJobs: new Set(activeJobs) };
     const unique = (code, target) => Object.assign(new Error("Unique constraint failed"), { code, meta: { target } });
     const matches = (row, where = {}) => Object.entries(where).every(([key, condition]) => {
         if (key === "OR") return condition.some((c) => matches(row, c));
@@ -121,8 +124,11 @@ function createFakeDb({ users = [], documents = [], stages = [], callLogs = [], 
                 return user;
             },
         },
-        // Job assignments (jobAssignmentReader.js): none in these tests; jobManagement.test.js covers them on a real database.
-        jobCandidate: { findMany: async () => [] },
+        // Job assignments (jobAssignmentReader.js): none shown in these tests; jobManagement.test.js covers them on a real
+        // database. The "has an active Job" check (Scans, visa stages) reads state.activeJobs.
+        jobCandidate: {
+            findMany: async ({ where = {}, select } = {}) => (!select?.job && where.isActive === true && state.activeJobs.has(where.passportId) ? [{ jobId: "job-1" }] : []),
+        },
         // Candidate Form answers (Candidate History): none in these tests; candidateFormActivity.test.js covers them on a real database.
         candidateFormResponse: { findUnique: async () => null, findMany: async () => [] },
         candidateStage: {
@@ -467,6 +473,9 @@ describe("optional passport and contact details", () => {
     });
 });
 
+// The candidate passed the test: the visa stages need it (and a Job, held by default: createFakeDb activeJobs).
+const passTest = (db, passportId = "N1023757") => db.state.stages.push({ passportId, stage: "TEST_DETAILS", completed: false, completedAt: null, notes: null, testResult: "PASS" });
+
 describe("independent stages", () => {
     test("six stages in business order: Job details follows Test details; Visa submission comes before Visa approval", () => {
         assert.deepEqual([...CANDIDATE_STAGES], ["TEST_DETAILS", "JOB_DETAILS", "CANDIDATE_DETAILS", "DOCUMENT_SUBMISSION", "VISA_SUBMISSION", "VISA_APPROVAL"]);
@@ -475,6 +484,7 @@ describe("independent stages", () => {
     test("Visa submission is completed by an admin like Visa approval: notes and completion, no test fields, audited", async () => {
         const db = createFakeDb();
         await registered(db);
+        passTest(db);
         assert.equal(parseStageBody({ jobId: "J-1" }, "VISA_SUBMISSION").errors[0].field, "jobId");
         const result = await updateStage({ db, passportId: "N1023757", stage: "VISA_SUBMISSION", values: { completed: true, notes: "Lodged at the embassy" }, actor: ADMIN });
         const stage = result.stages.find((s) => s.stage === "VISA_SUBMISSION");
@@ -485,9 +495,34 @@ describe("independent stages", () => {
         assert.equal(JSON.parse(audit.newValue).stage, "VISA_SUBMISSION");
     });
 
+    test("the visa stages need a passed test and an active Job; un-completing and notes stay open", async () => {
+        const complete = (db, stage = "VISA_SUBMISSION") => updateStage({ db, passportId: "N1023757", stage, values: { completed: true }, actor: ADMIN });
+        const code = async (promise) => { try { await promise; return "OK"; } catch (error) { return error.code; } };
+        // No test result / FAIL: refused, whatever the Job.
+        let db = createFakeDb();
+        await registered(db);
+        assert.equal(await code(complete(db)), "VISA_NEEDS_TEST_PASS");
+        db.state.stages.push({ passportId: "N1023757", stage: "TEST_DETAILS", completed: true, completedAt: new Date(), notes: null, testResult: "FAIL" });
+        assert.equal(await code(complete(db, "VISA_APPROVAL")), "VISA_NEEDS_TEST_PASS");
+        // PASS without a Job: refused.
+        db = createFakeDb({ activeJobs: [] });
+        await registered(db);
+        passTest(db);
+        for (const stage of ["VISA_SUBMISSION", "VISA_APPROVAL"]) assert.equal(await code(complete(db, stage)), "VISA_NEEDS_JOB", stage);
+        assert.equal(db.state.stages.filter((s) => s.stage.startsWith("VISA") && s.completed).length, 0, "nothing completed");
+        // Notes and un-completing never need them.
+        assert.equal(await code(updateStage({ db, passportId: "N1023757", stage: "VISA_SUBMISSION", values: { notes: "Waiting" }, actor: ADMIN })), "OK");
+        db.state.stages.push({ passportId: "N1023757", stage: "VISA_APPROVAL", completed: true, completedAt: new Date(), notes: null });
+        assert.equal(await code(updateStage({ db, passportId: "N1023757", stage: "VISA_APPROVAL", values: { completed: false }, actor: ADMIN })), "OK");
+        // PASS and a Job: completed.
+        db.state.activeJobs.add("N1023757");
+        assert.equal(await code(complete(db)), "OK");
+    });
+
     test("every stage can be completed in any order; completed stages are reported in display order", async () => {
         const db = createFakeDb();
         await registered(db);
+        passTest(db);
         for (const stage of ["VISA_APPROVAL", "VISA_SUBMISSION"]) {
             await updateStage({ db, passportId: "N1023757", stage, values: { completed: true } });
         }
@@ -903,6 +938,24 @@ describe("document uploads", () => {
         assert.equal(db.state.documents.length, 1);
     });
 
+    test("Scans need an active Job (direct upload, upload target and finalize); other documents don't", async () => {
+        const db = createFakeDb({ activeJobs: [] });
+        const bucket = createFakeBucket();
+        await registered(db);
+        const code = async (promise) => { try { await promise; return "OK"; } catch (error) { return error.code; } };
+        assert.equal(await code(uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "SCAN", variant: null, mimeType: "application/pdf", buffer: PDF })), "SCAN_NEEDS_JOB");
+        assert.equal(await code(createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "SCAN", mimeType: "application/pdf", fileSize: PDF.length })), "SCAN_NEEDS_JOB");
+        assert.equal(await code(uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "MEDICAL", variant: null, mimeType: "application/pdf", buffer: PDF })), "OK");
+        // A target issued while the candidate had a Job, finalized after it was removed: refused, the staged file removed.
+        db.state.activeJobs.add("N1023757");
+        const { uploadId } = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "SCAN", mimeType: "application/pdf", fileSize: PDF.length });
+        bucket.browserPut(bucket.signedUploads.at(-1), PDF, "application/pdf");
+        db.state.activeJobs.delete("N1023757");
+        assert.equal(await code(finalizeUpload({ db, bucket, admin: ADMIN, passportId: "N1023757", uploadId, documentType: "SCAN", variant: null, mimeType: "application/pdf", originalFileName: null })), "SCAN_NEEDS_JOB");
+        assert.ok(![...bucket.objects.keys()].some((key) => key.includes("/scan/")), "the staged Scan is removed");
+        assert.equal(db.state.documents.filter((d) => d.documentType === "SCAN").length, 0);
+    });
+
     test("a document record that can't be written removes the uploaded object again", async () => {
         const db = createFakeDb();
         const bucket = createFakeBucket();
@@ -925,6 +978,7 @@ describe("candidate list and call log", () => {
     test("lists candidates with NIC, job types and stage progress; NIC is searchable", async () => {
         const db = createFakeDb({ users: [{ passportId: "P2222222", uniqueId: "0001", firstName: "Kamal", otherName: "Perera", job: "Caregiver" }] });
         await registered(db);
+        passTest(db);
         await updateStage({ db, passportId: "N1023757", stage: "VISA_APPROVAL", values: { completed: true } });
 
         const all = await listCandidates({ db, params: { page: 1, pageSize: 25 } });
@@ -1661,6 +1715,7 @@ describe("registration lookup of an existing passport ID", () => {
         const bucket = createFakeBucket();
         await registered(db, { nationality: "Sri Lankan", sex: "F", whatsappNumber: "0771234567" });
         await uploadCandidateDocument({ db, bucket, admin: ADMIN, passportId: "N1023757", documentType: "PASSPORT", variant: null, mimeType: "application/pdf", buffer: PDF, originalFileName: "passport.pdf" });
+        passTest(db);
         await updateStage({ db, passportId: "N1023757", stage: "VISA_APPROVAL", values: { completed: true, notes: "Passed" } });
 
         const loaded = await getCandidate({ db, passportId: await resolveCandidatePassportId({ db, passportId: "N1023757" }) });

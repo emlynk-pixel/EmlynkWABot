@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import express from "express";
 
 import { createTestDatabase, migrationNames } from "./helpers/pgliteDatabase.js";
+import { giveTestPassAndJob } from "./helpers/visaPrerequisites.js";
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
@@ -595,6 +596,7 @@ describe("candidate history (activity with the call logs)", () => {
     });
 
     test("13, 15. stage completion by an admin shows with who did it, once; a completion saved before stages were audited shows without one; automatic stages are not invented", async () => {
+        await giveTestPassAndJob(prisma, A, USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         await updateStage({ db: prisma, passportId: A, stage: "VISA_SUBMISSION", values: { completed: true }, actor: USERS.ADMIN });
         await updateStage({ db: prisma, passportId: A, stage: "VISA_APPROVAL", values: { notes: "Waiting for the embassy" }, actor: USERS.ADMIN });
         await prisma.candidateStage.create({ data: { passportId: A, stage: "JOB_DETAILS", completed: true, completedAt: new Date("2026-09-01T05:00:00Z") } });
@@ -611,6 +613,7 @@ describe("candidate history (activity with the call logs)", () => {
 
     test("6. newest first across every source, call logs stay separate items", async () => {
         await staffUpload(A, "PASSPORT", { receivedDate: new Date("2020-01-01T05:00:00Z") });
+        await giveTestPassAndJob(prisma, A, USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         await updateStage({ db: prisma, passportId: A, stage: "VISA_SUBMISSION", values: { completed: true }, actor: USERS.ADMIN });
         await logCall(A, "Called");
         const body = await history();
@@ -623,6 +626,7 @@ describe("candidate history (activity with the call logs)", () => {
 
     test("8, 19. never another candidate's events", async () => {
         await staffUpload(B, "PASSPORT");
+        await giveTestPassAndJob(prisma, B, USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         await updateStage({ db: prisma, passportId: B, stage: "VISA_SUBMISSION", values: { completed: true }, actor: USERS.ADMIN });
         await logCall(B, "B only");
         const body = await history(A);

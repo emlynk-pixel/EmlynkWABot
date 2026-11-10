@@ -332,6 +332,7 @@ All core application tables reside in the `public` schema.
   - `father_alive` (`BOOLEAN`), `father_full_name` (`TEXT`), `father_birthday` (`DATE`); `mother_alive`, `mother_full_name`, `mother_birthday` likewise.
   - `marital_status` (`TEXT`: `SINGLE`, `MARRIED`, `DIVORCED`, `WIDOWED`, `SEPARATED`), `wife_full_name` (`TEXT`), `wife_birthday` (`DATE`).
   - `child_1_name`, `child_2_name`, `child_3_name`, `other_job_skills` (`TEXT`).
+  - `not_applicable_fields` (`TEXT[]`, default `{}`; migration `20261114120000_additional_details_not_applicable`): the optional fields (Physical details & skills, Clothing & sizes, Employment / skills) marked N/A. The field itself stays `NULL`, because its typed column or CHECK constraint can't hold the text "N/A"; the admin app counts a marked field as filled.
   - `created_date` (`TIMESTAMP(3)`), `updated_date` (`TIMESTAMP(3)`).
 - **Rules** (enforced by `src/services/candidateAdditionalDetailsService.js`, not by database constraints):
   - Father/mother details are kept only when that parent is alive, and the name is then required. The wife's details are kept only when married, and her name is then required.

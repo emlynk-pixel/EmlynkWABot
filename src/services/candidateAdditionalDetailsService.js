@@ -94,12 +94,27 @@ const FIELDS = Object.freeze({
     guardianBirthday: "date",
     guardianPhone: "phone",
     guardianAddress: "address",
+    // Which of NOT_APPLICABLE_FIELDS were marked N/A (the field itself is then empty): last, so a
+    // request that leaves it out keeps the stored list (KEPT_WHEN_LEFT_OUT).
+    notApplicableFields: "naList",
 });
 export const ADDITIONAL_DETAILS_FIELDS = Object.freeze(Object.keys(FIELDS));
 // Added with the Candidate Form answers: a request that leaves one out (an Admin page loaded before
 // they were on the form) keeps its stored value instead of clearing it, so a Confirmed value is never
 // lost to an older page. Sent as null or "", it is cleared like any other field.
 const KEPT_WHEN_LEFT_OUT = new Set(ADDITIONAL_DETAILS_FIELDS.slice(ADDITIONAL_DETAILS_FIELDS.indexOf("bloodGroup")));
+
+// The optional fields (Physical details & skills, Clothing & sizes, Employment / skills): the only ones
+// that may be marked N/A when unknown. Every other field needs a real value for the Additional details
+// step to be completed. Keep in step with additionalDetailsCompletion.ts in the admin app.
+export const NOT_APPLICABLE_FIELDS = Object.freeze([
+    "bloodGroup", "height", "weightKg", "drivingLicence", "canReadDrawings", "teamLeadingSkills", "otherLanguages", "englishKnowledge",
+    "tshirtSize", "pantSize", "shoeSize",
+    "otherJobSkills", "otherJobSkills2", "otherJobCategory",
+]);
+// A marked field that also has a value is not N/A: the value wins (an import or a confirmed Candidate Form
+// answer may have filled it since). `values` holds the field's value, or nothing when it was left out.
+const withoutFilledMarkers = (values) => (values.notApplicableFields ?? []).filter((field) => values[field] === null || values[field] === undefined);
 
 const MAX_LENGTH = { name: 150, address: 500, skills: 1000, height: 30, romania: 100, email: 254 };
 const PASSPORT_NUMBER = /^[A-Z0-9]{1,20}$/;
@@ -132,6 +147,17 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
     for (const [field, kind] of Object.entries(FIELDS)) {
         const raw = body[field];
         if (raw === undefined && KEPT_WHEN_LEFT_OUT.has(field)) continue;
+        if (kind === "naList") {
+            if (raw === null) {
+                values[field] = [];
+            } else if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== "string")) {
+                values[field] = fail(field, "must be a list of field names");
+            } else {
+                const notAllowed = raw.filter((entry) => !NOT_APPLICABLE_FIELDS.includes(entry));
+                values[field] = notAllowed.length ? fail(field, `cannot be marked N/A: ${notAllowed.join(", ")}`) : [...new Set(raw)].sort();
+            }
+            continue;
+        }
         const blank = raw === undefined || raw === null || (typeof raw === "string" && raw.trim() === "");
         if (blank) {
             values[field] = null;
@@ -200,6 +226,8 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
         }
     }
 
+    if (Array.isArray(values.notApplicableFields)) values.notApplicableFields = withoutFilledMarkers(values);
+
     // A parent's name and birthday are independent of the alive answer (they
     // may be recorded for a parent who has passed away). Only the name is
     // required, and only when the parent is alive.
@@ -258,6 +286,8 @@ function toResponse(row) {
 // Comparable and storable in the audit log.
 function auditValue(value) {
     if (value === null || value === undefined) return null;
+    // The N/A list: a comma-joined text, and an empty list is no value (so a first save adds no change).
+    if (Array.isArray(value)) return value.length ? value.join(",") : null;
     if (value instanceof Date) return isoDate(value);
     if (typeof value === "boolean") return value;
     const text = String(value);
@@ -325,7 +355,9 @@ export async function saveAdditionalDetails({ db, passportId, values, actor, exp
             await setAuditActor(tx, actor);
             const existing = await tx.candidateAdditionalDetails.findUnique({ where: { passportId }, select: selectAll });
             // A field left out of the request (KEPT_WHEN_LEFT_OUT) keeps what is stored.
-            values = { ...Object.fromEntries([...KEPT_WHEN_LEFT_OUT].filter((field) => !(field in values)).map((field) => [field, existing?.[field] ?? null])), ...values };
+            values = { ...Object.fromEntries([...KEPT_WHEN_LEFT_OUT].filter((field) => !(field in values)).map((field) => [field, existing?.[field] ?? (FIELDS[field] === "naList" ? [] : null)])), ...values };
+            // (a kept list may name a field this request fills)
+            values.notApplicableFields = withoutFilledMarkers(values);
             const changes = changedFields(existing, values);
             // Nothing changed (including an empty form with nothing saved): no write, no audit.
             if (!changes) return existing;

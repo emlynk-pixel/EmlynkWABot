@@ -5,6 +5,7 @@ import {
     POLICE_REPORT_VARIANTS,
     STAGE_LABELS,
     TEST_RESULT_OPTIONS,
+    activeJobsOf,
     setCandidateVerification,
     updateCandidate,
     updateCandidateStage,
@@ -78,15 +79,33 @@ function PanelFooter({ status, canEdit, busy, dirty, error, onCancel, actions }:
     );
 }
 
-function CompletedCheckbox({ completed, onChange, disabled }: { completed: boolean; onChange: (value: boolean) => void; disabled: boolean }) {
+// lockedReason: the stage can't be completed yet (it stays un-tickable; a completed stage can still be unticked).
+function CompletedCheckbox({ completed, onChange, disabled, lockedReason = null }: { completed: boolean; onChange: (value: boolean) => void; disabled: boolean; lockedReason?: string | null }) {
     const id = useId();
+    const locked = Boolean(lockedReason) && !completed;
     return (
-        <label htmlFor={id} className="inline-flex items-center gap-2 text-body-sm text-ink">
-            <input id={id} type="checkbox" checked={completed} disabled={disabled} onChange={(event) => onChange(event.target.checked)} className="size-4 accent-primary" />
-            Stage completed
-        </label>
+        <div>
+            <label htmlFor={id} className="inline-flex items-center gap-2 text-body-sm text-ink">
+                <input id={id} type="checkbox" checked={completed} disabled={disabled || locked} onChange={(event) => onChange(event.target.checked)} className="size-4 accent-primary" />
+                Stage completed
+            </label>
+            {locked && <p className="mt-1 text-label-sm text-ink-muted">{lockedReason}</p>}
+        </div>
     );
 }
+
+// The candidate holds an active Job, and their saved Test details result is PASS: what the visa stages and the
+// Scans need (the server checks the same, candidateService.js requireVisaPrerequisites / requireJobForScan).
+const hasActiveJob = (details: CandidateDetails) => activeJobsOf(details.jobAssignments).length > 0;
+const testPassed = (details: CandidateDetails) => details.stages.find((s) => s.stage === "TEST_DETAILS")?.testResult === "PASS";
+const VISA_STAGES: readonly CandidateStageKey[] = ["VISA_SUBMISSION", "VISA_APPROVAL"];
+// Why a visa stage can't be completed yet, or null.
+export function visaLockReason(details: CandidateDetails): string | null {
+    if (!testPassed(details)) return "The candidate must pass the test before this stage can be completed.";
+    if (!hasActiveJob(details)) return "Assign the candidate to a Job before completing this stage.";
+    return null;
+}
+export const SCAN_LOCK_REASON = "Scans can be uploaded once the candidate is assigned to a Job.";
 
 // Stages completed by their data: done, or what is still missing.
 function AutomaticStatus({ stage, completedLabel = "Stage completed" }: { stage: StageState; completedLabel?: string }) {
@@ -202,7 +221,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
                 <textarea id={notesId} rows={5} maxLength={2000} value={notes} disabled={!canEdit || busy} onChange={(event) => setNotes(event.target.value)} className={textAreaControl} />
             </div>
             <PanelFooter
-                status={<CompletedCheckbox completed={completed} onChange={setCompleted} disabled={!canEdit || busy} />}
+                status={<CompletedCheckbox completed={completed} onChange={setCompleted} disabled={!canEdit || busy} lockedReason={VISA_STAGES.includes(stage) && !saved.completed && canEdit ? visaLockReason(details) : null} />}
                 canEdit={canEdit}
                 busy={busy}
                 dirty={dirty}
@@ -455,7 +474,7 @@ export function DocumentSubmissionStage({ details, canEdit, onChange }: PanelPro
                 <DocumentRow passportId={passportId} documentType="MEDICAL" label="Medical" required document={details.documents.MEDICAL} readOnly={!canEdit} onUploaded={onChange} />
                 <DocumentRow passportId={passportId} documentType="POLICE_SLIP" label="Police slip" document={details.documents.POLICE_SLIP} readOnly={!canEdit} onUploaded={onChange} />
                 <VariantDocumentGroup passportId={passportId} documentType="POLICE_REPORT" label="Police report" variants={POLICE_REPORT_VARIANTS} details={details} readOnly={!canEdit} onUploaded={onChange} required={true} requiredVariants={["SL_VERIFIED", "ROMANIA"]} />
-                <DocumentRow passportId={passportId} documentType="SCAN" label="Scans" required description="Combined scanned documents" title="Please ensure this file contains: Agreement, English Affidavit, Sinhala Affidavit" document={details.documents.SCAN} readOnly={!canEdit} onUploaded={onChange} />
+                <DocumentRow passportId={passportId} documentType="SCAN" label="Scans" required description="Combined scanned documents" title="Please ensure this file contains: Agreement, English Affidavit, Sinhala Affidavit" document={details.documents.SCAN} readOnly={!canEdit} lockedReason={canEdit && !hasActiveJob(details) ? SCAN_LOCK_REASON : null} onUploaded={onChange} />
             </div>
             <PanelFooter
                 status={<AutomaticStatus stage={saved} completedLabel={`All ${total} required documents are included`} />}

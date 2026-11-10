@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import { isAdmin as hasAdminRole, useAuth } from "../auth/AuthProvider";
-import { assignableRoles, canManageUser, isOwner, roleLabel, type Role } from "../auth/roles";
+import { assignableRoles, canManageUser, canRenameUser, isOwner, roleLabel, type Role } from "../auth/roles";
 import { OwnerBadge } from "../components/OwnerBadge";
 import { Icon } from "../components/Icon";
-import { listUsers, updateUserRole, type UserSummary } from "../api/admin";
+import { listUsers, updateUserName, updateUserRole, type UserSummary } from "../api/admin";
+import { updateOwnName } from "../api/auth";
+import { EditNameDialog } from "../components/EditNameDialog";
 import { ApiError } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { inputClass } from "../components/ui";
@@ -20,7 +22,7 @@ const dateFormat = new Intl.DateTimeFormat("en-GB", {
 
 // embedded: shown as a Settings tab (Settings owns the page title).
 export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}) {
-    const { user, token } = useAuth();
+    const { user, token, refreshUser } = useAuth();
     const isAdmin = hasAdminRole(user);
     // The roles this user may give (an Admin: below Admin only; the server enforces it).
     const assignable = assignableRoles(user);
@@ -32,6 +34,21 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
     const [actionError, setActionError] = useState<string | null>(null);
     const [actionSuccess, setActionSuccess] = useState<string | null>(null);
     const [pendingRoleChange, setPendingRoleChange] = useState<{ user: UserSummary; newRole: Role } | null>(null);
+    // The account whose name is being changed (only the name; see canRenameUser).
+    const [renaming, setRenaming] = useState<UserSummary | null>(null);
+
+    // Your own name goes through your profile (and refreshes the signed-in user); another user's through user management.
+    async function saveName(account: UserSummary, name: string) {
+        if (account.userId === user?.userId) {
+            await updateOwnName(token as string, name);
+            await refreshUser();
+        } else {
+            await updateUserName(token as string, account.userId, name);
+        }
+        setActionError(null);
+        setActionSuccess("Name updated.");
+        loadAdmins();
+    }
 
     async function loadAdmins() {
         if (!isAdmin) return;
@@ -94,8 +111,8 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                         ? <h2 className="text-headline-md text-ink">Change Roles</h2>
                         : <h1 id="page-title" className="text-headline-lg text-ink">Change Roles</h1>}
                     <p className="mt-1 text-body-md text-ink-subtle">
-                        Manage the roles of console users. A change applies to their very next request.
-                        {!isOwner(user) && " Admin accounts can be changed by an Owner only."}
+                        Manage the names and roles of console users. A change applies to their very next request.
+                        {!isOwner(user) && " Admin roles can be changed by an Owner only; the Owner's name by the Owner only."}
                     </p>
                 </div>
             </header>
@@ -160,7 +177,14 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                                     return (
                                     <tr key={account.userId} className="hover:bg-surface-hover">
                                         <td className="px-4 py-3 align-top">
-                                            <div className="font-medium">{account.name}{account.role === "OWNER" && <OwnerBadge />}</div>
+                                            <div className="flex items-center gap-1 font-medium">
+                                                <span>{account.name}{account.role === "OWNER" && <OwnerBadge />}</span>
+                                                {canRenameUser(user, account) && (
+                                                    <button type="button" aria-label={`Edit name of ${account.name}`} title="Edit name" onClick={() => setRenaming(account)} className="inline-flex size-6 items-center justify-center rounded-md text-ink-muted hover:bg-canvas hover:text-ink">
+                                                        <Icon name="edit" className="size-4" />
+                                                    </button>
+                                                )}
+                                            </div>
                                             <div className="text-ink-subtle">{account.email}</div>
                                         </td>
                                         <td className="px-4 py-3 align-top">
@@ -196,6 +220,15 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                     </div>
                 </div>
             </section>
+
+            {renaming && (
+                <EditNameDialog
+                    title={renaming.userId === user?.userId ? "Edit your name" : `Edit name of ${renaming.name}`}
+                    currentName={renaming.name}
+                    onSave={(name) => saveName(renaming, name)}
+                    onClose={() => setRenaming(null)}
+                />
+            )}
 
             {pendingRoleChange && (
                 <ConfirmDialog

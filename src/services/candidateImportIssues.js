@@ -59,7 +59,7 @@ export const ISSUE_CATALOG = Object.freeze({
     // The file and the database
     DUPLICATE_SOURCE_ROW: { severity: E, message: "Passport number appears on more than one row" },
     NIC_CONFLICT: { severity: E, message: "NIC number belongs to another candidate, or differs from this candidate's NIC" },
-    SKIPPED_VERIFIED: { severity: W, message: "Candidate details are verified in Emlynk: details not changed (a visa status is still applied)" },
+    SKIPPED_VERIFIED: { severity: W, message: "Candidate details are verified in Emlynk: details not changed (the Test details and a visa status are still applied)" },
     // Officer
     OFFICER_MISSING: { severity: W, message: "Officer is missing: the candidate is not assigned" },
     OFFICER_NOT_FOUND: { severity: E, message: "Officer does not match a system user" },
@@ -75,6 +75,10 @@ export const ISSUE_CATALOG = Object.freeze({
     INVALID_UNIQUE_NUMBER: { severity: W, message: "Unique number is not a whole number: not put on a Job" },
     JOB_GROUP_INCOMPLETE: { severity: W, message: "Unique number is missing: the candidate is not put on a Job (a Job needs the Interview date and the Unique number)" },
     NOT_PASSED_NO_JOB: { severity: W, message: "Test result is not PASS: imported, but not put on its Job" },
+    TEST_FAIL_WITH_VISA: { severity: W, message: "Test result says FAIL, but the visa status means the test was passed: treated as PASS and put on its Job" },
+    JOB_GROUP_NO_INTERVIEW_DATE: { severity: W, message: "Interview date is missing: the candidate is not put on a Job (a Job needs the Interview date and the Unique number)" },
+    VISA_WITHOUT_JOB: { severity: W, message: "Visa status is set, but without an Interview date and a Unique number the candidate can't be put on a Job: assign the Job by hand" },
+    JOB_GROUP_ROW_MISMATCH: { severity: W, message: "Names a different company or agent than the rest of its Job group: imported, but not put on that Job" },
     JOB_GROUP_NOT_CREATED: { severity: W, message: "Its Job group has a problem (see Jobs from this upload): not put on a Job" },
     JOB_GROUP_JOB_CLOSED: { severity: W, message: "Its Job is completed or cancelled: not added to it" },
     JOB_MEMBER_REMOVED_KEPT: { severity: W, message: "The candidate was removed from this Job by a user: not added back" },

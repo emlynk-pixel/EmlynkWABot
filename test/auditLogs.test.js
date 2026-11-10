@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import express from "express";
 
 import { createTestDatabase } from "./helpers/pgliteDatabase.js";
+import { giveTestPassAndJob } from "./helpers/visaPrerequisites.js";
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
@@ -148,6 +149,7 @@ describe("candidate activity is audited", () => {
 
     test("a stage completed records the stage and its completion before and after", async () => {
         await register();
+        await giveTestPassAndJob(prisma, "N1023757", USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         await updateStage({ db: prisma, passportId: "N1023757", stage: "VISA_APPROVAL", values: stage("VISA_APPROVAL", { completed: true, notes: "Passed the interview" }), actor: profile("ANALYST") });
         const row = (await auditRows()).at(-1);
         assert.equal(row.action, "UPDATE_STAGE");
@@ -179,6 +181,7 @@ describe("candidate activity is audited", () => {
     test("notes on an automatic stage are audited; reopening a completed stage is recorded", async () => {
         await register();
         await updateStage({ db: prisma, passportId: "N1023757", stage: "CANDIDATE_DETAILS", values: stage("CANDIDATE_DETAILS", { notes: "Called about the address" }), actor: profile("ADMIN") });
+        await giveTestPassAndJob(prisma, "N1023757", USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         await updateStage({ db: prisma, passportId: "N1023757", stage: "VISA_APPROVAL", values: stage("VISA_APPROVAL", { completed: true }), actor: profile("ADMIN") });
         await updateStage({ db: prisma, passportId: "N1023757", stage: "VISA_APPROVAL", values: stage("VISA_APPROVAL", { completed: false }), actor: profile("ADMIN") });
         const rows = (await auditRows()).filter((r) => r.action === "UPDATE_STAGE");
@@ -196,6 +199,7 @@ describe("candidate activity is audited", () => {
         });
         // An Analyst works on the candidates allocated to them (Work Allocation).
         await prisma.candidateAllocation.create({ data: { passportId: "N1023757", analystId: USERS.ANALYST.adminId } });
+        await giveTestPassAndJob(prisma, "N1023757", USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         await withServer("ANALYST", async (call) => {
             assert.equal((await call("/candidates/N1023757/stages/VISA_SUBMISSION", { method: "PUT", body: { completed: true } })).status, 200);
         });
@@ -230,6 +234,8 @@ describe("GET /api/admin/audit-logs", () => {
         await register({ passportId: "P2000001", surname: "Perera", otherNames: "Kamal", nic: "200012345678", whatsappNumber: "+94770000001" }, profile("REGISTRATION_DESK"));
         await register({ passportId: "P2000002", surname: "Silva", otherNames: "Nimal", nic: "200012345679", whatsappNumber: "+94770000002" }, profile("REGISTRATION_DESK"));
         await updateCandidateDetails({ db: prisma, passportId: "P2000001", values: details({ passportId: undefined, surname: "Perera", otherNames: "Kamal", nic: "200012345678", whatsappNumber: "+94770000001", address: "Colombo 05" }), actor: profile("OWNER") });
+        await giveTestPassAndJob(prisma, "N1023757", USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
+        await giveTestPassAndJob(prisma, "P2000002", USERS.ADMIN.adminId);
         await updateStage({ db: prisma, passportId: "N1023757", stage: "VISA_APPROVAL", values: stage("VISA_APPROVAL", { completed: true, notes: "Interview passed" }), actor: profile("ANALYST") });
         await updateStage({ db: prisma, passportId: "P2000002", stage: "VISA_APPROVAL", values: stage("VISA_APPROVAL", { completed: true }), actor: profile("ANALYST") });
         for (let i = 0; i < 6; i++) {

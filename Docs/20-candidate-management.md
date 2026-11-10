@@ -235,6 +235,10 @@ A checklist of the five documents is shown at the top of the panel.
 
 Each has a free-text **Notes** field and a **Stage completed** checkbox. Changes are saved with **Save changes** / discarded with **Cancel**. The `PUT /api/admin/candidates/:passportId/stages/:stage` endpoint accepts `{ notes, completed }`.
 
+**Visa stages need a passed test and a Job.** Visa submission and Visa approval can be completed only when the candidate's saved Test details result is PASS **and** the candidate has an active Job assignment (the same signal the Status uses for Job Assigned). Otherwise the server refuses with 409 `VISA_NEEDS_TEST_PASS` or `VISA_NEEDS_JOB`, and the page shows the checkbox disabled with the reason. Un-completing a visa stage, its notes, and an already completed stage stay editable (existing records are not changed). Assigning a Job already requires a saved PASS (`CANDIDATE_TEST_NOT_PASSED`, `jobService.js`), so a candidate who failed the test reaches neither a Job nor a visa step. The bulk import follows its own rule (a visa status there means the test was passed; `Docs/CANDIDATE_BULK_IMPORT.md`).
+
+**Scans need a Job.** A Scan can be uploaded only for a candidate with an active Job (direct upload, upload target and finalize all check it: 409 `SCAN_NEEDS_JOB`; a staged file finalized after the Job was removed is discarded). On the page the Scans **Upload / Replace** button is disabled with the reason. Viewing or removing an existing Scan, every other document and every detail stay open.
+
 ### 4.3 Call log
 
 Every candidate page has a **Call log** button (top right). It opens a drawer from the right: the candidate summary (name, passport ID, WhatsApp), **Candidate History**, and the **Add New Call Log** form at the bottom.
@@ -566,6 +570,9 @@ Every route below allows the same roles (`CANDIDATE_STAFF`): ADMIN, ANALYST, REG
 | `WHATSAPP_EXISTS` | 409 | WhatsApp number is already registered to another candidate |
 | `WHATSAPP_LOCKED` | 409 | A different WhatsApp number was sent for a candidate who already has one |
 | `AUTOMATIC_STAGE` | 409 | Completion was set by hand on a stage completed by its data (Candidate details, Document submission) |
+| `VISA_NEEDS_TEST_PASS` | 409 | A visa stage was completed for a candidate whose saved Test details result is not PASS |
+| `VISA_NEEDS_JOB` | 409 | A visa stage was completed for a candidate with no active Job |
+| `SCAN_NEEDS_JOB` | 409 | A Scan was uploaded for a candidate with no active Job |
 | `FILE_REJECTED` | 422 | Wrong file type, empty, too large, or content not matching its type |
 | `DUPLICATE_FILE` | 409 | This exact file is already stored for the candidate |
 | `UPLOAD_NOT_FOUND` | 404 | Finalize found no uploaded file for that upload ID, candidate and type |
@@ -631,6 +638,9 @@ Enforced by `parseAdditionalDetailsBody` in `candidateAdditionalDetailsService.j
 | Father / mother alive | `true` / `false` / not recorded; full name required when `true`, and accepted whatever the answer; birthday accepted whatever the answer |
 | Marital status | `SINGLE`, `MARRIED`, `DIVORCED`, `WIDOWED`, `SEPARATED`; wife full name required when `MARRIED`; wife details refused otherwise |
 | Children | In order: no 2nd without a 1st, no 3rd without a 2nd; refused when the marital status is `SINGLE` |
+| N/A (`notApplicableFields`) | A list of field names; only the optional fields (Physical details & skills, Clothing & sizes, Employment / skills: `bloodGroup, height, weightKg, drivingLicence, canReadDrawings, teamLeadingSkills, otherLanguages, englishKnowledge, tshirtSize, pantSize, shoeSize, otherJobSkills, otherJobSkills2, otherJobCategory`) may be listed; a listed field is stored empty, and a field that also has a value loses its mark |
+
+**When the Additional details step counts as completed** (admin app, `additionalDetailsCompletion.ts`): every field the form shows has a real value, except that an optional field (the N/A list above) may be marked N/A instead. A parent's name, birthday and passport number are required only when that parent is alive, and the spouse's only when married; the child names are never required. A details row that exists but is only partly filled (for example one created by the sheet import) leaves the step incomplete.
 
 ---
 

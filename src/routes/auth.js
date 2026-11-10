@@ -2,7 +2,7 @@ import express from "express";
 
 import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
 import { createAuthenticateIdentity, createRequireActiveUser } from "../middleware/requireActiveUser.js";
-import { activateOnPasswordSignIn, completeInvitation, invitationStatus, UserAccountError } from "../services/userAccountService.js";
+import { activateOnPasswordSignIn, completeInvitation, invitationStatus, parseNameBody, updateOwnName, UserAccountError } from "../services/userAccountService.js";
 import { resolveDb } from "../utils/resolveClients.js";
 
 // Session endpoints. Sign-in, sign-out, password recovery and the invitation
@@ -38,6 +38,18 @@ export function createAuthRouter({ db, verifyAccessToken, apiLimiter = createApi
     };
     router.get("/me", apiLimiter, authenticate, completeOnPasswordSignIn, loadActiveUser, (req, res) => {
         res.json({ user: toProfile(req.user) });
+    });
+
+    // The signed-in user changes their own name (every role; only the name). Answers the new profile.
+    router.put("/me/name", apiLimiter, authenticate, loadActiveUser, async (req, res) => {
+        const parsed = parseNameBody(req.body);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid name", errors: parsed.errors });
+        try {
+            return res.json({ user: toProfile(await updateOwnName({ db: await resolveDb(db), actor: req.user, name: parsed.values.name })) });
+        } catch (error) {
+            if (error instanceof UserAccountError) return res.status(error.status).json({ message: error.message, code: error.code });
+            throw error;
+        }
     });
 
     // The setup page asks, BEFORE setting a password, whether this identity's

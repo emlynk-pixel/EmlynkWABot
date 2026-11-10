@@ -171,7 +171,8 @@ describe("confirming one field (CONFIRM-003, 004, 005, 010, 011, 016)", () => {
         assert.equal((await confirm(USERS.ADMIN, await body("basic.fullName"))).status, 200);
         const created = await detailsRow();
         assert.equal(created.nameAsInPassport, "ANUSHA DE SOYSA");
-        assert.deepEqual(Object.entries(created).filter(([k, v]) => v !== null && !["passportId", "createdDate", "updatedDate", "nameAsInPassport"].includes(k)), []);
+        // (notApplicableFields is a list column that defaults to []: no value written either)
+        assert.deepEqual(Object.entries(created).filter(([k, v]) => v !== null && !(Array.isArray(v) && v.length === 0) && !["passportId", "createdDate", "updatedDate", "nameAsInPassport"].includes(k)), []);
     });
 
     test("sex is translated to the record's code; the phone is stored in the canonical +<country code> form", async () => {
