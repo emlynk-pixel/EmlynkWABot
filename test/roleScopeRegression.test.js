@@ -268,7 +268,7 @@ describe("JOB_HANDLER: views candidates, changes none", () => {
     });
 });
 
-describe("REGISTRATION_DESK: the registration workflow, and Need Attention read only", () => {
+describe("REGISTRATION_DESK: the registration workflow only", () => {
     const RD = USERS.REGISTRATION_DESK;
     const NEW = "N1234567";
 
@@ -309,11 +309,11 @@ describe("REGISTRATION_DESK: the registration workflow, and Need Attention read 
         forbidden(finalize, "finalize a MEDICAL upload");
     });
 
-    test("views Need Attention (every candidate) but cannot flag, complete or delete a follow-up", async () => {
+    test("has no Need Attention: cannot list, flag, complete or delete a follow-up", async () => {
         const followUpId = await flag(C1);
         await flag(C3);
-        assert.deepEqual(followUpPassports(ok(await api(RD, "GET", "/follow-ups?status=OPEN"))), [C1, C3]);
-        ok(await api(RD, "GET", "/follow-ups?status=COMPLETED"));
+        forbidden(await api(RD, "GET", "/follow-ups?status=OPEN"), "list open follow-ups");
+        forbidden(await api(RD, "GET", "/follow-ups?status=COMPLETED"), "list completed follow-ups");
         const call = await prisma.candidateCallLog.findFirst({ where: { passportId: C1 } });
         for (const [method, path, body] of [
             ["POST", `/follow-ups/${followUpId}/complete`, {}], ["DELETE", `/follow-ups/${followUpId}`],

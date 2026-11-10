@@ -19,7 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/candidates", label: "Candidates", icon: "group", roles: CANDIDATE_LIST_ROLES },
     // The Registration Desk's only page: the registration workflow.
     { to: "/candidates/new", label: "Add Candidate", icon: "person_add", roles: REGISTRATION_ENTRY_ROLES },
-    // Call logs marked as needing attention (ADMIN, TEAM_LEAD, ANALYST; REGISTRATION_DESK read only).
+    // Call logs marked as needing attention (ADMIN, TEAM_LEAD, ANALYST).
     { to: "/follow-ups", label: "Need Attention", icon: "flag", roles: FOLLOW_UP_VIEW_ROLES },
     // Assigning candidates to Analysts (ADMIN and TEAM_LEAD).
     { to: "/work-allocation", label: "Work Allocation", icon: "assignment_ind", roles: ALLOCATION_ROLES },

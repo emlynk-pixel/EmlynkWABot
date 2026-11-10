@@ -180,9 +180,8 @@ function contentDisposition(fileName) {
 // REGISTRATION_DESK: the registration workflow only (REGISTRATION_WORKFLOW):
 // the passport-ID lookup, registering, saving an existing candidate's
 // registration details (with the Candidate Details note) and uploading the
-// registration documents (passport, NIC, skill video); and Need Attention READ
-// ONLY (FOLLOW_UP_READERS: the list, no flag, complete or delete). No Candidates
-// list, candidate page, other stages, call logs or anything else.
+// registration documents (passport, NIC, skill video). No Need Attention,
+// Candidates list, candidate page, other stages, call logs or anything else.
 // Work Allocation: an ANALYST only sees and changes the candidates allocated
 // to them (services/candidateAccess.js), on every candidate route and in the
 // lists that name candidates; ADMIN, TEAM_LEAD and REGISTRATION_DESK see all.
@@ -213,7 +212,6 @@ const CANDIDATE_READERS = [...CANDIDATE_STAFF, JOB_HANDLER];            // candi
 // The registration workflow (Add Candidate): the Candidates area roles, plus REGISTRATION_DESK
 // for exactly what the form does (registrationOnly below).
 const REGISTRATION_WORKFLOW = [...CANDIDATE_STAFF, REGISTRATION_DESK];
-const FOLLOW_UP_READERS = [...CANDIDATE_STAFF, REGISTRATION_DESK];      // Need Attention list (REGISTRATION_DESK: read only)
 const JOB_READERS = [ADMIN, TEAM_LEAD, JOB_HANDLER];                    // job lists and details
 const JOB_MANAGERS = [ADMIN, TEAM_LEAD, JOB_HANDLER];                   // job writes (create, edit, members, close)
 const MASTER_DATA_STAFF = [ADMIN, TEAM_LEAD, JOB_HANDLER];              // Agents and Client Management
@@ -800,7 +798,7 @@ export function createAdminRouter({
         })));
     });
 
-    router.get("/follow-ups", requireRole(FOLLOW_UP_READERS), async (req, res) => {
+    router.get("/follow-ups", requireRole(CANDIDATE_STAFF), async (req, res) => {
         const parsed = parseFollowUpListQuery(req.query);
         if (parsed.errors) {
             return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });

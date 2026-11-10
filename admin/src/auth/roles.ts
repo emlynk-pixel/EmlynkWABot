@@ -50,9 +50,9 @@ export const CANDIDATE_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, R
 // Opening the Candidates list and a candidate's page (CANDIDATE_READERS): JOB_HANDLER read only.
 export const CANDIDATE_VIEW_ROLES: readonly Role[] = [...CANDIDATE_ROLES, ROLES.JOB_HANDLER];
 export const CANDIDATE_LIST_ROLES: readonly Role[] = CANDIDATE_VIEW_ROLES;
-// Need Attention: seeing it (REGISTRATION_DESK too, read only: FOLLOW_UP_READERS), and flagging
-// and completing (the Candidates area roles).
-export const FOLLOW_UP_VIEW_ROLES: readonly Role[] = [...CANDIDATE_ROLES, ROLES.REGISTRATION_DESK];
+// Need Attention: seeing it, and flagging and completing (the Candidates area roles; not
+// REGISTRATION_DESK, whose only page is Add Candidate).
+export const FOLLOW_UP_VIEW_ROLES: readonly Role[] = CANDIDATE_ROLES;
 export const FOLLOW_UP_ROLES: readonly Role[] = CANDIDATE_ROLES;
 // The REGISTRATION_DESK's own "Add Candidate" sidebar entry, its only page (the roles with the
 // Candidates list reach registration from there and from the header).

@@ -162,13 +162,11 @@ describe("migration", () => {
     });
 });
 
-describe("REGISTRATION_DESK (the registration workflow, Need Attention read only)", () => {
-    test("lists Need Attention; reads no call log, adds none, flags, completes and deletes no follow-up (403); nothing is written", async () => {
+describe("REGISTRATION_DESK (the registration workflow only, no Need Attention)", () => {
+    test("lists no Need Attention, reads no call log, adds none, flags, completes and deletes no follow-up (403); nothing is written", async () => {
         const { callLogId, followUpId } = await flagged(A, "Passport not uploaded");
-        const listed = await as("REGISTRATION_DESK", "/follow-ups?status=OPEN");
-        assert.equal(listed.status, 200);
-        assert.ok(listed.body.groups.flatMap((g) => g.followUps).some((f) => f.followUpId === followUpId));
         for (const [path, init] of [
+            ["/follow-ups?status=OPEN", undefined],
             [`/candidates/${A}/call-logs`, undefined],
             [`/candidates/${A}/call-logs`, { method: "POST", body: { note: "x" } }],
             [`/candidates/${A}/call-logs`, { method: "POST", body: { note: "x", needsAttention: true } }],
