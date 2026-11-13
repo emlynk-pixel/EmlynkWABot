@@ -336,7 +336,8 @@ describe("Candidates: RBAC stays authoritative", () => {
         const admin = (await api(USERS.ADMIN, "/candidate-filter-options")).body;
         assert.ok(Array.isArray(admin.jobTypes));
         assert.equal(admin.noPreference.code, "NO_PREFERENCE");
-        assert.deepEqual(admin.officers.map((o) => o.id).sort(), [USERS.ANALYST.adminId, USERS.ANALYST2.adminId].sort());
+        // Active Analysts and Team Leads (both can be allocated candidates).
+        assert.deepEqual(admin.officers.map((o) => o.id).sort(), [USERS.ANALYST.adminId, USERS.ANALYST2.adminId, USERS.TEAM_LEAD.adminId].sort());
         assert.deepEqual(admin.clients.map((c) => c.id).sort(), [acme.id, other.id].sort());
         assert.deepEqual(admin.agents.map((a) => a.id), [agent.id]);
         const analyst = (await api(USERS.ANALYST, "/candidate-filter-options")).body;

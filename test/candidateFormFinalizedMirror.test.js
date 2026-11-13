@@ -1,6 +1,7 @@
 // Candidate Form -> Admin Confirm -> canonical record -> Google Sheet operational mirror
-// (SHEET-FINAL-*). Only CONFIRMED values become canonical (candidate / candidate_additional_details),
-// and the mirror reads the canonical record only, never candidate_form_response. Confirming marks
+// (SHEET-FINAL-*). A submitted value becomes canonical (candidate / candidate_additional_details) when
+// it is CONFIRMED, or at submission when it fills an EMPTY Additional Details field (applyAutoFill); the
+// mirror reads the canonical record only, never candidate_form_response. Confirming (or the fill) marks
 // the candidate in the existing sheet_sync_queue (database triggers); the Sheet itself is written
 // only by the existing RECONCILE runs (scheduled or Sync Now).
 // Real PostgreSQL (PGlite, every migration), the real routers, reader, mapper, engine, store and
@@ -183,17 +184,22 @@ const sheetRowOf = (sheet) => {
 // ---------------------------------------------------------------- the flow
 
 describe("submitted -> confirmed -> canonical -> mirror", () => {
-    test("SHEET-FINAL-001 a new submission changes nothing in the mirror before Confirm (and queues nothing)", async () => {
+    test("SHEET-FINAL-001 a new submission fills only the EMPTY Additional Details (marking the candidate); values on record and the core record wait for Confirm", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+" } });
         const before = await mirrorRow();
         await prisma.sheetSyncQueue.deleteMany();
         await submitForm();
-        assert.deepEqual(await mirrorRow(), before, "the mapped row is identical");
-        assert.ok(Object.values(formCells(await mirrorRow())).every((cell) => cell === ""), "every Candidate Form column is blank");
-        assert.equal(await details(), null, "no canonical row was created by the submission");
-        assert.deepEqual(await pendingQueue(), [], "a submission does not mark the candidate for the mirror");
+        const after = await mirrorRow();
+        assert.equal(cellOf(after, "bloodGroup"), "O+", "a value on record is unchanged until Confirm");
+        assert.equal(cellOf(after, "guardianName"), "KAMAL PERERA", "an empty field took the submitted value");
+        // Every column outside the Candidate Form ones (the core record) is identical.
+        const core = (row) => SHEET_COLUMNS.filter((c) => !FORM_FIELDS.includes(c.field)).map((c) => row[c.index]);
+        assert.deepEqual(core(after), core(before));
+        assert.equal((await pendingQueue()).length, 1, "the fill marks the candidate once (the candidate_additional_details trigger)");
     });
 
     test("SHEET-FINAL-002 / 003 Confirm writes the canonical value and marks the candidate in the existing sheet_sync_queue", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+" } });
         await submitForm();
         await prisma.sheetSyncQueue.deleteMany();
         const r = await confirmField("basic.bloodGroup");
@@ -212,12 +218,13 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
 
     test("SHEET-FINAL-004 the existing reconcile writes the confirmed value to the mirror", async () => {
         const mirror = mirrorSetup();
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+" } });
         await submitForm();
         await reconcile(mirror);
-        assert.equal(sheetRowOf(mirror.sheet).bloodGroup, "", "not confirmed yet: blank");
+        assert.equal(sheetRowOf(mirror.sheet).bloodGroup, "O+", "not confirmed yet: the record's value");
         assert.equal((await confirmField("basic.bloodGroup")).status, 200);
         assert.equal(cellOf(await mirrorRow(), "bloodGroup"), "AB-", "the mapper output");
-        assert.equal(sheetRowOf(mirror.sheet).bloodGroup, "", "nothing is written in real time");
+        assert.equal(sheetRowOf(mirror.sheet).bloodGroup, "O+", "nothing is written in real time");
         const run = await reconcile(mirror);
         assert.equal(run.status, "SUCCEEDED");
         assert.equal(sheetRowOf(mirror.sheet).bloodGroup, "AB-");
@@ -226,17 +233,17 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
 
     test("SHEET-FINAL-005 / 006 a rejected (revoked) value never reaches the record or the mirror, and cannot be confirmed afterwards", async () => {
         const mirror = mirrorSetup();
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+", guardianName: "OLD GUARDIAN" } });
         await submitForm();
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+" } });
         assert.equal((await rejectField("basic.bloodGroup")).status, 200);
         assert.equal((await details()).bloodGroup, "O+", "the record keeps its value");
         assert.equal((await rejectField("guardian.name")).status, 200);
-        assert.equal((await details()).guardianName, null);
+        assert.equal((await details()).guardianName, "OLD GUARDIAN");
         await reconcile(mirror);
-        assert.deepEqual([sheetRowOf(mirror.sheet).bloodGroup, sheetRowOf(mirror.sheet).guardianName], ["O+", ""]);
-        const again = await call(USERS.ADMIN, "POST", `/api/admin/candidates/${A.passportId}/form-submission/confirm-field`, { body: { field: "guardian.name", expectedCurrentValue: null, expectedSubmittedValue: "KAMAL PERERA" } });
+        assert.deepEqual([sheetRowOf(mirror.sheet).bloodGroup, sheetRowOf(mirror.sheet).guardianName], ["O+", "OLD GUARDIAN"]);
+        const again = await call(USERS.ADMIN, "POST", `/api/admin/candidates/${A.passportId}/form-submission/confirm-field`, { body: { field: "guardian.name", expectedCurrentValue: "OLD GUARDIAN", expectedSubmittedValue: "KAMAL PERERA" } });
         assert.deepEqual([again.status, again.body.code], [409, "FORM_FIELD_REVIEW_STALE"]);
-        assert.equal((await details()).guardianName, null);
+        assert.equal((await details()).guardianName, "OLD GUARDIAN");
     });
 
     test("SHEET-FINAL-007 candidate_additional_details insert, update and delete each mark the candidate (the existing capture function)", async () => {
@@ -304,6 +311,7 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
 
     test("SHEET-FINAL-011 a live Sheet without the new headers stops the reconcile with the existing SCHEMA_INVALID, writing nothing", async () => {
         const mirror = mirrorSetup({ header: SHEET_HEADERS.slice(0, SHEET_HEADERS.indexOf("FULL NAME")) });
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+" } });
         await submitForm();
         await confirmField("basic.bloodGroup");
         const run = await reconcile(mirror);
@@ -331,27 +339,29 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
 // ---------------------------------------------------------------- confirmation rules
 
 describe("Confirm / Reject rules for the newly confirmable fields", () => {
-    test("only ADMIN and OWNER can confirm or reject; other roles change nothing", async () => {
+    test("the Registration Desk cannot confirm or reject (nothing changes); the candidate's own Analyst can", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+" } });
         await submitForm();
-        for (const who of [USERS.DESK, USERS.ANN]) {
-            for (const action of ["confirm", "reject"]) {
-                const r = await review(who, action, "basic.bloodGroup");
-                assert.equal(r.status, 403, `${who.role} ${action}`);
-            }
+        for (const action of ["confirm", "reject"]) {
+            const r = await review(USERS.DESK, action, "basic.bloodGroup");
+            assert.equal(r.status, 403, `${USERS.DESK.role} ${action}`);
         }
-        assert.equal(await details(), null);
+        assert.equal((await details()).bloodGroup, "O+");
         assert.equal(await prisma.candidateFormFieldReview.count(), 0);
-        assert.equal((await confirmField("basic.bloodGroup", USERS.ADMIN)).status, 200);
+        assert.equal((await confirmField("basic.bloodGroup", USERS.ANN)).status, 200);
+        assert.equal((await details()).bloodGroup, "AB-");
     });
 
     test("the Additional Details rules hold: spouse only when Married, children in order and not when Single", async () => {
+        // The record says Single (so the submitted Married, the spouse and the child are changes to review).
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, maritalStatus: "SINGLE", bloodGroup: "O+" } });
         await submitForm();
-        // The record has no civil status yet: the spouse can't be confirmed first.
+        // The record is not Married yet: the spouse can't be confirmed first.
         for (const field of ["family.spouse.fullName", "family.spouse.birthDate", "family.spouse.passportNumber"]) {
             const r = await confirmField(field);
             assert.deepEqual([r.status, r.body.code], [409, "FORM_FIELD_PREREQUISITE"], field);
         }
-        assert.equal(await details(), null, "nothing written");
+        assert.deepEqual([(await details()).wifeFullName, (await details()).child1Name], [null, null], "nothing written (and not filled at submission: Single)");
         // Confirming Married also records the submitted spouse name (the record requires one when married).
         assert.equal((await confirmField("basic.civilStatus")).status, 200);
         assert.deepEqual([(await details()).maritalStatus, (await details()).wifeFullName], ["MARRIED", "NIMAL PERERA"]);
@@ -363,11 +373,11 @@ describe("Confirm / Reject rules for the newly confirmable fields", () => {
         const view = (await call(USERS.ADMIN, "GET", `/api/admin/candidates/${A.passportId}/additional-details`)).body;
         const saved = await call(USERS.ADMIN, "PUT", `/api/admin/candidates/${A.passportId}/additional-details`, { body: { ...view.details, otherJobSkills: "Forklift", expectedUpdatedDate: view.updatedDate } });
         assert.equal(saved.status, 200, JSON.stringify(saved.body));
-        assert.equal((await details()).bloodGroup, null, "a value never confirmed stays empty");
+        assert.equal((await details()).bloodGroup, "O+", "a value on record that was never confirmed keeps the record's value");
     });
 
     test("Single with children on record is refused; a later child needs the earlier one", async () => {
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, child1Name: "OLD CHILD" } });
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, child1Name: "OLD CHILD", child2Name: "OLD SECOND" } });
         await submitForm(withAnswer(withAnswer(withAnswer(withAnswer(ANSWERS(), "basic.civilStatus", "SINGLE"), "family.child1", "kasun"), "family.child2", "ruwan"), "family.child3", "N/A"));
         const single = await confirmField("basic.civilStatus");
         assert.deepEqual([single.status, single.body.code], [409, "FORM_FIELD_PREREQUISITE"]);
@@ -384,7 +394,8 @@ describe("Confirm / Reject rules for the newly confirmable fields", () => {
     test("job category: an OTHER answer is not a job type (its text is Other Job Category); No Preferred Type replaces the list", async () => {
         await submitForm(withAnswer(withAnswer(ANSWERS(), "qualifications.jobCategory", "OTHER"), "qualifications.jobCategoryOther", "crane operator"));
         assert.equal(await pendingFor("qualifications.jobCategory"), undefined);
-        assert.equal((await confirmField("qualifications.jobCategoryOther")).status, 200);
+        // Other Job Category was empty: filled at submission, nothing to confirm.
+        assert.equal(await pendingFor("qualifications.jobCategoryOther"), undefined);
         assert.equal((await details()).otherJobCategory, "CRANE OPERATOR");
         assert.equal((await prisma.candidate.findUnique({ where: { passportId: A.passportId } })).job, "PLUMBER", "the job types are untouched");
 
@@ -435,12 +446,15 @@ describe("no raw Candidate Form dependency in the mirror", () => {
         }
     });
 
-    test("the mirror row is the same with or without a submission: only Confirm changes it", async () => {
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+" } });
+    test("a submission changes only the cells of EMPTY Additional Details fields; a cell with a value changes only by Confirm", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+", email: "old@example.com" } });
         const before = await mirrorRow();
         await submitForm();
-        assert.deepEqual(await mirrorRow(), before);
-        assert.equal(cellOf(before, "bloodGroup"), "O+");
+        const after = await mirrorRow();
+        for (const column of SHEET_COLUMNS) {
+            if (before[column.index] !== "") assert.equal(after[column.index], before[column.index], column.field);
+        }
+        assert.deepEqual([cellOf(after, "bloodGroup"), cellOf(after, "email")], ["O+", "old@example.com"]);
     });
 });
 

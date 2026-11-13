@@ -71,8 +71,8 @@ flowchart LR
 Notes on the boundaries:
 
 * The Candidate Form frontend has **no** database, Supabase or storage access and no secrets. It calls three public routes only (section 21).
-* The public API **reads** `candidate` and `candidate_additional_details` (to build the prefill) and `job_candidate` / `job` (to check group membership). It **writes** only `candidate_form_*` tables and the rate-limit table. It never writes `candidate` or `candidate_additional_details`.
-* Only the Admin API (staff session, role checked on every request) can change the candidate record, and only through the per-field Confirm (section 18).
+* The public API **reads** `candidate` and `candidate_additional_details` (to build the prefill) and `job_candidate` / `job` (to check group membership). It **writes** the `candidate_form_*` tables and the rate-limit table. It never writes `candidate`. In the submission's own transaction it **fills only the EMPTY fields** of `candidate_additional_details` with the submitted values (`applyAutoFill` in `src/services/candidateFormFieldConfirmService.js`): a field that already has a value, or that staff marked N/A, is never written; a value that fails the Additional Details rules (a spouse when not Married, children out of order) is skipped. No review row and no audit entry are written for a fill: `candidate_form_response` is the record of where the value came from.
+* Every other change to the candidate record goes through the Admin API (staff session, role checked on every request): a field that has a value on record and a DIFFERENT submitted value stays a pending change until it is confirmed or rejected (section 18). Confirm / Reject is open to ADMIN, TEAM_LEAD and the candidate's own ANALYST. Submissions made before the automatic fill existed are filled once by `npm run form:backfill-autofill` (dry run first, then `-- --apply`).
 
 ---
 ## 4. User Roles and Permissions

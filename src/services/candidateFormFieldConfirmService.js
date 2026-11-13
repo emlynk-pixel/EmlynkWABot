@@ -273,7 +273,8 @@ export function pendingChanges(context, reviewed = new Set()) {
 
 // Every target column, plus the ones the `requires` rules read (they are targets too).
 const selectOf = (table) => Object.fromEntries(Object.values(CONFIRMABLE_FIELDS).filter((m) => m.table === table).map((m) => [m.column, true]));
-export const CONFIRM_SELECT = Object.freeze({ candidate: selectOf("candidate"), details: selectOf("details") });
+// details also reads the staff's N/A marks: a marked field counts as filled for the automatic fill below.
+export const CONFIRM_SELECT = Object.freeze({ candidate: selectOf("candidate"), details: { ...selectOf("details"), notApplicableFields: true } });
 
 // Both decisions share one flow and one review table (candidate_form_field_review):
 //   Confirm  -> update ONE canonical column, mark CONFIRMED
@@ -411,6 +412,75 @@ async function reviewAllFormFields({ db, actor, passportId, changes, decision })
 
 export const confirmAllFormFields = (args) => reviewAllFormFields({ ...args, decision: "CONFIRMED" });
 export const rejectAllFormFields = (args) => reviewAllFormFields({ ...args, decision: "REJECTED" });
+
+// ---------------------------------------------------------------- automatic fill of EMPTY Additional Details
+//
+// When the candidate submits the form, every Additional Details field (candidate_additional_details, the
+// `table: "details"` entries above) that is EMPTY in the record takes the submitted value at once: no
+// Confirm / Reject. A field that already holds a value is never written here; when the submitted value
+// differs it stays a pending change for Confirm / Reject (pendingChange), exactly as before. The core
+// candidate record (`table: "candidate"`) is never filled automatically.
+//
+// Empty means: no row, NULL, or blank text. A stored value that is merely unusual (e.g. a legacy size)
+// is NOT empty and is never replaced. A field staff marked N/A (notApplicableFields) counts as filled.
+// The submitted value must pass the same checks as a Confirm: not empty, not "N/A", valid (toDb), and the
+// field's own rules (requires: a spouse only when Married, no children when Single, children in order),
+// checked against the record as the earlier fills of the same submission left it (Civil Status first). A
+// field that fails any check is skipped, never an error: the candidate's submission never fails over it,
+// and the value simply stays a pending change for staff. No review row is written (the record now holds
+// the submitted value, so the field is no longer pending) and no audit entry (decided: the submission in
+// candidate_form_response is the record of where the value came from).
+const isEmptyStored = (stored) => stored === null || stored === undefined || (typeof stored === "string" && stored.trim() === "");
+const DETAIL_FIELDS = Object.freeze(Object.keys(CONFIRMABLE_FIELDS).filter((field) => CONFIRMABLE_FIELDS[field].table === "details"));
+
+// Pure: the columns to write ({ data }) and the field keys they come from ({ fields }). `details` is the
+// stored candidate_additional_details row (CONFIRM_SELECT.details) or null; `reviewed` the field keys that
+// already have a staff decision (never filled: the backfill of older submissions passes them).
+export function autoFillChanges({ details, response, reviewed = new Set() }) {
+    if (!response) return { data: {}, fields: [] };
+    const marked = new Set(Array.isArray(details?.notApplicableFields) ? details.notApplicableFields : []);
+    let running = { ...(details ?? {}) };
+    const data = {};
+    const fields = [];
+    for (const field of ordered(DETAIL_FIELDS)) {
+        if (reviewed.has(field)) continue;
+        const mapping = CONFIRMABLE_FIELDS[field];
+        if (marked.has(mapping.column) || !isEmptyStored(running[mapping.column])) continue;
+        const raw = submittedValueOf(response, field);
+        // Valid, not empty, not "N/A", and different from the (empty) record: the same test as a pending change.
+        if (!pendingChange(field, { candidate: null, details: running, submitted: { [field]: raw } })) continue;
+        const { value } = mapping.toDb(raw);
+        if (mapping.requires?.({ candidate: null, details: running, value, response })) continue;
+        const extra = mapping.alsoWrite?.({ details: running, value, response }) ?? {};
+        // alsoWrite only ever fills (the spouse name with Married, when the record has none).
+        const written = { [mapping.column]: mapping.write ? mapping.write(running[mapping.column] ?? null, value) : value };
+        for (const [column, extraValue] of Object.entries(extra)) if (isEmptyStored(running[column]) && extraValue !== null && extraValue !== undefined) written[column] = extraValue;
+        Object.assign(data, written);
+        running = { ...running, ...written };
+        fields.push(field);
+    }
+    return { data, fields };
+}
+
+// Applies autoFillChanges inside the caller's transaction (the submission's, or one backfill transaction):
+// locks the candidate row (like every Confirm, so a review of this candidate waits) and the details row,
+// re-reads the details under the lock and writes only the columns that are still empty. A staff save of
+// Additional details at the same moment then fails its version check (409 DETAILS_CHANGED, nothing lost).
+// Returns the field keys filled ([] when none).
+export async function applyAutoFill(tx, passportId, response, { reviewed = new Set() } = {}) {
+    if (!response) return [];
+    const locked = await tx.$queryRaw`SELECT "passport_id" FROM "candidate" WHERE "passport_id" = ${passportId} FOR UPDATE`;
+    if (!locked.length) return [];
+    const readDetails = () => tx.candidateAdditionalDetails.findUnique({ where: { passportId }, select: CONFIRM_SELECT.details });
+    const first = await readDetails();
+    if (!autoFillChanges({ details: first, response, reviewed }).fields.length) return [];
+    // No row yet: create an empty one (a concurrent first save may have created it: then keep theirs).
+    if (!first) await tx.candidateAdditionalDetails.createMany({ data: [{ passportId }], skipDuplicates: true });
+    await tx.$queryRaw`SELECT "passport_id" FROM "candidate_additional_details" WHERE "passport_id" = ${passportId} FOR UPDATE`;
+    const { data, fields } = autoFillChanges({ details: await readDetails(), response, reviewed });
+    if (fields.length) await tx.candidateAdditionalDetails.update({ where: { passportId }, data });
+    return fields;
+}
 
 // The submitted value of a form path from a candidate_form_response row (the columns
 // come from the form's own field list, not a second table).

@@ -257,9 +257,11 @@ export function derivedFilterMatch({ jobTypes, status, currentStage }, filters =
 
 // GET /api/admin/candidate-filter-options: the choices of the dropdown filters, from the system's
 // own data, and only those the user's role may use (filterAccess). The Status and stage choices
-// are fixed lists the page holds. Officers: active Analysts and anyone still holding candidates
-// (the bulk import's officers, deactivated Analysts), so those candidates can be found. Clients
-// and Agents: those named on a job. Three small queries at most, never per candidate.
+// are fixed lists the page holds. Officers: active Analysts and Team Leads (both can be allocated
+// candidates) and anyone still holding candidates (the bulk import's officers, deactivated users), so
+// those candidates can be found. Clients and Agents: those named on a job. Three small queries at
+// most, never per candidate.
+const OFFICER_ROLES = Object.freeze([ROLES.ANALYST, ROLES.TEAM_LEAD]);
 export async function listCandidateFilterOptions({ db, user }) {
     const access = filterAccess(user);
     const byName = [{ name: "asc" }, { id: "asc" }];
@@ -267,7 +269,7 @@ export async function listCandidateFilterOptions({ db, user }) {
         activeJobTypeNames(db),
         access.allocation
             ? db.user.findMany({
-                where: { OR: [{ role: ROLES.ANALYST, status: USER_STATUS.ACTIVE }, { allocatedCandidates: { some: {} } }] },
+                where: { OR: [{ role: { in: [...OFFICER_ROLES] }, status: USER_STATUS.ACTIVE }, { allocatedCandidates: { some: {} } }] },
                 select: { adminId: true, name: true, role: true, status: true },
                 orderBy: [{ name: "asc" }, { adminId: "asc" }],
             })
@@ -278,7 +280,7 @@ export async function listCandidateFilterOptions({ db, user }) {
     return {
         jobTypes,
         noPreference: NO_PREFERRED_JOB_TYPE,
-        ...(officers ? { officers: officers.map((officer) => ({ id: officer.adminId, name: officer.name, active: officer.status === USER_STATUS.ACTIVE && officer.role === ROLES.ANALYST })) } : {}),
+        ...(officers ? { officers: officers.map((officer) => ({ id: officer.adminId, name: officer.name, role: officer.role, active: officer.status === USER_STATUS.ACTIVE && OFFICER_ROLES.includes(officer.role) })) } : {}),
         ...(clients ? { clients } : {}),
         ...(agents ? { agents } : {}),
     };

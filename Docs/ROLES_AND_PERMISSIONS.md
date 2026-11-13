@@ -90,7 +90,7 @@ The review queue (WhatsApp submissions) is ADMIN (and OWNER) work.
 | **Verify** a candidate's details / documents | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Share / revoke a candidate's Candidate Form link | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ❌ |
 | View a submitted Candidate Form | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ✅ *Read* |
-| **Confirm / reject submitted form changes** into the record | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Confirm / reject submitted form changes** into the record | ✅ | ✅ | ✅ | ✅ *Own* | ❌ | ❌ |
 | **Assign to Job** from the candidate's page | ✅ | ✅ | ❌ (assigns from the Job page) | ❌ | ❌ | ❌ (assigns from the Job page) |
 | Bulk candidate import (Settings → Google Sheet Sync → **Upload**) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 
@@ -111,8 +111,10 @@ The review queue (WhatsApp submissions) is ADMIN (and OWNER) work.
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
 | Work Allocation page | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 | Assign, reassign, unassign, auto-allocate candidates to Analysts | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Assign, reassign, auto-allocate candidates to **Team Leads** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **My allocated** on the Candidates list (their own allocated candidates) | — | — | ✅ | — | — | — |
 
-Work is only ever allocated to **ACTIVE ANALYST** accounts (the server refuses any other target: `NOT_AN_ANALYST`), so nobody can allocate work to an OWNER, ADMIN or TEAM_LEAD.
+Work is only ever allocated to **ACTIVE ANALYST** accounts, and, when an ADMIN (or the OWNER) allocates, to **ACTIVE TEAM_LEAD** accounts. The server refuses any other target inside the transaction (`NOT_AN_ANALYST`; a Team Lead target chosen by a Team Lead: `TEAM_LEAD_TARGET_NOT_ALLOWED`), so nobody can allocate work to an OWNER or ADMIN, and a Team Lead never allocates to a Team Lead (themselves included). A candidate has one owner at a time (an Analyst **or** a Team Lead). Allocating to a Team Lead changes no access: a Team Lead still sees every candidate, and **My allocated** narrows the list to their own (the Officer filter set to themselves). The bulk import's officer matching (by name, any role) is unchanged.
 
 ### Jobs, Agents and Clients
 
@@ -225,16 +227,15 @@ A requested role the ADMIN may not give is refused (403 `OWNER_REQUIRED` / `OWNE
 Exactly seven areas, nothing inferred from them. It is **not** "ADMIN minus something": a TEAM_LEAD gets only what is listed here, and every action that is ADMIN only inside these areas stays ADMIN only.
 
 **Can:**
-- **Candidates**, on every candidate (not limited to an allocation): list, open, register, edit details and additional details, update stages, upload and remove documents, add call logs, share and revoke the candidate's Candidate Form link, view a submitted form.
+- **Candidates**, on every candidate (not limited to an allocation): list, open, register, edit details and additional details, update stages, upload and remove documents, add call logs, share and revoke the candidate's Candidate Form link, view a submitted form, and confirm or reject its submitted values (one by one, or Confirm All / Reject All).
 - **Need Attention:** see every follow-up, flag a call, mark a follow-up complete. The header bell lists the open follow-ups and leads to Need Attention (it never reads the Review Queue).
-- **Work Allocation:** view unallocated candidates and Analysts; assign, reassign, unassign; select one, several or all; equal (even) distribution. Work goes to ACTIVE Analysts only.
+- **Work Allocation:** view unallocated candidates and Analysts; assign, reassign, unassign; select one, several or all; equal (even) distribution. Work goes to ACTIVE Analysts only (an ADMIN may also allocate to Team Leads; a Team Lead's own candidates are under **My allocated** on the Candidates list).
 - **Jobs:** list and view (processing and completed), create and edit, add and remove candidates on the Job's page, complete and cancel (the Job Handler's job actions).
 - **Agents** and **Clients** (Client Management): list, view, create, edit, link, activate and deactivate.
 - **Daily Report:** the standard report (Summary and Incomplete), as an ANALYST sees it.
 
 **Cannot (ADMIN only, or outside the seven areas):**
 - Verify a candidate's details or documents.
-- Confirm or reject submitted Candidate Form values.
 - Delete a Need Attention follow-up.
 - Share a job-group Candidate Form link.
 - "Assign to Job" from the candidate's page (it assigns from the Job's page instead).
@@ -249,13 +250,13 @@ Exactly seven areas, nothing inferred from them. It is **not** "ADMIN minus some
 Sidebar: **Candidates** (their allocated candidates only) and **Need Attention**. Lands on Candidates. The bell lists their open Need Attention follow-ups.
 
 **Can (only for candidates allocated to them, by an ADMIN or a TEAM_LEAD in Work Allocation):**
-- List, search and open the candidate, and work on their workflow: details, additional details, stages, documents, call logs, Candidate Form links, viewing a submitted form.
+- List, search and open the candidate, and work on their workflow: details, additional details, stages, documents, call logs, Candidate Form links, viewing a submitted form and confirming or rejecting its submitted values.
 - Flag and complete follow-ups in Need Attention.
 
 **Cannot:**
 - See or change candidates that are not allocated to them.
 - Register new candidates.
-- Verify details or documents, or confirm submitted form changes.
+- Verify details or documents.
 - Enter or correct police slip dates (approving an undated slip needs an ADMIN).
 - Delete follow-ups.
 - Use Work Allocation.
@@ -301,9 +302,9 @@ Sidebar: **Candidates**, **Jobs**, **Agents**, **Client Management**. Lands on J
 | Compared with | The lower role **cannot** |
 |---|---|
 | **ADMIN vs OWNER** | Manage ADMIN accounts (change, deactivate, re-invite), give the ADMIN role, invite ADMINs, convert an account still holding the retired MANAGER role. |
-| **TEAM_LEAD vs ADMIN** | Verification; confirming or rejecting form values; deleting follow-ups; job-group form links; Assign to Job from the candidate's page; *Summary by Roles*; Settings (every tab, Google Sheet Sync and Upload included); user management; Audit Logs; Job Types (Settings, and adding one from the New Job dialog); the dashboard, documents, review queue, police workflow and monthly overview; police-date corrections. |
+| **TEAM_LEAD vs ADMIN** | Verification; deleting follow-ups; job-group form links; Assign to Job from the candidate's page; *Summary by Roles*; Settings (every tab, Google Sheet Sync and Upload included); user management; Audit Logs; Job Types (Settings, and adding one from the New Job dialog); the dashboard, documents, review queue, police workflow and monthly overview; police-date corrections. |
 | **ANALYST vs TEAM_LEAD** | Work outside their allocated candidates; register candidates; Work Allocation; Jobs; Agents and Clients; the Daily Report. |
-| **ANALYST vs ADMIN** | Work outside their allocated candidates; the dashboard, documents, review queue, police workflow, reports and jobs; register candidates; verify; confirm form changes; correct police dates; delete follow-ups; Work Allocation; job writes; Agents and Clients; Summary by Roles; bulk import; job-group form links; adding job types; Settings; Audit Logs; user management. |
+| **ANALYST vs ADMIN** | Work outside their allocated candidates; the dashboard, documents, review queue, police workflow, reports and jobs; register candidates; verify; correct police dates; delete follow-ups; Work Allocation; job writes; Agents and Clients; Summary by Roles; bulk import; job-group form links; adding job types; Settings; Audit Logs; user management. |
 | **REGISTRATION_DESK vs ADMIN** | Everything outside the Add Candidate registration workflow and viewing Need Attention: the Candidates list, the candidate's page, other stages and documents, removing documents, call logs, Candidate Form links, any Need Attention action, dashboard, review, police, reports, jobs, agents, clients, allocation; verification; confirming form changes; bulk import; Settings; Audit Logs; user management. |
 | **JOB_HANDLER vs ADMIN** | Any candidate change (read only); review, police, dashboard, reports, Need Attention, allocation; verification; adding job types; job-group form links; bulk import; Settings; Audit Logs; user management. |
 

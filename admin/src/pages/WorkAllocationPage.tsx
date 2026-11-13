@@ -46,6 +46,14 @@ const FILTER_PARAMS = FILTER_KEYS.filter((key) => key !== "allocation").map((key
 const HIDDEN_UNALLOCATED: FilterKey[] = ["allocation", "analystId"];
 const HIDDEN_ALLOCATED: FilterKey[] = ["allocation"];
 
+// An ADMIN may also allocate to Team Leads (the server lists them only for an ADMIN). They are shown
+// after the Analysts, each marked "Team Lead".
+const TEAM_LEAD = "TEAM_LEAD";
+const isTeamLead = (holder: { role?: string } | null | undefined) => holder?.role === TEAM_LEAD;
+function TeamLeadBadge() {
+    return <span className="ml-1.5 rounded bg-primary-soft px-1.5 py-0.5 text-label-sm text-primary">Team Lead</span>;
+}
+
 const VIEWS: { status: AllocationStatus; label: string }[] = [
     { status: "UNALLOCATED", label: "Unallocated" },
     { status: "ALLOCATED", label: "Allocated" },
@@ -148,7 +156,12 @@ function WorkAllocationView() {
     const selection = [...selected.values()];
     const selectedCount = selection.length;
     const alreadyAllocated = selection.filter((item) => item.analyst);
-    const activeAnalysts = analysts.data?.analysts ?? [];
+    // Analysts first, then Team Leads (each group in the server's name order).
+    const activeAnalysts = useMemo(() => {
+        const all = analysts.data?.analysts ?? [];
+        return [...all.filter((a) => !isTeamLead(a)), ...all.filter(isTeamLead)];
+    }, [analysts.data]);
+    const hasTeamLeads = activeAnalysts.some(isTeamLead);
     const parsedCounts = activeAnalysts.map((analyst) => {
         const raw = (counts[analyst.analystId] ?? "").trim();
         const value = raw === "" ? 0 : Number(raw);
@@ -302,7 +315,11 @@ function WorkAllocationView() {
         <section aria-labelledby="page-title" className="space-y-4">
             <div>
                 <h1 id="page-title" className="text-headline-lg text-ink">Work Allocation</h1>
-                <p className="mt-1 text-body-sm text-ink-muted">Assign candidates to Analysts. An Analyst only sees and works on the candidates allocated to them.</p>
+                <p className="mt-1 text-body-sm text-ink-muted">
+                    {hasTeamLeads
+                        ? "Assign candidates to Analysts or Team Leads. An Analyst only sees and works on the candidates allocated to them; a Team Lead sees every candidate and finds theirs with My allocated."
+                        : "Assign candidates to Analysts. An Analyst only sees and works on the candidates allocated to them."}
+                </p>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -366,7 +383,7 @@ function WorkAllocationView() {
                                 >
                                     <option value="">All Analysts</option>
                                     {analystCount > 1 && <option value="__several" disabled>{formatNumber(analystCount)} Analysts (Filters)</option>}
-                                    {filterAnalysts.map((analyst) => <option key={analyst.analystId} value={analyst.analystId}>{analyst.name}</option>)}
+                                    {filterAnalysts.map((analyst) => <option key={analyst.analystId} value={analyst.analystId}>{analyst.name}{isTeamLead(analyst) ? " (Team Lead)" : ""}</option>)}
                                 </select>
                             </label>
                         )}
@@ -423,6 +440,7 @@ function WorkAllocationView() {
                                                             {item.analyst ? (
                                                                 <>
                                                                     {item.analyst.name}
+                                                                    {isTeamLead(item.analyst) && <TeamLeadBadge />}
                                                                     {!item.analyst.active && <span className="ml-1 text-label-sm text-critical">(inactive)</span>}
                                                                 </>
                                                             ) : "—"}
@@ -470,7 +488,7 @@ function WorkAllocationView() {
                                             className="size-4 accent-primary"
                                         />
                                         <div className="min-w-0 flex-1">
-                                            <p className="truncate text-body-sm text-ink">{analyst.name}</p>
+                                            <p className="truncate text-body-sm text-ink">{analyst.name}{isTeamLead(analyst) && <TeamLeadBadge />}</p>
                                             <p className="text-label-sm text-ink-subtle tabular-nums">
                                                 {formatNumber(analyst.assignedCount)} {analyst.assignedCount === 1 ? "candidate" : "candidates"}
                                                 {valid && value > 0 && <span className="text-primary"> → {formatNumber(analyst.assignedCount + value)}</span>}

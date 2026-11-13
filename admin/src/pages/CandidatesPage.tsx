@@ -7,7 +7,7 @@ import { FilterBar, FiltersButton, useFilterFields } from "../components/Advance
 import { CandidateSearchBox } from "../components/CandidateSearchBox";
 import { formatNumber } from "../components/format";
 import { useAdminResource } from "../api/useAdminResource";
-import { canRegisterCandidates, useAuth } from "../auth/AuthProvider";
+import { canFilterOwnAllocations, canRegisterCandidates, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
 import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
 import { Icon } from "../components/Icon";
@@ -66,7 +66,16 @@ export function CandidatesPage() {
         setSearchParams(next);
     };
     const filterFields = useFilterFields({ value: filters, options: filterOptions.data, onChange: applyFilters });
-    const open = (passportId: string) => navigate(`/candidates/${encodeURIComponent(passportId)}`);
+    // "My allocated" (Team Lead): the Officer filter set to themselves; pressed again, every candidate.
+    const ownId = canFilterOwnAllocations(user) ? user?.userId ?? null : null;
+    const showingOwn = Boolean(ownId) && filters.analystId === ownId;
+    const toggleOwn = () => {
+        const next: CandidateFilters = { ...filters };
+        if (showingOwn) delete next.analystId;
+        else if (ownId) next.analystId = ownId;
+        applyFilters(next);
+    };
+    const open =(passportId: string) => navigate(`/candidates/${encodeURIComponent(passportId)}`);
     const listRef = useRef<HTMLDivElement>(null);
     const wasErrorRef = useRef(false);
     if (list.status === "error") wasErrorRef.current = true;
@@ -114,6 +123,16 @@ export function CandidatesPage() {
                         <button type="submit" className="h-8 rounded-lg bg-primary px-3 text-label-md text-on-primary hover:bg-primary-hover">Search</button>
                     </form>
                     <FiltersButton filters={filterFields} />
+                    {ownId && (
+                        <button
+                            type="button"
+                            aria-pressed={showingOwn}
+                            onClick={toggleOwn}
+                            className={`h-8 rounded-lg border px-3 text-label-md ${showingOwn ? "border-primary bg-primary text-on-primary" : "border-border-strong bg-surface text-ink-soft hover:bg-canvas"}`}
+                        >
+                            My allocated
+                        </button>
+                    )}
                 </div>
                 <FilterBar filters={filterFields} value={filters} options={filterOptions.data} onChange={applyFilters} idPrefix="candidate-filter" />
                 {filtered && data && (

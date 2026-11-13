@@ -95,6 +95,12 @@ const answers = (overrides = {}) => {
     for (const [group, values] of Object.entries(overrides)) base[group] = { ...base[group], ...values };
     return base;
 };
+// Additional Details already on record with values that DIFFER from the submission, so they are pending
+// changes (conflicts). Empty Additional Details fields are filled by the submission itself, not reviewed.
+const CONFLICTING_DETAILS = Object.freeze({
+    passportId: A.passportId, shoeSize: "9", tshirtSize: "S", bloodGroup: "A+", email: "old@example.com",
+    guardianName: "OLD GUARDIAN", guardianNic: "800000000V", drivingLicence: false, weightKg: "60",
+});
 async function submitForm(values = answers()) {
     const link = (await call(app(USERS.ADMIN), "POST", `/api/admin/candidates/${A.passportId}/form-share`)).body.url.split("#k=")[1];
     const token = (await pub("/verify", { body: { linkSecret: link, passportNumber: A.passportId, nic: A.nic } })).body.token;
@@ -106,9 +112,13 @@ async function submitForm(values = answers()) {
 
 describe("Confirm All (BULK-001 .. 006)", () => {
     test("applies every pending change through the per-field rules; reviews CONFIRMED; one audit entry per field marked (Confirm All); the submission is untouched", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: CONFLICTING_DETAILS });
         await submitForm();
         const before = (await view()).body;
-        assert.ok(before.pending.length > 10, "a fresh submission has many pending changes");
+        assert.ok(before.pending.length > 10, "a submission that differs from the record has many pending changes");
+        // The fields that were empty were filled by the submission, so they are not part of Confirm All.
+        assert.equal(before.pending.find((p) => p.field === "contact.district"), undefined);
+        assert.equal((await detailsRow()).district, "GAMPAHA");
         const responseBefore = JSON.stringify(await responseRow());
         const r = await confirmAll(USERS.OWNER, seenBody(before.pending));
         assert.equal(r.status, 200, JSON.stringify(r.body));
@@ -221,6 +231,7 @@ describe("Confirm All (BULK-001 .. 006)", () => {
 
 describe("Reject All (BULK-007 .. 009)", () => {
     test("rejects every pending change, changes nothing in the record, audits each field (Reject All); reviewed ones stay as they were", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: CONFLICTING_DETAILS });
         await submitForm();
         const birth = (await view()).body.pending.find((p) => p.field === "basic.birthDate");
         assert.equal((await confirm(USERS.ADMIN, { field: birth.field, expectedCurrentValue: birth.current, expectedSubmittedValue: birth.submitted })).status, 200);
@@ -239,15 +250,15 @@ describe("Reject All (BULK-007 .. 009)", () => {
         assert.equal(audits.length, pending.length);
         assert.ok(audits.every((a) => a.reason.endsWith("(Reject All)") && a.adminId === USERS.ADMIN.adminId));
         const shoe = audits.find((a) => a.reason.includes("measurements.shoeSize"));
-        assert.deepEqual(JSON.parse(shoe.newValue), { field: "measurements.shoeSize", currentValue: null, rejectedSubmittedValue: "42" });
+        assert.deepEqual(JSON.parse(shoe.newValue), { field: "measurements.shoeSize", currentValue: "9", rejectedSubmittedValue: "42" });
     });
 });
 
 describe("RBAC and request shape (BULK-010 .. 012)", () => {
-    test("ADMIN and OWNER may; TEAM_LEAD, ANALYST, REGISTRATION_DESK and JOB_HANDLER get 403 and nothing is decided", async () => {
+    test("ADMIN, OWNER, TEAM_LEAD and the candidate's own ANALYST may; REGISTRATION_DESK and JOB_HANDLER get 403 and nothing is decided", async () => {
         await submitForm();
         const body = await seen();
-        for (const who of [USERS.LEAD, USERS.ANN, USERS.DESK, USERS.JOBS]) {
+        for (const who of [USERS.DESK, USERS.JOBS]) {
             assert.equal((await confirmAll(who, body)).status, 403, who.role);
             assert.equal((await rejectAll(who, body)).status, 403, who.role);
         }
@@ -255,6 +266,14 @@ describe("RBAC and request shape (BULK-010 .. 012)", () => {
         assert.equal((await decisionAudits()).length, 0);
         // The roles that can read the submission still can (unchanged).
         for (const who of [USERS.LEAD, USERS.ANN, USERS.JOBS]) assert.equal((await view(who)).status, 200, who.role);
+        for (const who of [USERS.LEAD, USERS.ANN]) {
+            const decided = await rejectAll(who, body);
+            assert.equal(decided.status, 200, `${who.role}: ${JSON.stringify(decided.body)}`);
+            assert.ok((await decisionAudits()).every((a) => a.adminId === who.adminId), `audited as the ${who.role}`);
+            // Reset the decisions for the next role (review rows are final, so remove them directly).
+            await pg.exec(`ALTER TABLE "candidate_form_field_review" DISABLE TRIGGER USER; DELETE FROM "candidate_form_field_review"; ALTER TABLE "candidate_form_field_review" ENABLE TRIGGER USER;
+                ALTER TABLE "audit_logs" DISABLE TRIGGER USER; TRUNCATE "audit_logs"; ALTER TABLE "audit_logs" ENABLE TRIGGER USER;`);
+        }
         assert.equal((await rejectAll(USERS.OWNER, body)).status, 200);
     });
 
@@ -282,8 +301,10 @@ describe("Admin view: the record's value of every reviewable field (FIELD-MAP)",
         const { body } = await view();
         assert.deepEqual(
             [body.current["contact.email"], body.current["guardian.name"], body.current["basic.bloodGroup"], body.current["measurements.shoeSize"], body.current["contact.address"]],
-            ["old@example.com", "OLD GUARDIAN", null, "9", "1 old road"],
+            // (Blood Group was empty: the submission filled it, so it is not a pending change)
+            ["old@example.com", "OLD GUARDIAN", "O+", "9", "1 old road"],
         );
+        assert.equal(body.pending.find((p) => p.field === "basic.bloodGroup"), undefined);
         const email = body.pending.find((p) => p.field === "contact.email");
         assert.deepEqual([email.current, email.submitted], ["old@example.com", "new@example.com"]);
         // A UK size on record is a change against the EU size submitted; it is offered, never converted.

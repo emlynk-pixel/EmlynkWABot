@@ -188,11 +188,13 @@ describe("stale and concurrent reviews (REJECT-010)", () => {
 });
 
 describe("roles, allowlist and the public API (REJECT-011, 012, 014, 015)", () => {
-    test("ADMIN and OWNER reject; Analyst and Registration Desk cannot", async () => {
+    test("ADMIN, OWNER and the candidate's own Analyst reject; the Registration Desk cannot; an unrelated Analyst gets 404", async () => {
         await submitForm();
         const seen = await body("contact.address");
-        for (const who of [USERS.ANN, USERS.DESK, USERS.BEN]) assert.equal((await reject(who, seen)).status, 403, who.role);
+        assert.equal((await reject(USERS.DESK, seen)).status, 403, "REGISTRATION_DESK");
+        assert.equal((await reject(USERS.BEN, seen)).status, 404, "an Analyst the candidate is not allocated to");
         assert.equal(await reviewOf("contact.address"), null);
+        assert.equal((await reject(USERS.ANN, await body("passport.expiryDate"))).status, 200, "the candidate's own Analyst");
         assert.equal((await reject(USERS.ADMIN, seen)).status, 200);
         assert.equal((await reject(USERS.OWNER, await body("basic.birthDate"))).status, 200);
         assert.equal((await reject(USERS.ADMIN, { field: "basic.birthDate", expectedCurrentValue: null, expectedSubmittedValue: null }, "N9999999")).status, 404);

@@ -1,7 +1,7 @@
 // The TEAM_LEAD role: exactly seven areas, nothing inferred from them. The Candidates area for
 // EVERY candidate, Need Attention (list, flag, complete), Work Allocation, Jobs, Agents, Clients and
 // the standard Daily Report. Every ADMIN-only action inside those areas stays ADMIN only
-// (verification, Candidate Form confirm / reject, follow-up delete, the job-group form link, Summary
+// (verification, follow-up delete, the job-group form link, Summary
 // by Roles, Job Types), and there are no Settings, user management, Audit Logs, dashboards, review or
 // police-date corrections. OWNER and ADMIN
 // may give the role; TEAM_LEAD manages no account. Plus a route-by-route sweep of the TEAM_LEAD
@@ -188,9 +188,9 @@ describe("Candidates: full operational access to every candidate", () => {
         notForbidden(await api(TL, "POST", `/candidates/${FREE}/form-share`, {}), "share the candidate's form link");
     });
 
-    test("verification and Candidate Form confirm / reject stay ADMIN only (nothing changes)", async () => {
+    test("verification stays ADMIN only (nothing changes); Candidate Form confirm / reject is open to the Team Lead", async () => {
         forbidden(await api(TL, "POST", `/candidates/${FREE}/verification`, { kind: "DETAILS", verified: true }), "verification");
-        for (const action of ["confirm-field", "reject-field"]) forbidden(await api(TL, "POST", `/candidates/${FREE}/form-submission/${action}`, {}), action);
+        for (const action of ["confirm-field", "reject-field", "confirm-all", "reject-all"]) notForbidden(await api(TL, "POST", `/candidates/${FREE}/form-submission/${action}`, {}), action);
         assert.equal(await prisma.candidateVerification.count(), 0);
         notForbidden(await api(USERS.ADMIN, "POST", `/candidates/${FREE}/verification`, { kind: "DETAILS", verified: true }), "ADMIN still verifies");
     });
@@ -229,7 +229,56 @@ describe("Work Allocation", () => {
             const refused = await api(TL, "POST", "/work-allocation/assign", { candidateIds: [FREE], allocations: [{ analystId: who.adminId, count: 1 }] });
             assert.ok(refused.status >= 400 && refused.status < 500 && refused.status !== 403, `allocate to ${who.role}: ${refused.status}`);
         }
+        const auto = await api(TL, "POST", "/work-allocation/auto-allocate", { candidateIds: [FREE], analystIds: [TL.adminId] });
+        assert.deepEqual([auto.status, auto.body.code], [409, "TEAM_LEAD_TARGET_NOT_ALLOWED"]);
         assert.equal(await prisma.candidateAllocation.count({ where: { passportId: FREE } }), 0);
+    });
+
+    test("an ADMIN (and the OWNER) allocates to a Team Lead: listed with its role, assign / reassign / unassign / auto-allocate, audited", async () => {
+        const targets = ok(await api(USERS.ADMIN, "GET", "/work-allocation/analysts")).analysts;
+        assert.deepEqual(targets.map((t) => [t.analystId, t.role]).sort(), [[USERS.ANALYST.adminId, "ANALYST"], [TL.adminId, "TEAM_LEAD"]].sort());
+        ok(await api(USERS.ADMIN, "POST", "/work-allocation/assign", { candidateIds: [FREE], allocations: [{ analystId: TL.adminId, count: 1 }] }));
+        assert.equal((await prisma.candidateAllocation.findUnique({ where: { passportId: FREE } })).analystId, TL.adminId);
+        const audit = await prisma.auditLog.findFirst({ where: { action: "ASSIGN_CANDIDATE", passportId: FREE } });
+        assert.deepEqual([audit.adminId, JSON.parse(audit.newValue).analystId], [USERS.ADMIN.adminId, TL.adminId]);
+        // The allocated view shows the Team Lead as a current holder.
+        const allocated = ok(await api(USERS.ADMIN, "GET", "/work-allocation/candidates?status=ALLOCATED")).items.find((item) => item.passportId === FREE);
+        assert.deepEqual([allocated.analyst.analystId, allocated.analyst.role, allocated.analyst.active], [TL.adminId, "TEAM_LEAD", true]);
+        // One owner per candidate: moving it to the Analyst needs reassign, then it leaves the Team Lead.
+        const conflict = await api(USERS.OWNER, "POST", "/work-allocation/assign", { candidateIds: [FREE], allocations: [{ analystId: USERS.ANALYST.adminId, count: 1 }] });
+        assert.deepEqual([conflict.status, conflict.body.code], [409, "ALREADY_ALLOCATED"]);
+        ok(await api(USERS.OWNER, "POST", "/work-allocation/assign", { candidateIds: [FREE], allocations: [{ analystId: USERS.ANALYST.adminId, count: 1 }], reassign: true }));
+        assert.equal(await prisma.candidateAllocation.count({ where: { passportId: FREE } }), 1);
+        assert.equal((await prisma.candidateAllocation.findUnique({ where: { passportId: FREE } })).analystId, USERS.ANALYST.adminId);
+        ok(await api(USERS.ADMIN, "POST", "/work-allocation/unassign", { candidateIds: [FREE], confirm: true }));
+        const auto = ok(await api(USERS.ADMIN, "POST", "/work-allocation/auto-allocate", { candidateIds: [FREE], analystIds: [TL.adminId] }));
+        assert.equal(auto.allocatedCount, 1);
+        assert.equal((await prisma.candidateAllocation.findUnique({ where: { passportId: FREE } })).analystId, TL.adminId);
+        // A Team Lead sees only Analysts as targets.
+        assert.deepEqual(ok(await api(TL, "GET", "/work-allocation/analysts")).analysts.map((a) => a.analystId), [USERS.ANALYST.adminId]);
+    });
+
+    test("an inactive Team Lead, an ADMIN or the OWNER is never a target, even for an ADMIN", async () => {
+        await prisma.user.update({ where: { adminId: TL.adminId }, data: { status: "INACTIVE" } });
+        const inactive = await api(USERS.ADMIN, "POST", "/work-allocation/assign", { candidateIds: [FREE], allocations: [{ analystId: TL.adminId, count: 1 }] });
+        assert.deepEqual([inactive.status, inactive.body.code], [409, "ANALYST_INACTIVE"]);
+        assert.ok(!ok(await api(USERS.ADMIN, "GET", "/work-allocation/analysts")).analysts.some((a) => a.analystId === TL.adminId));
+        for (const who of [USERS.ADMIN, USERS.OWNER]) {
+            const refused = await api(USERS.ADMIN, "POST", "/work-allocation/assign", { candidateIds: [FREE], allocations: [{ analystId: who.adminId, count: 1 }] });
+            assert.deepEqual([refused.status, refused.body.code], [409, "NOT_AN_ANALYST"], who.role);
+        }
+        assert.equal(await prisma.candidateAllocation.count({ where: { passportId: FREE } }), 0);
+    });
+
+    test("a Team Lead keeps every candidate, and \"My allocated\" (analystId = self) lists only theirs", async () => {
+        ok(await api(USERS.ADMIN, "POST", "/work-allocation/assign", { candidateIds: [FREE], allocations: [{ analystId: TL.adminId, count: 1 }] }));
+        const all = ok(await api(TL, "GET", "/candidates")).items.map((item) => item.passportId).sort();
+        assert.deepEqual(all, [ALLOCATED, FREE].sort(), "still every candidate");
+        const mine = ok(await api(TL, "GET", `/candidates?analystId=${TL.adminId}`)).items.map((item) => item.passportId);
+        assert.deepEqual(mine, [FREE]);
+        // The officer filter offers the Team Lead as a current holder.
+        const officers = ok(await api(TL, "GET", "/candidate-filter-options")).officers;
+        assert.deepEqual(officers.find((o) => o.id === TL.adminId), { id: TL.adminId, name: TL.name, role: "TEAM_LEAD", active: true });
     });
 });
 
@@ -310,8 +359,9 @@ const TEAM_LEAD_ROUTES = [
     ["POST", `/candidates/${P}/call-logs`, true], ["POST", `/candidates/${P}/call-logs/${NO_ID}/follow-up`, true],
     ["GET", "/follow-ups", true], ["POST", `/follow-ups/${NO_ID}/complete`, true], ["DELETE", `/follow-ups/${NO_ID}`, false],
     ["GET", `/candidates/${P}/additional-details`, true], ["PUT", `/candidates/${P}/additional-details`, true],
-    ["GET", `/candidates/${P}/form-submission`, true], ["POST", `/candidates/${P}/form-submission/confirm-field`, false],
-    ["POST", `/candidates/${P}/form-submission/reject-field`, false], ["GET", `/candidates/${P}/form-share`, true],
+    ["GET", `/candidates/${P}/form-submission`, true], ["POST", `/candidates/${P}/form-submission/confirm-field`, true],
+    ["POST", `/candidates/${P}/form-submission/reject-field`, true], ["POST", `/candidates/${P}/form-submission/confirm-all`, true],
+    ["POST", `/candidates/${P}/form-submission/reject-all`, true], ["GET", `/candidates/${P}/form-share`, true],
     ["POST", `/candidates/${P}/form-share`, true], ["POST", `/candidates/${P}/form-share/revoke`, true],
     ["GET", "/work-allocation/candidates?status=NOPE", true], ["GET", "/work-allocation/analysts", true],
     ["POST", "/work-allocation/assign", true], ["POST", "/work-allocation/auto-allocate", true],

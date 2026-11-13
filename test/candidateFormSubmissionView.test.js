@@ -138,12 +138,14 @@ describe("Admin: Candidate Form submission", () => {
         assert.ok(r.body.changed.includes("guardian.name"), "new information is a change from empty");
     });
 
-    test("ADMIN-FORM-010 reading and submitting never overwrite the candidate record", async () => {
+    test("ADMIN-FORM-010 reading and submitting never overwrite the candidate record; reading changes nothing", async () => {
         const before = JSON.stringify(await prisma.candidate.findUnique({ where: { passportId: A.passportId } }));
         await submitAs(A);
+        // Submitting fills only the EMPTY Additional Details (applyAutoFill); reading the submission writes nothing.
+        const detailsAfterSubmit = JSON.stringify(await prisma.candidateAdditionalDetails.findMany());
         await admin(USERS.ADMIN, `/candidates/${A.passportId}/form-submission`);
         assert.equal(JSON.stringify(await prisma.candidate.findUnique({ where: { passportId: A.passportId } })), before);
-        assert.equal(await prisma.candidateAdditionalDetails.count(), 0);
+        assert.equal(JSON.stringify(await prisma.candidateAdditionalDetails.findMany()), detailsAfterSubmit);
     });
 
     test("roles and scope: staff roles read it; an Analyst only for their own candidates; unknown ids 404; the route is read only", async () => {

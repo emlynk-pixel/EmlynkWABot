@@ -79,6 +79,50 @@ describe("Work Allocation: who sees it", () => {
     }
 });
 
+describe("Work Allocation: Team Leads as allocation targets (an ADMIN's list)", () => {
+    const WITH_TEAM_LEAD: AllocationAnalysts = {
+        ...ANALYSTS,
+        // The server's name order; the page shows the Analysts first, then the Team Leads.
+        analysts: [{ analystId: "u-tia", name: "Aaron Lead", role: "TEAM_LEAD", assignedCount: 1 }, ...ANALYSTS.analysts.map((a) => ({ ...a, role: "ANALYST" }))],
+    };
+    const TIA = { analystId: "u-tia", name: "Aaron Lead", active: true, role: "TEAM_LEAD" };
+
+    test("Team Leads are listed after the Analysts, marked Team Lead, and can be given candidates", async () => {
+        const { calls } = backend("ADMIN", { "GET /api/admin/work-allocation/analysts": { status: 200, body: WITH_TEAM_LEAD } });
+        renderApp("/work-allocation");
+        await table();
+        const list = within(await screen.findByRole("list", { name: "Analysts" }, RENDER_STEP));
+        const names = list.getAllByRole("listitem").map((li) => li.querySelector("p")?.textContent);
+        expect(names).toEqual(["Ann Analyst", "Ben Analyst", "Aaron LeadTeam Lead"]);
+        expect(screen.getByText(/Assign candidates to Analysts or Team Leads/)).toBeInTheDocument();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("checkbox", { name: "Select all on this page" }));
+        await user.type(screen.getByLabelText("Candidates for Aaron Lead"), "3");
+        await user.click(screen.getByRole("button", { name: "Assign 3 candidates" }));
+        await waitFor(() => expect(posts(calls)).toHaveLength(1));
+        expect(posts(calls)[0]).toMatchObject({ path: "/api/admin/work-allocation/assign", body: { allocations: [{ analystId: "u-tia", count: 3 }] } });
+    });
+
+    test("an allocated Team Lead is shown with the Team Lead mark, not as inactive", async () => {
+        backend("ADMIN", {
+            "GET /api/admin/work-allocation/analysts": { status: 200, body: WITH_TEAM_LEAD },
+            "GET /api/admin/work-allocation/candidates": { status: 200, body: page([candidate(6, TIA)], "ALLOCATED") },
+        });
+        renderApp("/work-allocation?view=allocated");
+        const rows = within(await table());
+        const row = rows.getByText("CANDIDATE 6").closest("tr")!;
+        expect(row).toHaveTextContent("Aaron LeadTeam Lead");
+        expect(row).not.toHaveTextContent("(inactive)");
+    });
+
+    test("without Team Leads the page reads as before", async () => {
+        backend();
+        renderApp("/work-allocation");
+        await table();
+        expect(screen.getByText("Assign candidates to Analysts. An Analyst only sees and works on the candidates allocated to them.")).toBeInTheDocument();
+    });
+});
+
 describe("Work Allocation: selecting and assigning", () => {
     test("checkboxes, Select all (this page only) and Clear selection", async () => {
         backend();

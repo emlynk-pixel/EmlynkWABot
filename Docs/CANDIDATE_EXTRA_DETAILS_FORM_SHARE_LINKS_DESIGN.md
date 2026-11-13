@@ -19,7 +19,7 @@ Related documents:
 2. The candidate opens the link and enters their **Passport Number and NIC Number**. The link and both numbers must belong to the same candidate.
 3. The form opens with what is already known about the candidate filled in and marked *From your record*.
 4. The candidate submits **once**. After that the form is closed for good. Opening the link again with the right details shows a neutral "already submitted" screen.
-5. The answers are stored in a **separate table** (`candidate_form_response`) with one nullable column per answer. The main candidate tables are **never** changed by a public submission.
+5. The answers are stored in a **separate table** (`candidate_form_response`) with one nullable column per answer. The core `candidate` table is **never** changed by a public submission; the submission only fills the **empty** Additional Details fields (see "Notes on the boundaries" in `Docs/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md`), and a value already on record changes only through Confirm.
 
 Not built, on purpose:
 - job-group links (one link for many candidates); the schema leaves room (`kind`)

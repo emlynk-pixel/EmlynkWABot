@@ -193,10 +193,11 @@ function contentDisposition(fileName) {
 // REGISTRATION_STAFF routes), Need Attention (list, flag, complete), Work
 // Allocation, Jobs (JOB_READERS / JOB_MANAGERS), Agents and Clients
 // (MASTER_DATA_STAFF) and the standard Daily Report (REPORT_READERS). It is in no
-// ADMINS_ONLY route: verification, Candidate Form confirm / reject, follow-up
+// ADMINS_ONLY route: verification, follow-up
 // delete, the job-group form link, Summary by Roles, Job Types, police-date
 // corrections, Settings, users and Audit Logs stay ADMIN only; and it is not in the
-// dashboard or review tiers.
+// dashboard or review tiers. Candidate Form confirm / reject is FORM_REVIEWERS (ADMIN,
+// TEAM_LEAD, ANALYST), each within its candidate scope.
 const { ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
 // The set of roles allowed for each endpoint tier.
 const DASHBOARD_READERS = [ADMIN];                                      // overview, documents, review, police, monthly
@@ -204,6 +205,9 @@ const REPORT_READERS = [ADMIN, TEAM_LEAD];                              // the D
 const CANDIDATE_STAFF = [ADMIN, TEAM_LEAD, ANALYST];                    // the Candidates area and Need Attention
 const REVIEWERS = [ADMIN];                                              // review actions
 const ADMINS_ONLY = [ADMIN];                                            // administrators only
+// Candidate Form Confirm / Reject (and Confirm All / Reject All): the Candidates-area roles, each within
+// its candidate scope (an Analyst only for candidates allocated to them: storedCandidateId, 404 otherwise).
+const FORM_REVIEWERS = [ADMIN, TEAM_LEAD, ANALYST];
 // A 256 KB logo as base64 in JSON, with the title and colours.
 const FORM_BRANDING_BODY_LIMIT = "512kb";
 const ALLOCATION_MANAGERS = [ADMIN, TEAM_LEAD];                         // Work Allocation
@@ -859,11 +863,11 @@ export function createAdminRouter({
         })));
     });
 
-    // Confirm ONE candidate-submitted field into the record (ADMIN only). The body
+    // Confirm ONE candidate-submitted field into the record (FORM_REVIEWERS, within the user's scope). The body
     // names an allowlisted field key and the values the Admin saw (to detect a stale
     // screen); the new value is read from candidate_form_response on the server.
     for (const [action, review] of [["confirm-field", confirmFormField], ["reject-field", rejectFormField]]) {
-        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(ADMINS_ONLY), async (req, res) => {
+        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(FORM_REVIEWERS), async (req, res) => {
             if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
             const body = req.body;
             const allowed = new Set(["field", "expectedCurrentValue", "expectedSubmittedValue"]);
@@ -882,10 +886,10 @@ export function createAdminRouter({
     }
 
     // Confirm All / Reject All: every pending candidate-submitted change at once, in one transaction
-    // (ADMIN only, like the per-field actions). The body lists the changes the Admin saw; the server
+    // (FORM_REVIEWERS, like the per-field actions). The body lists the changes the user saw; the server
     // refuses the whole request unless they are exactly the pending set (candidateFormFieldConfirmService.js).
     for (const [action, review] of [["confirm-all", confirmAllFormFields], ["reject-all", rejectAllFormFields]]) {
-        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(ADMINS_ONLY), async (req, res) => {
+        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(FORM_REVIEWERS), async (req, res) => {
             if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
             const body = req.body;
             const allowed = new Set(["field", "expectedCurrentValue", "expectedSubmittedValue"]);
@@ -944,7 +948,8 @@ export function createAdminRouter({
 
     router.get("/work-allocation/analysts", requireRole(ALLOCATION_MANAGERS), async (req, res) => {
         const client = await resolveDb(db);
-        return res.json(await listAllocationAnalysts({ db: client }));
+        // The assignable users depend on who asks (Team Leads only for an ADMIN: workAllocationService.js).
+        return res.json(await listAllocationAnalysts({ db: client, user: req.user }));
     });
 
     router.post("/work-allocation/assign", requireRole(ALLOCATION_MANAGERS), async (req, res) => {
