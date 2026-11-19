@@ -16,8 +16,7 @@ import { humanize, todayInSriLanka } from "../format";
 import { DatePicker } from "../DatePicker";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { ErrorState, LoadingState } from "../States";
-import { Field, fieldControl, textAreaControl, type NotApplicableToggle } from "./CandidateFields";
-import { NOT_APPLICABLE_FIELDS } from "./additionalDetailsCompletion";
+import { Field, fieldControl, textAreaControl } from "./CandidateFields";
 import type { CandidateJobAssignment } from "../../api/jobs";
 import { ShareFormButton } from "./ShareFormButton";
 import { FormChangesButtons, mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
@@ -30,7 +29,7 @@ import { FormChangesButtons, mergeRefreshed, useTakeConfirmed } from "./submitte
 // here: a new form is filled in from it (name, address, birthday) as a
 // starting point only. The server checks everything again.
 
-type Key = Exclude<keyof AdditionalDetails, "notApplicableFields">;
+type Key = keyof AdditionalDetails;
 // Every field as the form holds it: text; Yes / No answers as "yes" | "no" | "".
 type Form = Record<Key, string>;
 
@@ -48,11 +47,6 @@ const BOOLEAN_KEYS: Key[] = ["fatherAlive", "motherAlive", "drivingLicence", "ca
 const SUGGESTED_LABELS: Record<string, string> = { nameAsInPassport: "name according to passport", permanentAddress: "permanent address", birthday: "birthday" };
 const CUSTOM_SIZE = /^[A-Za-z0-9][A-Za-z0-9 ./-]{0,9}$/;
 
-// A field marked N/A (only the NOT_APPLICABLE_FIELDS can be) holds this in the form: never typeable, so a box
-// the user types "N/A" into is not mistaken for the checkbox. Saved as an empty field plus a notApplicableFields entry.
-const NA = "__NA__";
-const canBeNa = (key: Key) => (NOT_APPLICABLE_FIELDS as readonly string[]).includes(key);
-
 const emptyForm = (): Form => Object.fromEntries(KEYS.map((key) => [key, ""])) as Form;
 
 function formFrom(details: AdditionalDetails): Form {
@@ -61,18 +55,14 @@ function formFrom(details: AdditionalDetails): Form {
         const value = details[key];
         form[key] = typeof value === "boolean" ? (value ? "yes" : "no") : value ?? "";
     }
-    // A marked field is empty: a value that arrived since (an import, a confirmed Candidate Form answer) wins.
-    for (const key of details.notApplicableFields ?? []) if (canBeNa(key as Key) && !form[key as Key]) form[key as Key] = NA;
     return form;
 }
 
 // What is saved: blanks as null, and details that go with a hidden answer
 // (a wife when not married, children when single) cleared rather than kept out of sight.
 function payloadOf(form: Form): AdditionalDetails {
-    const isNa = (key: Key) => form[key] === NA;
-    const value = (key: Key) => (isNa(key) ? null : form[key].trim() || null);
-    const payload = Object.fromEntries(KEYS.map((key) => [key, BOOLEAN_KEYS.includes(key) ? (form[key] && !isNa(key) ? form[key] === "yes" : null) : value(key)])) as Omit<AdditionalDetails, "notApplicableFields"> as AdditionalDetails;
-    payload.notApplicableFields = KEYS.filter((key) => canBeNa(key) && isNa(key));
+    const value = (key: Key) => form[key].trim() || null;
+    const payload = Object.fromEntries(KEYS.map((key) => [key, BOOLEAN_KEYS.includes(key) ? (form[key] ? form[key] === "yes" : null) : value(key)])) as AdditionalDetails;
     // A parent's name and birthday are kept whatever the alive answer.
     if (form.maritalStatus === "SINGLE") Object.assign(payload, { child1Name: null, child2Name: null, child3Name: null });
     if (form.maritalStatus !== "MARRIED") Object.assign(payload, { wifeFullName: null, wifeBirthday: null, spousePassportNumber: null });
@@ -90,14 +80,14 @@ export function validateAdditionalDetails(form: Form, today = todayInSriLanka())
     if (children && form.child2Name.trim() && !form.child1Name.trim()) errors.child2Name = "Enter the 1st child's name first.";
     if (children && form.child3Name.trim() && !form.child2Name.trim()) errors.child3Name = "Enter the 2nd child's name first.";
     for (const key of ["pantSize", "shoeSize"] as const) {
-        if (form[key] !== NA && form[key].trim() && !CUSTOM_SIZE.test(form[key].trim())) errors[key] = "Up to 10 letters, digits, spaces, dots, slashes or dashes.";
+        if (form[key].trim() && !CUSTOM_SIZE.test(form[key].trim())) errors[key] = "Up to 10 letters, digits, spaces, dots, slashes or dashes.";
     }
     for (const key of ["birthday", "fatherBirthday", "motherBirthday", "wifeBirthday", "guardianBirthday"] as const) {
         if (form[key] && form[key] > today) errors[key] = "This date is in the future.";
         else if (form[key] && form[key] < "1900-01-01") errors[key] = "This date is before 1900.";
     }
     const weight = form.weightKg.trim();
-    if (weight && weight !== NA && !(/^\d{1,3}(\.\d{1,2})?$/.test(weight) && Number(weight) >= 20 && Number(weight) <= 300)) errors.weightKg = "Enter the weight in kg, from 20 to 300.";
+    if (weight && !(/^\d{1,3}(\.\d{1,2})?$/.test(weight) && Number(weight) >= 20 && Number(weight) <= 300)) errors.weightKg = "Enter the weight in kg, from 20 to 300.";
     if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errors.email = "Enter an email address.";
     if (form.guardianNic.trim() && !/^(\d{9}[VX]|\d{12})$/i.test(form.guardianNic.trim())) errors.guardianNic = "Enter a Sri Lankan NIC (9 digits and V or X, or 12 digits).";
     for (const key of ["fatherPassportNumber", "motherPassportNumber", "spousePassportNumber"] as const) {
@@ -216,12 +206,8 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
         }
     };
 
-    // The N/A checkbox, for the optional fields only.
-    const na = (key: Key): NotApplicableToggle | undefined =>
-        canBeNa(key) ? { checked: form[key] === NA, onChange: (checked) => set(key)(checked ? NA : ""), disabled } : undefined;
-
     const text = (key: Key, label: string, { required = false, maxLength = 150, placeholder, submitted }: { required?: boolean; maxLength?: number; placeholder?: string; submitted?: string } = {}) => (
-        <TextField id={key} label={label} required={required} error={errors[key]} value={form[key]} onChange={set(key)} disabled={disabled} maxLength={maxLength} placeholder={placeholder} submitted={submitted} notApplicable={na(key)} />
+        <TextField id={key} label={label} required={required} error={errors[key]} value={form[key]} onChange={set(key)} disabled={disabled} maxLength={maxLength} placeholder={placeholder} submitted={submitted} />
     );
     const dateField = (key: Key, label: string, submitted?: string) => (
         <Field label={label} htmlFor={`ad-${key}`} error={errors[key]} submitted={submitted}>
@@ -229,7 +215,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
         </Field>
     );
     const yesNo = (key: Key, label: string, submitted?: string) => (
-        <Field label={label} htmlFor={`ad-${key}`} submitted={submitted} notApplicable={na(key)}>
+        <Field label={label} htmlFor={`ad-${key}`} submitted={submitted}>
             <select id={`ad-${key}`} value={form[key]} onChange={(e) => set(key)(e.target.value)} disabled={disabled} className={fieldControl}>
                 <option value="">Not recorded</option>
                 <option value="yes">Yes</option>
@@ -238,7 +224,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
         </Field>
     );
     const choice = (key: Key, label: string, options: readonly { value: string; label: string }[], submitted?: string) => (
-        <Field label={label} htmlFor={`ad-${key}`} error={errors[key]} submitted={submitted} notApplicable={na(key)}>
+        <Field label={label} htmlFor={`ad-${key}`} error={errors[key]} submitted={submitted}>
             <select id={`ad-${key}`} value={form[key]} onChange={(e) => set(key)(e.target.value)} disabled={disabled} className={fieldControl}>
                 <option value="">Not recorded</option>
                 {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -253,7 +239,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <h2 id="additional-details-title" className="text-headline-sm text-ink">Additional details</h2>
-                    <p className="mt-1 text-body-sm text-ink-muted">Saved separately from the candidate&apos;s record, which is not changed here. Fill every field. Physical details, clothing sizes and employment / skills can be marked N/A if unknown.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Saved separately from the candidate&apos;s record, which is not changed here. Fill every field.</p>
                 </div>
                 {/* The public Candidate Form for this candidate (link + Passport + NIC). */}
                 {canEdit && <ShareFormButton passportId={view.passportId} currentJob={currentJob} activeJobs={activeJobs} />}
@@ -303,14 +289,14 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
             </Section>
 
             <Section title="Clothing & sizes">
-                <Field label="T-shirt size" htmlFor="ad-tshirtSize" error={errors.tshirtSize} submitted="measurements.shirtSize" notApplicable={na("tshirtSize")}>
+                <Field label="T-shirt size" htmlFor="ad-tshirtSize" error={errors.tshirtSize} submitted="measurements.shirtSize">
                     <select id="ad-tshirtSize" value={form.tshirtSize} onChange={(e) => set("tshirtSize")(e.target.value)} disabled={disabled} className={fieldControl}>
                         <option value="">Not recorded</option>
                         {TSHIRT_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
                     </select>
                 </Field>
-                <SizeField key={`pant-${resets}`} id="pantSize" label="Pant size" submitted="measurements.waistSize" presets={PANT_SIZE_PRESETS} value={form.pantSize} onChange={set("pantSize")} error={errors.pantSize} disabled={disabled} notApplicable={na("pantSize")} />
-                <SizeField key={`shoe-${resets}`} id="shoeSize" label="Shoe size (EU)" help="European (EU) size, as the Candidate Form asks for it." submitted="measurements.shoeSize" presets={SHOE_SIZE_PRESETS} value={form.shoeSize} onChange={set("shoeSize")} error={errors.shoeSize} disabled={disabled} notApplicable={na("shoeSize")} />
+                <SizeField key={`pant-${resets}`} id="pantSize" label="Pant size" submitted="measurements.waistSize" presets={PANT_SIZE_PRESETS} value={form.pantSize} onChange={set("pantSize")} error={errors.pantSize} disabled={disabled} />
+                <SizeField key={`shoe-${resets}`} id="shoeSize" label="Shoe size (EU)" help="European (EU) size, as the Candidate Form asks for it." submitted="measurements.shoeSize" presets={SHOE_SIZE_PRESETS} value={form.shoeSize} onChange={set("shoeSize")} error={errors.shoeSize} disabled={disabled} />
             </Section>
 
             <Section title="Father details">
@@ -358,7 +344,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
 
             <Section title="Employment / skills">
                 <div className="sm:col-span-2">
-                    <Field label="Other job skills" htmlFor="ad-otherJobSkills" error={errors.otherJobSkills} submitted="qualifications.otherSkills1" notApplicable={na("otherJobSkills")}>
+                    <Field label="Other job skills" htmlFor="ad-otherJobSkills" error={errors.otherJobSkills} submitted="qualifications.otherSkills1">
                         <textarea id="ad-otherJobSkills" rows={3} maxLength={1000} value={form.otherJobSkills} onChange={(e) => set("otherJobSkills")(e.target.value)} disabled={disabled} placeholder="For example: forklift licence, basic welding" className={textAreaControl} />
                     </Field>
                 </div>
@@ -405,26 +391,24 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
     );
 }
 
-function TextField({ id, label, required, error, value, onChange, disabled, maxLength, placeholder, submitted, notApplicable }: {
-    id: string; label: string; required: boolean; error?: string; value: string; onChange: (value: string) => void; disabled: boolean; maxLength: number; placeholder?: string; submitted?: string; notApplicable?: NotApplicableToggle;
+function TextField({ id, label, required, error, value, onChange, disabled, maxLength, placeholder, submitted }: {
+    id: string; label: string; required: boolean; error?: string; value: string; onChange: (value: string) => void; disabled: boolean; maxLength: number; placeholder?: string; submitted?: string;
 }) {
     return (
-        <Field label={label} required={required} htmlFor={`ad-${id}`} error={error} submitted={submitted} notApplicable={notApplicable}>
+        <Field label={label} required={required} htmlFor={`ad-${id}`} error={error} submitted={submitted}>
             <input id={`ad-${id}`} value={value} maxLength={maxLength} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder={placeholder} aria-invalid={Boolean(error)} className={`${fieldControl} ${error ? "border-critical" : ""}`} />
         </Field>
     );
 }
 
 // A preset from the list, or "Other" with a typed value (e.g. 31, 9.5, EU 43).
-function SizeField({ id, label, presets, value, onChange, error, disabled, submitted, help, notApplicable }: {
-    id: string; label: string; presets: readonly string[]; value: string; onChange: (value: string) => void; error?: string; disabled: boolean; submitted?: string; help?: string; notApplicable?: NotApplicableToggle;
+function SizeField({ id, label, presets, value, onChange, error, disabled, submitted, help }: {
+    id: string; label: string; presets: readonly string[]; value: string; onChange: (value: string) => void; error?: string; disabled: boolean; submitted?: string; help?: string;
 }) {
     const customId = useId();
-    const [custom, setCustom] = useState(Boolean(value) && !presets.includes(value) && !notApplicable?.checked);
-    // Ticking N/A clears the size (and its custom box); unticking starts from "Not recorded".
-    const toggle = notApplicable && { ...notApplicable, onChange: (checked: boolean) => { setCustom(false); notApplicable.onChange(checked); } };
+    const [custom, setCustom] = useState(Boolean(value) && !presets.includes(value));
     return (
-        <Field label={label} htmlFor={`ad-${id}`} error={error} submitted={submitted} help={help} notApplicable={toggle}>
+        <Field label={label} htmlFor={`ad-${id}`} error={error} submitted={submitted} help={help}>
             <select
                 id={`ad-${id}`}
                 value={custom ? "__custom" : value}
