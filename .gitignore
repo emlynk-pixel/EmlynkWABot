@@ -37,3 +37,6 @@ admin/dist/
 # Claude Code setup: tracked only on chore/claude-agent-setup
 .claude/
 CLAUDE.md
+
+# End-to-end Playwright suite: ignore the whole folder
+e2e/
