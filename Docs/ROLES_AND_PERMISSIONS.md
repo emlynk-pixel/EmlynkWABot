@@ -111,10 +111,10 @@ The review queue (WhatsApp submissions) is ADMIN (and OWNER) work.
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
 | Work Allocation page | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 | Assign, reassign, unassign, auto-allocate candidates to Analysts | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Assign, reassign, auto-allocate candidates to **Team Leads** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Assign, reassign, unassign, auto-allocate candidates to **Team Leads** (themselves included) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 | **My allocated** on the Candidates list (their own allocated candidates) | — | — | ✅ | — | — | — |
 
-Work is only ever allocated to **ACTIVE ANALYST** accounts, and, when an ADMIN (or the OWNER) allocates, to **ACTIVE TEAM_LEAD** accounts. The server refuses any other target inside the transaction (`NOT_AN_ANALYST`; a Team Lead target chosen by a Team Lead: `TEAM_LEAD_TARGET_NOT_ALLOWED`), so nobody can allocate work to an OWNER or ADMIN, and a Team Lead never allocates to a Team Lead (themselves included). A candidate has one owner at a time (an Analyst **or** a Team Lead). Allocating to a Team Lead changes no access: a Team Lead still sees every candidate, and **My allocated** narrows the list to their own (the Officer filter set to themselves). The bulk import's officer matching (by name, any role) is unchanged.
+Work is only ever allocated to **ACTIVE ANALYST** accounts, and **ACTIVE TEAM_LEAD** accounts, whether an ADMIN (or the OWNER) or a Team Lead allocates (a Team Lead may allocate to themselves). The server refuses any other target inside the transaction (`NOT_AN_ANALYST`), so nobody can allocate work to an OWNER, ADMIN, Registration Desk, Job Handler or retired Manager. A candidate has one owner at a time (an Analyst **or** a Team Lead). Allocating to a Team Lead changes no access: a Team Lead still sees every candidate, and **My allocated** narrows the list to their own (the Officer filter set to themselves). The bulk import's officer matching (by name, any role) is unchanged.
 
 ### Jobs, Agents and Clients
 
@@ -229,7 +229,7 @@ Exactly seven areas, nothing inferred from them. It is **not** "ADMIN minus some
 **Can:**
 - **Candidates**, on every candidate (not limited to an allocation): list, open, register, edit details and additional details, update stages, upload and remove documents, add call logs, share and revoke the candidate's Candidate Form link, view a submitted form, and confirm or reject its submitted values (one by one, or Confirm All / Reject All).
 - **Need Attention:** see every follow-up, flag a call, mark a follow-up complete. The header bell lists the open follow-ups and leads to Need Attention (it never reads the Review Queue).
-- **Work Allocation:** view unallocated candidates and Analysts; assign, reassign, unassign; select one, several or all; equal (even) distribution. Work goes to ACTIVE Analysts only (an ADMIN may also allocate to Team Leads; a Team Lead's own candidates are under **My allocated** on the Candidates list).
+- **Work Allocation:** view unallocated candidates and Analysts; assign, reassign, unassign; select one, several or all; equal (even) distribution. Work goes to ACTIVE Analysts and Team Leads ( a Team Lead's own candidates are under **My allocated** on the Candidates list).
 - **Jobs:** list and view (processing and completed), create and edit, add and remove candidates on the Job's page, complete and cancel (the Job Handler's job actions).
 - **Agents** and **Clients** (Client Management): list, view, create, edit, link, activate and deactivate.
 - **Daily Report:** the standard report (Summary and Incomplete), as an ANALYST sees it.
@@ -341,7 +341,7 @@ Until 2026-10-30 there was a **MANAGER** role between ADMIN and the other roles.
 
 | What MANAGER could do | Owner now | Route / guard |
 |---|---|---|
-| Work Allocation (page, assign, reassign, unassign, auto-allocate) | ADMIN (OWNER) | `/work-allocation/*`: `ADMINS_ONLY` |
+| Work Allocation (page, assign, reassign, unassign, auto-allocate) | ADMIN, OWNER, TEAM_LEAD | `/work-allocation/*`: `ALLOCATION_MANAGERS` |
 | Verify a candidate's details / documents | ADMIN (OWNER) | `POST /candidates/:id/verification` |
 | Confirm / reject a submitted Candidate Form value | ADMIN (OWNER) | `POST /candidates/:id/form-submission/*` |
 | Correct a police slip's submitted date | ADMIN (OWNER) | `POST /documents/:id/police-date` |

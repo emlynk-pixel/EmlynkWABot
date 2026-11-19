@@ -948,8 +948,8 @@ export function createAdminRouter({
 
     router.get("/work-allocation/analysts", requireRole(ALLOCATION_MANAGERS), async (req, res) => {
         const client = await resolveDb(db);
-        // The assignable users depend on who asks (Team Leads only for an ADMIN: workAllocationService.js).
-        return res.json(await listAllocationAnalysts({ db: client, user: req.user }));
+        // Active Analysts and Team Leads, whoever asks (workAllocationService.js).
+        return res.json(await listAllocationAnalysts({ db: client }));
     });
 
     router.post("/work-allocation/assign", requireRole(ALLOCATION_MANAGERS), async (req, res) => {

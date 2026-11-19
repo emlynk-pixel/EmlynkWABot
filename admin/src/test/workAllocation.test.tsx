@@ -60,7 +60,7 @@ const posts = (calls: { method: string; path: string; body: unknown }[]) => call
 const assignButton = () => screen.getByRole("button", { name: /^(Assign|Reassign) \d+ candidates$/ });
 
 describe("Work Allocation: who sees it", () => {
-    for (const role of ["ADMIN", "OWNER"]) {
+    for (const role of ["ADMIN", "OWNER", "TEAM_LEAD"]) {
         test(`${role}: in the sidebar, and the page loads`, async () => {
             backend(role);
             renderApp("/work-allocation");
@@ -335,7 +335,7 @@ describe("Work Allocation: allocated candidates", () => {
         expect(posts(calls)).toHaveLength(0);
         await user.click(screen.getByRole("button", { name: "Unassign 2" }));
         await user.click(within(screen.getByRole("dialog", { name: "Unassign candidates?" })).getByRole("button", { name: "Unassign" }));
-        expect(await screen.findByText("2 candidates are unallocated again.", {}, RENDER_STEP)).toBeInTheDocument();
+        expect(await screen.findByText("2 candidates are unallocated again. Their previous assignees are no longer assigned to them; an Analyst loses access to the candidate immediately.", {}, RENDER_STEP)).toBeInTheDocument();
         expect(posts(calls)[0]).toMatchObject({ path: "/api/admin/work-allocation/unassign", body: { candidateIds: ["P0000005", "P0000004"], confirm: true } });
     });
 });
@@ -357,6 +357,156 @@ describe("Work Allocation: empty states", () => {
         expect(await screen.findByText("No candidates match this search.", {}, RENDER_STEP)).toBeInTheDocument();
         expect(calls.some((c) => c.path === "/api/admin/work-allocation/candidates?status=UNALLOCATED&page=1&search=nobody")).toBe(true);
     });
+});
+
+describe("Work Allocation: Team Lead and Admin reassignment, Assign to me, removal", () => {
+    const TL_ME = { analystId: "admin-1", name: "Test Admin", role: "TEAM_LEAD", assignedCount: 3 };
+    const TL_TIA = { analystId: "u-tia", name: "Aaron Lead", role: "TEAM_LEAD", assignedCount: 1 };
+    const withTeamLeads = (): AllocationAnalysts => ({
+        ...ANALYSTS,
+        analysts: [TL_ME, TL_TIA, ...ANALYSTS.analysts.map((a) => ({ ...a, role: "ANALYST" }))],
+    });
+    const TIA = { analystId: "u-tia", name: "Aaron Lead", active: true, role: "TEAM_LEAD" };
+    const ME = { analystId: "admin-1", name: "Test Admin", active: true, role: "TEAM_LEAD" };
+    const lead = (extra: FetchRoutes = {}) => backend("TEAM_LEAD", { "GET /api/admin/work-allocation/analysts": { status: 200, body: withTeamLeads() }, ...extra });
+    const allocatedRoutes = (...items: AllocationCandidate[]): FetchRoutes => ({ "GET /api/admin/work-allocation/candidates": { status: 200, body: page(items, "ALLOCATED") } });
+
+    for (const role of ["TEAM_LEAD", "ADMIN"]) {
+        test(`${role}: sees the page, Team Leads are targets and an allocated candidate shows its assignee; reassign asks first and sends reassign: true`, async () => {
+            const { calls } = backend(role, { "GET /api/admin/work-allocation/analysts": { status: 200, body: withTeamLeads() } });
+            renderApp("/work-allocation?view=allocated");
+            const t = within(await table());
+            expect(t.getByRole("columnheader", { name: "Assigned to" })).toBeInTheDocument();
+            expect(within(t.getByText("CANDIDATE 5").closest("tr")!).getByText("Ann Analyst")).toBeInTheDocument();
+            const user = userEvent.setup();
+            await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 5" }));
+            await user.type(await screen.findByLabelText("Candidates for Aaron Lead", {}, RENDER_STEP), "1");
+            await user.click(screen.getByRole("button", { name: "Reassign 1 candidates" }));
+            expect(posts(calls)).toHaveLength(0);
+            await user.click(within(screen.getByRole("dialog", { name: "Reassign candidates?" })).getByRole("button", { name: "Reassign" }));
+            expect(await screen.findByText(/^Allocated \d+ candidates/,{}, RENDER_STEP)).toBeInTheDocument();
+            expect(posts(calls)[0]).toMatchObject({ path: "/api/admin/work-allocation/assign", body: { candidateIds: ["P0000005"], allocations: [{ analystId: "u-tia", count: 1 }], reassign: true } });
+        });
+    }
+
+    test("a Team Lead assigns an unallocated candidate to themselves with Assign to me (no confirmation, reassign: false)", async () => {
+        const { calls } = lead();
+        renderApp("/work-allocation");
+        await table();
+        const user = userEvent.setup();
+        const button = await screen.findByRole("button", { name: "Assign to me" }, RENDER_STEP);
+        expect(button).toBeDisabled();
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 1" }));
+        await user.click(button);
+        await waitFor(() => expect(posts(calls)).toHaveLength(1));
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(posts(calls)[0]).toMatchObject({ path: "/api/admin/work-allocation/assign", body: { candidateIds: ["P0000001"], allocations: [{ analystId: "admin-1", count: 1 }], reassign: false } });
+        expect(await screen.findByRole("status", {}, RENDER_STEP)).toHaveTextContent(/^Allocated \d+ candidates/);
+    });
+
+    test("Assign to me on an allocated candidate asks for reassignment first, then sends reassign: true to the user's own id", async () => {
+        const { calls } = lead(allocatedRoutes(candidate(5, ANN)));
+        renderApp("/work-allocation?view=allocated");
+        await table();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 5" }));
+        await user.click(await screen.findByRole("button", { name: "Assign to me" }, RENDER_STEP));
+        const dialog = within(screen.getByRole("dialog", { name: "Reassign candidates?" }));
+        expect(dialog.getByText(/CANDIDATE 5 · now Ann Analyst/)).toBeInTheDocument();
+        expect(posts(calls)).toHaveLength(0);
+        await user.click(dialog.getByRole("button", { name: "Reassign" }));
+        await screen.findByRole("status", {}, RENDER_STEP);
+        expect(posts(calls)[0].body).toMatchObject({ candidateIds: ["P0000005"], allocations: [{ analystId: "admin-1", count: 1 }], reassign: true });
+    });
+
+    test("Assign to me is not offered to an Admin who is not an assignable Team Lead", async () => {
+        backend("ADMIN");
+        renderApp("/work-allocation");
+        await table();
+        await screen.findByRole("list", { name: "Analysts" }, RENDER_STEP);
+        expect(screen.queryByRole("button", { name: "Assign to me" })).toBeNull();
+    });
+
+    test("Team Lead to Team Lead: a candidate held by another Team Lead moves to this one", async () => {
+        const { calls } = lead(allocatedRoutes(candidate(6, TIA)));
+        renderApp("/work-allocation?view=allocated");
+        const t = within(await table());
+        expect(t.getByText("Aaron Lead")).toBeInTheDocument();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 6" }));
+        await user.click(await screen.findByRole("button", { name: "Assign to me" }, RENDER_STEP));
+        await user.click(within(screen.getByRole("dialog", { name: "Reassign candidates?" })).getByRole("button", { name: "Reassign" }));
+        await screen.findByRole("status", {}, RENDER_STEP);
+        expect(posts(calls)[0].body).toMatchObject({ allocations: [{ analystId: "admin-1", count: 1 }], reassign: true });
+    });
+
+    test("Analyst to Team Lead and Team Lead to Analyst, both through the reassign confirmation", async () => {
+        const { calls } = lead(allocatedRoutes(candidate(5, ANN), candidate(6, ME)));
+        renderApp("/work-allocation?view=allocated");
+        await table();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 5" }));
+        await user.type(await screen.findByLabelText("Candidates for Aaron Lead", {}, RENDER_STEP), "1");
+        await user.click(screen.getByRole("button", { name: "Reassign 1 candidates" }));
+        await user.click(within(screen.getByRole("dialog", { name: "Reassign candidates?" })).getByRole("button", { name: "Reassign" }));
+        await screen.findByRole("status", {}, RENDER_STEP);
+        expect(posts(calls)[0].body).toMatchObject({ candidateIds: ["P0000005"], allocations: [{ analystId: "u-tia", count: 1 }], reassign: true });
+
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 6" }));
+        await user.type(screen.getByLabelText("Candidates for Ben Analyst"), "1");
+        await user.click(screen.getByRole("button", { name: "Reassign 1 candidates" }));
+        await user.click(within(screen.getByRole("dialog", { name: "Reassign candidates?" })).getByRole("button", { name: "Reassign" }));
+        await waitFor(() => expect(posts(calls)).toHaveLength(2));
+        expect(posts(calls)[1].body).toMatchObject({ candidateIds: ["P0000006"], allocations: [{ analystId: "u-ben", count: 1 }], reassign: true });
+    });
+
+    test("removal: the confirmation names the candidates, Cancel sends nothing, then success feedback", async () => {
+        const { calls } = lead(allocatedRoutes(candidate(5, ANN)));
+        renderApp("/work-allocation?view=allocated");
+        await table();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 5" }));
+        await user.click(screen.getByRole("button", { name: "Unassign 1" }));
+        const dialog = within(screen.getByRole("dialog", { name: "Unassign candidates?" }));
+        expect(dialog.getByText(/CANDIDATE 5 · now Ann Analyst/)).toBeInTheDocument();
+        await user.click(dialog.getByRole("button", { name: "Cancel" }));
+        expect(posts(calls)).toHaveLength(0);
+        await user.click(screen.getByRole("button", { name: "Unassign 1" }));
+        await user.click(within(screen.getByRole("dialog", { name: "Unassign candidates?" })).getByRole("button", { name: "Unassign" }));
+        expect(await screen.findByRole("status", {}, RENDER_STEP)).toHaveTextContent("unallocated again");
+        expect(posts(calls)[0]).toMatchObject({ path: "/api/admin/work-allocation/unassign", body: { candidateIds: ["P0000005"], confirm: true } });
+    });
+
+    test("removal failure shows the error on the page and no success message", async () => {
+        lead({ ...allocatedRoutes(candidate(5, ANN)), "POST /api/admin/work-allocation/unassign": { status: 403, body: { message: "You may not remove this allocation." } } });
+        renderApp("/work-allocation?view=allocated");
+        await table();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 5" }));
+        await user.click(screen.getByRole("button", { name: "Unassign 1" }));
+        await user.click(within(screen.getByRole("dialog", { name: "Unassign candidates?" })).getByRole("button", { name: "Unassign" }));
+        expect(await within(screen.getByRole("dialog")).findByText("You may not remove this allocation.", {}, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.queryByText(/unallocated again/)).toBeNull();
+    });
+
+    test("unallocated rows are marked, and the page explains that Allocate skips allocated candidates and Reassign moves them", async () => {
+        lead();
+        renderApp("/work-allocation");
+        const t = within(await table());
+        expect(t.getAllByText("Unallocated")).toHaveLength(3);
+        expect(await screen.findByText(/skips candidates that are already allocated\. To move those, use Reassign/, {}, RENDER_STEP)).toBeInTheDocument();
+    });
+
+    for (const role of ["ANALYST", "REGISTRATION_DESK", "JOB_HANDLER"]) {
+        test(`${role}: no allocation controls and no allocation request`, async () => {
+            const { calls } = backend(role);
+            renderApp("/work-allocation");
+            await expectRedirectedHome(role);
+            expect(screen.queryByRole("button", { name: /Assign to me|Allocate|Reassign|Unassign/ })).toBeNull();
+            expect(calls.some((c) => c.path.startsWith("/api/admin/work-allocation"))).toBe(false);
+        });
+    }
+
 });
 
 describe("Candidates for an ANALYST", () => {

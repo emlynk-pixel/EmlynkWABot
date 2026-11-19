@@ -55,12 +55,12 @@ const headers = (t: HTMLElement) => within(t).getAllByRole("columnheader").map((
 const listQueries = (calls: { path: string; url: URL }[]) => calls.filter((c) => c.path.startsWith("/api/admin/work-allocation/candidates")).map((c) => c.url.searchParams);
 
 describe("Work Allocation table columns", () => {
-    test("1-2 / 6 Allocated: no Contact or Current stage; the Analyst column stays, with the inactive mark", async () => {
+    test("1-2 / 6 Allocated: no Contact or Current stage; the Assigned to column shows the current assignee, with the inactive mark", async () => {
         backend();
         renderApp("/work-allocation?view=allocated");
         const t = await table();
         await within(t).findByText("CANDIDATE 5");
-        expect(headers(t)).toEqual(["", "Passport number", "Candidate", "Registered", "Status", "Analyst"]);
+        expect(headers(t)).toEqual(["", "Passport number", "Candidate", "Registered", "Status", "Assigned to"]);
         for (const row of within(t).getAllByRole("row").slice(1)) expect(within(row).getAllByRole("cell")).toHaveLength(6);
         expect(within(within(t).getByText("CANDIDATE 5").closest("tr")!).getByText("Ann Analyst")).toBeInTheDocument();
         expect(within(within(t).getByText("CANDIDATE 4").closest("tr")!).getByText("(inactive)")).toBeInTheDocument();
@@ -69,14 +69,16 @@ describe("Work Allocation table columns", () => {
         expect(within(t).queryByText(/0710000005|94770000005/)).toBeNull();
     });
 
-    test("3-5 Unallocated: no Contact, Current stage or Analyst column (no empty Analyst cells)", async () => {
+    test("3-5 Unallocated: no Contact or Current stage; every row says Unallocated in Assigned to", async () => {
         backend();
         renderApp("/work-allocation");
         const t = await table();
         await within(t).findByText("CANDIDATE 1");
-        expect(headers(t)).toEqual(["", "Passport number", "Candidate", "Registered", "Status"]);
-        for (const row of within(t).getAllByRole("row").slice(1)) expect(within(row).getAllByRole("cell")).toHaveLength(5);
-        expect(within(t).queryByText("Unallocated")).toBeNull();
+        expect(headers(t)).toEqual(["", "Passport number", "Candidate", "Registered", "Status", "Assigned to"]);
+        for (const row of within(t).getAllByRole("row").slice(1)) {
+            expect(within(row).getAllByRole("cell")).toHaveLength(6);
+            expect(within(row).getByText("Unallocated")).toBeInTheDocument();
+        }
         expect(within(t).queryByText("—")).toBeNull();
         expect(within(t).queryByText(/0710000001|^WA /)).toBeNull();
     });
@@ -110,7 +112,7 @@ describe("Work Allocation table columns", () => {
         await userEvent.setup().click(screen.getByRole("button", { name: "Next" }));
         await waitFor(() => expect(listQueries(calls).at(-1)?.get("page")).toBe("2"));
         expect(listQueries(calls).at(-1)?.get("status")).toBe("ALLOCATED");
-        expect(headers(await table())).toEqual(["", "Passport number", "Candidate", "Registered", "Status", "Analyst"]);
+        expect(headers(await table())).toEqual(["", "Passport number", "Candidate", "Registered", "Status", "Assigned to"]);
     });
 
     test("11 the Status and Current stage filters (Filters) still reach the server (from the URL)", async () => {

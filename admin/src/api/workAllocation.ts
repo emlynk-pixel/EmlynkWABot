@@ -1,8 +1,8 @@
 import { apiRequest } from "./client";
 import type { CandidateStageKey, WorkflowStatus } from "./candidates";
 
-// Work Allocation (src/services/workAllocationService.js): which Analyst (or, allocated by an ADMIN,
-// which Team Lead) each candidate is assigned to. ADMIN and TEAM_LEAD; the server checks it.
+// Work Allocation (src/services/workAllocationService.js): which Analyst or Team Lead each
+// candidate is assigned to. ADMIN, OWNER and TEAM_LEAD; the server checks it.
 
 export type AllocationStatus = "UNALLOCATED" | "ALLOCATED";
 
@@ -47,9 +47,9 @@ export type AllocationFilters = Partial<Record<string, string | null>> & {
 export type AllocationAnalyst = { analystId: string; name: string; email?: string; role?: string; assignedCount: number };
 
 export type AllocationAnalysts = {
-    // The active users the signed-in user may assign to: Analysts, and Team Leads for an ADMIN.
+    // The active users the signed-in user may assign to: active Analysts and Team Leads (see `role`).
     analysts: AllocationAnalyst[];
-    // No longer active (or no longer Analysts) but still holding candidates.
+    // No longer active (or no longer an Analyst or Team Lead) but still holding candidates.
     unavailableAnalysts: AllocationAnalyst[];
     unallocatedCount: number;
 };

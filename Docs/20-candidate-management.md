@@ -359,7 +359,7 @@ Candidates are allocated to Analysts on the **Work Allocation** page (`/admin/wo
 
 **Allocation rules** (`src/services/workAllocationService.js`):
 
-- Only an `ACTIVE` user with role `ANALYST` can receive candidates. Others are refused with 409 (`ANALYST_INACTIVE`, `NOT_AN_ANALYST`, `ANALYST_NOT_FOUND`).
+- Only an `ACTIVE` user with role `ANALYST` or `TEAM_LEAD` (a Team Lead may allocate to themselves) can receive candidates. Others are refused with 409 (`ANALYST_INACTIVE`, `NOT_AN_ANALYST` for any other role, `ANALYST_NOT_FOUND`).
 - One request assigns the whole selection, in one transaction, all or nothing. A missing candidate (`CANDIDATE_NOT_AVAILABLE`) or any invalid Analyst changes nothing.
 - **Distribution:** `allocations: [{ analystId, count }]`. The counts must be whole numbers ≥ 0, with no Analyst twice, and must add up exactly to the number of candidates (400 `COUNT_MISMATCH` otherwise). At most 500 candidates per request.
 - **Order:** the candidates are taken newest registered first (passport ID for ties: the list order, whatever order they were ticked in) and handed out in the order of `allocations`.
