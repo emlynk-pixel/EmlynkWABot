@@ -33,3 +33,7 @@ admin/dist/
 .claude/settings.local.json
 
 /CSV Examples
+
+# Claude Code setup: tracked only on chore/claude-agent-setup
+.claude/
+CLAUDE.md
