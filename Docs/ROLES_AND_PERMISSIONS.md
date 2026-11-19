@@ -227,7 +227,7 @@ A requested role the ADMIN may not give is refused (403 `OWNER_REQUIRED` / `OWNE
 Exactly seven areas, nothing inferred from them. It is **not** "ADMIN minus something": a TEAM_LEAD gets only what is listed here, and every action that is ADMIN only inside these areas stays ADMIN only.
 
 **Can:**
-- **Candidates**, on every candidate (not limited to an allocation): list, open, register, edit details and additional details, update stages, upload and remove documents, add call logs, share and revoke the candidate's Candidate Form link, view a submitted form, and confirm or reject its submitted values (one by one).
+- **Candidates**, on every candidate (not limited to an allocation): list, open, register, edit details and additional details, update stages, upload and remove documents, add call logs, share and revoke the candidate's Candidate Form link, view a submitted form, and confirm or reject its submitted values (one by one, or Confirm All / Reject All).
 - **Need Attention:** see every follow-up, flag a call, mark a follow-up complete. The header bell lists the open follow-ups and leads to Need Attention (it never reads the Review Queue).
 - **Work Allocation:** view unallocated candidates and Analysts; assign, reassign, unassign; select one, several or all; equal (even) distribution. Work goes to ACTIVE Analysts and Team Leads ( a Team Lead's own candidates are under **My allocated** on the Candidates list).
 - **Jobs:** list and view (processing and completed), create and edit, add and remove candidates on the Job's page, complete and cancel (the Job Handler's job actions).

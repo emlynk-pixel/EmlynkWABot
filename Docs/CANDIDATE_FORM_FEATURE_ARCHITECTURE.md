@@ -550,6 +550,8 @@ Admin API (`/api/admin`, staff session; roles in the matrix below):
 | Review | GET | `/candidates/:passportId/form-submission` | ADMIN, ANALYST*, REGISTRATION_DESK | Status, submitted values, original, changes, pending |
 | Confirm | POST | `/candidates/:passportId/form-submission/confirm-field` | ADMIN | Confirm one field |
 | Revoke | POST | `/candidates/:passportId/form-submission/reject-field` | ADMIN | Reject one pending field; record unchanged |
+| Confirm All | POST | `/candidates/:passportId/form-submission/confirm-all` | ADMIN | Confirm every pending field in one transaction; all or nothing |
+| Reject All | POST | `/candidates/:passportId/form-submission/reject-all` | ADMIN | Reject every pending field in one transaction; record unchanged |
 | Jobs | POST | `/jobs/:jobId/candidates` | ADMIN, JOB_HANDLER | Assign a candidate (one PROCESSING job rule) |
 | Jobs | DELETE | `/jobs/:jobId/candidates/:passportId` | ADMIN, JOB_HANDLER | Remove from a PROCESSING job |
 | Jobs | PUT | `/jobs/:jobId` | ADMIN, JOB_HANDLER | Includes editing `companyJobId` |

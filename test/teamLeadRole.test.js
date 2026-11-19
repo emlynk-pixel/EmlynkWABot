@@ -190,7 +190,7 @@ describe("Candidates: full operational access to every candidate", () => {
 
     test("verification stays ADMIN only (nothing changes); Candidate Form confirm / reject is open to the Team Lead", async () => {
         forbidden(await api(TL, "POST", `/candidates/${FREE}/verification`, { kind: "DETAILS", verified: true }), "verification");
-        for (const action of ["confirm-field", "reject-field"]) notForbidden(await api(TL, "POST", `/candidates/${FREE}/form-submission/${action}`, {}), action);
+        for (const action of ["confirm-field", "reject-field", "confirm-all", "reject-all"]) notForbidden(await api(TL, "POST", `/candidates/${FREE}/form-submission/${action}`, {}), action);
         assert.equal(await prisma.candidateVerification.count(), 0);
         notForbidden(await api(USERS.ADMIN, "POST", `/candidates/${FREE}/verification`, { kind: "DETAILS", verified: true }), "ADMIN still verifies");
     });
@@ -430,7 +430,8 @@ const TEAM_LEAD_ROUTES = [
     ["GET", "/follow-ups", true], ["POST", `/follow-ups/${NO_ID}/complete`, true], ["DELETE", `/follow-ups/${NO_ID}`, false],
     ["GET", `/candidates/${P}/additional-details`, true], ["PUT", `/candidates/${P}/additional-details`, true],
     ["GET", `/candidates/${P}/form-submission`, true], ["POST", `/candidates/${P}/form-submission/confirm-field`, true],
-    ["POST", `/candidates/${P}/form-submission/reject-field`, true], ["GET", `/candidates/${P}/form-share`, true],
+    ["POST", `/candidates/${P}/form-submission/reject-field`, true], ["POST", `/candidates/${P}/form-submission/confirm-all`, true],
+    ["POST", `/candidates/${P}/form-submission/reject-all`, true], ["GET", `/candidates/${P}/form-share`, true],
     ["POST", `/candidates/${P}/form-share`, true], ["POST", `/candidates/${P}/form-share/revoke`, true],
     ["GET", "/work-allocation/candidates?status=NOPE", true], ["GET", "/work-allocation/analysts", true],
     ["POST", "/work-allocation/assign", true], ["POST", "/work-allocation/auto-allocate", true],
