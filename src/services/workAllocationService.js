@@ -15,7 +15,7 @@ import {
     WORKFLOW_STATUS_SELECT,
 } from "./candidateService.js";
 import { andWhere } from "./candidateAccess.js";
-import { candidateFilterWhere, parseCandidateFilters, queryValue, STAGE_FILTERS } from "./candidateListFilters.js";
+import { candidateFilterWhere, parseCandidateFilters, queryValue, STAGE_FILTERS, workAllocationViewWhere } from "./candidateListFilters.js";
 
 export { MAX_DERIVED_FILTER_CANDIDATES } from "./candidateService.js";
 
@@ -47,7 +47,9 @@ export const ALLOCATION_AUDIT_ACTION = Object.freeze({
     UNASSIGN: "UNASSIGN_CANDIDATE",
 });
 
-export const ALLOCATION_STATUS = Object.freeze({ UNALLOCATED: "UNALLOCATED", ALLOCATED: "ALLOCATED" });
+// The list views. COMPLETED is not an allocation state (audit rows only ever record UNALLOCATED /
+// ALLOCATED): it is the view of the completed placements (candidateWorkflowStatus.js), allocated or not.
+export const ALLOCATION_STATUS = Object.freeze({ UNALLOCATED: "UNALLOCATED", ALLOCATED: "ALLOCATED", COMPLETED: "COMPLETED" });
 
 // One request moves at most this many candidates (five pages of the list):
 // enough for any page-level selection, and a mistake can't touch thousands.
@@ -64,9 +66,11 @@ const isObject = (value) => Boolean(value) && typeof value === "object" && !Arra
 //      &<the advanced filters>
 //   status          UNALLOCATED (default) | ALLOCATED: allocation to an Analyst
 //                   (candidate_allocation), never job assignment. A candidate's jobs
-//                   (one, several or none) do not change it. The view's condition is always
-//                   AND-ed with everything else, so no filter can bring in the other view's rows.
-//   analystId       with ALLOCATED: only those Analysts' candidates (comma-separated);
+//                   (one, several or none) do not change it. Neither holds a completed placement.
+//                   COMPLETED: the completed placements (Departed, Cancelled, Rejected), allocated
+//                   or not. The view's condition is always AND-ed with everything else, so no
+//                   filter can bring in another view's rows.
+//   analystId       with ALLOCATED or COMPLETED: only those Analysts' candidates (comma-separated);
 //                   ignored on UNALLOCATED
 //   search          the Candidates list's search (candidateSearchWhere)
 //   the advanced filters: the Candidates list's own (candidateListFilters.js), all but
@@ -111,8 +115,7 @@ function filtersOf(params) {
 }
 
 function allocationWhere(params, filters, scope) {
-    const view = params.status === ALLOCATION_STATUS.UNALLOCATED ? { allocation: { is: null } } : { allocation: { isNot: null } };
-    return andWhere(scope, view, params.search ? candidateSearchWhere(params.search) : {}, candidateFilterWhere(filters));
+    return andWhere(scope, workAllocationViewWhere(params.status), params.search ? candidateSearchWhere(params.search) : {}, candidateFilterWhere(filters));
 }
 
 const analystView = (user) => (user ? { analystId: user.adminId, name: user.name, role: user.role, active: isActiveAssignee(user) } : null);
@@ -169,16 +172,18 @@ export async function listAllocationCandidates({ db, params, scope = {} }) {
 
 // GET /api/admin/work-allocation/analysts: every ACTIVE user the signed-in user may assign to
 // (allocationTargetRoles: Analysts and Team Leads), each with its role and how many
-// candidates it has now, plus the count of unallocated candidates. Holders who are no longer
+// candidates it has now, plus the counts of the Unallocated and Completed views (an unallocated
+// completed placement is counted as Completed only). Holders who are no longer
 // assignable to this user (inactive or another role) but still hold
 // candidates are listed separately, so those candidates can be found and moved. One grouped query for
 // the counts.
 export async function listAllocationAnalysts({ db }) {
     const roles = allocationTargetRoles();
-    const [analysts, groups, unallocated] = await Promise.all([
+    const [analysts, groups, unallocated, completed] = await Promise.all([
         db.user.findMany({ where: { role: { in: [...roles] }, status: USER_STATUS.ACTIVE }, select: { adminId: true, name: true, email: true, role: true }, orderBy: [{ name: "asc" }, { adminId: "asc" }] }),
         db.candidateAllocation.groupBy({ by: ["analystId"], _count: { _all: true } }),
-        db.candidate.count({ where: { allocation: { is: null } } }),
+        db.candidate.count({ where: workAllocationViewWhere(ALLOCATION_STATUS.UNALLOCATED) }),
+        db.candidate.count({ where: workAllocationViewWhere(ALLOCATION_STATUS.COMPLETED) }),
     ]);
     const countOf = new Map(groups.map((group) => [group.analystId, group._count._all]));
     const activeIds = new Set(analysts.map((analyst) => analyst.adminId));
@@ -190,6 +195,7 @@ export async function listAllocationAnalysts({ db }) {
         analysts: analysts.map((analyst) => ({ analystId: analyst.adminId, name: analyst.name, email: analyst.email, role: analyst.role, assignedCount: countOf.get(analyst.adminId) ?? 0 })),
         unavailableAnalysts: former.map((holder) => ({ analystId: holder.adminId, name: holder.name, role: holder.role, assignedCount: countOf.get(holder.adminId) ?? 0 })),
         unallocatedCount: unallocated,
+        completedCount: completed,
     };
 }
 
@@ -418,7 +424,8 @@ export async function assignCandidates({ db, actor, candidateIds, allocations, r
 // Bulk candidate import (candidateImportService.js): each row's OFFICER, already matched to ONE user
 // in the preview. Inside the caller's transaction. The officer can hold any role (the sheet's officer
 // is whoever handles the candidate), but must still be ACTIVE: checked here under FOR SHARE, so a
-// deactivation can't slip in (the chunk then fails and is retried row by row). Fill-only: a candidate
+// deactivation can't slip in (the chunk then fails and is retried row by row); one deleted meanwhile
+// is skipped (that candidate stays unallocated). Fill-only: a candidate
 // that is already allocated (to anyone) keeps its allocation. ASSIGN_CANDIDATE is audited as for a
 // manual allocation. entries: [{ passportId, analystId }]. Returns the passport IDs allocated.
 // auditIds (optional Map): receives passportId -> the audit_logs id of that ASSIGN_CANDIDATE row, so the import's
@@ -430,15 +437,17 @@ export async function allocateImportedCandidates(tx, { actor, entries, auditIds 
         SELECT "admin_id" AS "adminId", "name", "status" FROM "user"
         WHERE "admin_id" = ANY(${officerIds}) FOR SHARE`;
     const officers = new Map(rows.map((row) => [row.adminId, row]));
-    for (const id of officerIds) {
-        const user = officers.get(id);
-        if (!user) throw new CandidateError(409, "OFFICER_NOT_FOUND", "An officer no longer exists. Nothing was changed.");
+    for (const user of officers.values()) {
         if (user.status !== USER_STATUS.ACTIVE) throw new CandidateError(409, "OFFICER_NOT_ACTIVE", `${user.name} is not an active user. Nothing was changed.`);
     }
+    // An officer who no longer exists matches no user, as in the import's plan (OFFICER_NOT_FOUND is a
+    // warning there): that candidate is imported unallocated.
+    const known = entries.filter((entry) => officers.has(entry.analystId));
+    if (!known.length) return [];
     const taken = new Set((await tx.candidateAllocation.findMany({
-        where: { passportId: { in: entries.map((entry) => entry.passportId) } }, select: { passportId: true },
+        where: { passportId: { in: known.map((entry) => entry.passportId) } }, select: { passportId: true },
     })).map((row) => row.passportId));
-    const fresh = entries.filter((entry) => !taken.has(entry.passportId));
+    const fresh = known.filter((entry) => !taken.has(entry.passportId));
     if (!fresh.length) return [];
     await tx.candidateAllocation.createMany({ data: fresh.map((entry) => ({ passportId: entry.passportId, analystId: entry.analystId, assignedDate: new Date() })), skipDuplicates: true });
     const rowsToAudit = fresh.map((entry) => auditRow({ actor, action: ALLOCATION_AUDIT_ACTION.ASSIGN, passportId: entry.passportId, from: null, to: officers.get(entry.analystId) }));

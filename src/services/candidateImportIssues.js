@@ -6,7 +6,7 @@
 //
 // Severity:
 //   ERROR    the row is NOT imported (the candidate can't be identified or registered safely, or
-//            the business said so: unknown officer)
+//            the business said so: an ambiguous or inactive officer)
 //   WARNING  the row is imported; the value named was dropped, ignored or needs a look
 // Messages hold no cell value: only the column's header and the reason. "{column}" is the header of
 // the field the issue is about.
@@ -62,7 +62,7 @@ export const ISSUE_CATALOG = Object.freeze({
     SKIPPED_VERIFIED: { severity: W, message: "Candidate details are verified in Emlynk: details not changed (the Test details and a visa status are still applied)" },
     // Officer
     OFFICER_MISSING: { severity: W, message: "Officer is missing: the candidate is not assigned" },
-    OFFICER_NOT_FOUND: { severity: E, message: "Officer does not match a system user" },
+    OFFICER_NOT_FOUND: { severity: W, message: "Officer does not match a system user: the candidate is imported unallocated" },
     OFFICER_AMBIGUOUS: { severity: E, message: "Officer matches more than one active user with that first name" },
     OFFICER_NOT_ACTIVE: { severity: E, message: "Officer matches a user who is not active" },
     OFFICER_DIFFERS: { severity: W, message: "Candidate is already assigned to another user: not reassigned" },

@@ -357,6 +357,8 @@ Candidates are allocated to Analysts on the **Work Allocation** page (`/admin/wo
 
 **Storage.** `public.candidate_allocation` (migration `20261014120000_candidate_allocation`, additive): one row per allocated candidate (`passport_id` primary key, `analyst_id` → `"user"`, `assigned_date`). No row means unallocated, so every existing candidate started unallocated. It is a separate table, not a column on `candidate`, so allocating never updates the candidate row (no Google Sheet sync trigger, no `updated_date` change). History is in Audit Logs.
 
+**Views** (`workAllocationViewWhere` in `src/services/candidateListFilters.js`): **Unallocated** (no allocation), **Allocated** (an allocation) and **Completed**. Completed holds the completed placements: `candidate.outcome` is `CANCELLED` or `REJECTED`, or `candidate.departed_at` is set, allocated or not (`completedPlacementWhere` in `candidateWorkflowStatus.js`). `VISA_NOT_GOING` is not completed. Unallocated and Allocated leave the completed placements out, so each candidate is in exactly one view. The views are derived from existing columns (no schema change); Completed is not an allocation state, and the audit rows still record only allocated / unallocated.
+
 **Allocation rules** (`src/services/workAllocationService.js`):
 
 - Only an `ACTIVE` user with role `ANALYST` or `TEAM_LEAD` (a Team Lead may allocate to themselves) can receive candidates. Others are refused with 409 (`ANALYST_INACTIVE`, `NOT_AN_ANALYST` for any other role, `ANALYST_NOT_FOUND`).

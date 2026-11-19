@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../api/client";
-import { abortImport, commitImportChunk, finishImport, getActiveImport, getImportSourceColumns, previewImport, sendImportHeartbeat, updateImportJobGroups, type ActiveImport, type ImportActions, type ImportJobGroup, type ImportChunkResult, type ImportCounts, type ImportFinish, type ImportPreview, type ImportRow, type ResumableImport } from "../api/candidateImport";
+import { abortImport, commitImportChunk, finishImport, getActiveImport, getImportSourceColumns, previewImport, sendImportHeartbeat, updateImportJobGroups, type ActiveImport, type ImportActions, type ImportJobGroup, type ImportChunkResult, type ImportCounts, type ImportFinish, type ImportPreview, type ImportRow, type ResumableImport, type UnmatchedOfficer } from "../api/candidateImport";
 import { useAuth } from "../auth/AuthProvider";
 import { DialogError, primaryButton, secondaryButton } from "./Dialog";
 import { formatDate, formatNumber, humanize } from "./format";
@@ -27,7 +27,7 @@ type Step =
     // Review and run the rollback of a finished, aborted or interrupted-rollback import (ImportRollbackPanel.tsx).
     | { kind: "rollback"; importId: string }
     | { kind: "committing"; done: number; total: number }
-    | { kind: "done"; result: ImportFinish; failures: ImportChunkResult["failures"] };
+    | { kind: "done"; result: ImportFinish; failures: ImportChunkResult["failures"]; unmatchedOfficers: UnmatchedOfficer[] };
 
 const STATUS_TONE: Record<string, Tone> = { VALID: "verified", WARNING: "review", INVALID: "critical", CONFLICT: "critical", DUPLICATE: "duplicate" };
 
@@ -84,6 +84,29 @@ function AutomaticActions({ actions }: { actions: ImportActions }) {
         </div>
     );
 }
+
+// Sheet officers with no matching user: their rows are (or were) imported Unallocated. Nothing when there are none.
+function UnmatchedOfficersWarning({ officers, done }: { officers: UnmatchedOfficer[] | undefined; done: boolean }) {
+    if (!officers?.length) return null;
+    return (
+        <div role="note" aria-label="Officers not found" className="mt-4 rounded-lg border border-review-border bg-review-bg px-4 py-3 text-body-sm text-review">
+            <p>
+                No matching user was found for {officers.length === 1 ? "this Officer" : "these Officers"}, so {officers.length === 1 ? "its" : "their"} candidates
+                {done ? " were" : " will be"} imported Unallocated:
+            </p>
+            <ul className="mt-1 list-disc pl-5">
+                {officers.map((o) => <li key={o.name}>Officer "{o.name}" ({plural(o.rows, "row")})</li>)}
+            </ul>
+        </div>
+    );
+}
+
+// The chunks' lists as one (an officer may appear in several chunks: its rows are added up).
+const mergeOfficers = (lists: (UnmatchedOfficer[] | undefined)[]): UnmatchedOfficer[] => {
+    const rows = new Map<string, number>();
+    for (const list of lists) for (const o of list ?? []) rows.set(o.name, (rows.get(o.name) ?? 0) + o.rows);
+    return [...rows].map(([name, count]) => ({ name, rows: count }));
+};
 
 const GROUP_LABEL: Record<ImportJobGroup["state"], { label: string; tone: Tone }> = {
     NEW: { label: "New Job", tone: "verified" },
@@ -283,6 +306,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         if (!token) return;
         setError(null);
         const failures: ImportChunkResult["failures"] = [];
+        const chunkOfficers: (UnmatchedOfficer[] | undefined)[] = [];
         let counts: ImportCounts = {};
         const skipped = new Set(skip);
         let done = skipped.size;
@@ -295,6 +319,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 const chunk = rows.slice(index * chunkSize, (index + 1) * chunkSize);
                 const result = await commitImportChunk(token, importId, index, chunk);
                 failures.push(...result.failures);
+                chunkOfficers.push(result.unmatchedOfficers);
                 counts = sum(counts, result.counts);
                 done += 1;
                 setStep({ kind: "committing", done, total: chunkCount });
@@ -320,10 +345,11 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         }
         try {
             const result = await finishImport(token, importId);
-            setStep({ kind: "done", result, failures });
+            // The finish result covers the whole import (resumed chunks too); the chunks' lists only when it has none.
+            setStep({ kind: "done", result, failures, unmatchedOfficers: result.unmatchedOfficers ?? mergeOfficers(chunkOfficers) });
         } catch (e) {
             setError(errorText(e, "The import result could not be recorded."));
-            setStep({ kind: "done", result: { importId, status: "COMPLETED_WITH_ERRORS", totalRows, counts, syncRunId: null }, failures });
+            setStep({ kind: "done", result: { importId, status: "COMPLETED_WITH_ERRORS", totalRows, counts, syncRunId: null }, failures, unmatchedOfficers: mergeOfficers(chunkOfficers) });
         }
     }
 
@@ -438,6 +464,8 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                     {columns.unresolved.length ? ` Not imported (meaning unconfirmed): ${columns.unresolved.join(", ")}.` : ""}
                 </p>
 
+                <UnmatchedOfficersWarning officers={step.preview.unmatchedOfficers} done={false} />
+
                 {actions && <AutomaticActions actions={actions} />}
 
                 <JobGroupsTable
@@ -536,7 +564,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
         );
     }
 
-    const { result, failures } = step;
+    const { result, failures, unmatchedOfficers } = step;
     const c = result.counts;
     return (
         <Shell title={title} busy={false} onClose={onClose}>
@@ -561,6 +589,7 @@ export function CandidateImportDialog({ onClose }: { onClose: () => void }) {
                 <Tile label="Clients created" value={c.clientsCreated ?? 0} />
                 <Tile label="Agents created" value={c.agentsCreated ?? 0} />
             </dl>
+            <UnmatchedOfficersWarning officers={unmatchedOfficers} done />
             <p className="mt-3 text-body-sm text-ink-muted">
                 {result.sync?.requested
                     ? "A Google Sheet sync was requested: the Candidate Operational Mirror is updated from the database in the background."

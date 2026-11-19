@@ -111,4 +111,18 @@ describe("Candidate search suggestions", () => {
             expect([last.get("status"), last.get("search"), last.get("page")]).toEqual(["ALLOCATED", "NIMAL PERERA SILVA", "1"]);
         });
     });
+
+    test("Work Allocation's Completed view asks for suggestions within the Completed view", async () => {
+        const stub = backend();
+        renderApp("/work-allocation?view=completed");
+        const user = userEvent.setup();
+        const input = await screen.findByRole("combobox", { name: "Search candidates" }, RENDER_STEP);
+        await user.type(input, "nim");
+        await waitFor(() => expect(suggestionCalls(stub.calls).at(-1)?.get("allocation")).toBe("COMPLETED"));
+        await user.click(await screen.findByRole("option", { name: /NIMAL PERERA SILVA/ }));
+        await waitFor(() => {
+            const last = stub.calls.filter((c) => c.path.startsWith("/api/admin/work-allocation/candidates")).at(-1)!.url.searchParams;
+            expect([last.get("status"), last.get("search")]).toEqual(["COMPLETED", "NIMAL PERERA SILVA"]);
+        });
+    });
 });

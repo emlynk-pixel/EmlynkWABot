@@ -69,7 +69,12 @@ export type ImportActions = {
     testsBlankResultAsPass: number;
 };
 
+// Officer names in the sheet that match no user: those rows are imported Unallocated (warning
+// OFFICER_NOT_FOUND). Absent from an older server: treat as none.
+export type UnmatchedOfficer = { name: string; rows: number };
+
 export type ImportPreview = {
+    unmatchedOfficers?: UnmatchedOfficer[];
     importId: string;
     chunkSize: number;
     chunkCount: number;
@@ -96,6 +101,7 @@ export type ImportChunkResult = {
     counts: ImportCounts;
     failures: { rowNumber: number; passport: string; codes: string[]; errors?: string[] }[];
     alreadyCommitted?: boolean;
+    unmatchedOfficers?: UnmatchedOfficer[];
 };
 
 // The import that is committing now (at most one): for Resume / Abort. No candidate data.
@@ -117,6 +123,7 @@ export type ImportFinish = {
     syncRunId: string | null;
     sync?: { requested: boolean; runId: string | null; alreadyActive: boolean };
     alreadyFinished?: boolean;
+    unmatchedOfficers?: UnmatchedOfficer[];
 };
 
 const BASE = "/api/admin/settings/sheet-sync/import";

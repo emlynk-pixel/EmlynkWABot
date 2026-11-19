@@ -3,11 +3,11 @@ import { USER_STATUS } from "../middleware/requireActiveUser.js";
 import { businessDayRange, isValidBusinessDate } from "../utils/businessDay.js";
 import { searchTokens } from "../utils/searchText.js";
 import { andWhere } from "./candidateAccess.js";
-import { WORKFLOW_STATUS } from "./candidateWorkflowStatus.js";
+import { WORKFLOW_STATUS, completedPlacementWhere, notCompletedPlacementWhere } from "./candidateWorkflowStatus.js";
 import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE } from "./jobTypeCatalog.js";
 
 // Advanced candidate filters: ONE definition for every candidate list (Admin > Candidates,
-// Work Allocation's Unallocated and Allocated views). Only business filters live here; the
+// Work Allocation's Unallocated, Allocated and Completed views). Only business filters live here; the
 // caller AND-s them with the user's candidate scope (candidateAccess.js) and its own base
 // condition (the Work Allocation view), never by spreading, so a filter can only narrow a list.
 //
@@ -236,6 +236,15 @@ export function candidateFilterWhere(filters = {}) {
     if (filters.agentId) job.responsibleAgentId = { in: listValues(filters.agentId) };
     if (Object.keys(job).length) parts.push({ jobAssignments: { some: { isActive: true, job } } });
     return andWhere(...parts);
+}
+
+// Work Allocation's views (its list and its search suggestions), never the `allocation` filter
+// above: UNALLOCATED / ALLOCATED leave out the completed placements, COMPLETED is those placements
+// whatever their allocation (candidateWorkflowStatus.js completedPlacementWhere).
+export const WORK_ALLOCATION_VIEWS = Object.freeze(["UNALLOCATED", "ALLOCATED", "COMPLETED"]);
+export function workAllocationViewWhere(view) {
+    if (view === "COMPLETED") return completedPlacementWhere();
+    return andWhere(view === "UNALLOCATED" ? { allocation: { is: null } } : { allocation: { isNot: null } }, notCompletedPlacementWhere());
 }
 
 export const needsDerivedFilter = (filters = {}) => Boolean(filters.jobType || filters.workflowStatus || filters.stage);
