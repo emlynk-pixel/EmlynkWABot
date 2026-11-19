@@ -273,8 +273,7 @@ export function pendingChanges(context, reviewed = new Set()) {
 
 // Every target column, plus the ones the `requires` rules read (they are targets too).
 const selectOf = (table) => Object.fromEntries(Object.values(CONFIRMABLE_FIELDS).filter((m) => m.table === table).map((m) => [m.column, true]));
-// details also reads the staff's N/A marks: a marked field counts as filled for the automatic fill below.
-export const CONFIRM_SELECT = Object.freeze({ candidate: selectOf("candidate"), details: { ...selectOf("details"), notApplicableFields: true } });
+export const CONFIRM_SELECT = Object.freeze({ candidate: selectOf("candidate"), details: selectOf("details") });
 
 // Both decisions share one flow and one review table (candidate_form_field_review):
 //   Confirm  -> update ONE canonical column, mark CONFIRMED
@@ -422,7 +421,7 @@ export const rejectAllFormFields = (args) => reviewAllFormFields({ ...args, deci
 // candidate record (`table: "candidate"`) is never filled automatically.
 //
 // Empty means: no row, NULL, or blank text. A stored value that is merely unusual (e.g. a legacy size)
-// is NOT empty and is never replaced. A field staff marked N/A (notApplicableFields) counts as filled.
+// is NOT empty and is never replaced.
 // The submitted value must pass the same checks as a Confirm: not empty, not "N/A", valid (toDb), and the
 // field's own rules (requires: a spouse only when Married, no children when Single, children in order),
 // checked against the record as the earlier fills of the same submission left it (Civil Status first). A
@@ -438,14 +437,13 @@ const DETAIL_FIELDS = Object.freeze(Object.keys(CONFIRMABLE_FIELDS).filter((fiel
 // already have a staff decision (never filled: the backfill of older submissions passes them).
 export function autoFillChanges({ details, response, reviewed = new Set() }) {
     if (!response) return { data: {}, fields: [] };
-    const marked = new Set(Array.isArray(details?.notApplicableFields) ? details.notApplicableFields : []);
     let running = { ...(details ?? {}) };
     const data = {};
     const fields = [];
     for (const field of ordered(DETAIL_FIELDS)) {
         if (reviewed.has(field)) continue;
         const mapping = CONFIRMABLE_FIELDS[field];
-        if (marked.has(mapping.column) || !isEmptyStored(running[mapping.column])) continue;
+        if (!isEmptyStored(running[mapping.column])) continue;
         const raw = submittedValueOf(response, field);
         // Valid, not empty, not "N/A", and different from the (empty) record: the same test as a pending change.
         if (!pendingChange(field, { candidate: null, details: running, submitted: { [field]: raw } })) continue;

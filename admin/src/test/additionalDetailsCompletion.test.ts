@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { AdditionalDetails } from "../api/candidates";
-import { NOT_APPLICABLE_FIELDS, additionalDetailsComplete } from "../components/candidate/additionalDetailsCompletion";
+import { additionalDetailsComplete } from "../components/candidate/additionalDetailsCompletion";
 
 // The Additional details step is completed only when every field the form shows is filled.
 const EMPTY = {
@@ -58,31 +58,11 @@ describe("additionalDetailsComplete", () => {
         expect(additionalDetailsComplete({ ...married, wifeFullName: "Nadeesha Silva", wifeBirthday: "1992-05-01", spousePassportNumber: "N3333333" })).toBe(true);
     });
 
-    test("an optional field marked N/A counts as filled (blood group, weight, a Yes/No, a size, a skill)", () => {
-        const marked = ["bloodGroup", "weightKg", "drivingLicence", "tshirtSize", "otherJobSkills2"];
-        const details = { ...COMPLETE, bloodGroup: null, weightKg: null, drivingLicence: null, tshirtSize: null, otherJobSkills2: null };
-        expect(additionalDetailsComplete(details)).toBe(false);
-        expect(additionalDetailsComplete({ ...details, notApplicableFields: marked })).toBe(true);
-        expect(additionalDetailsComplete({ ...details, notApplicableFields: marked.slice(1) })).toBe(false);
-    });
-
-    test("every NOT_APPLICABLE_FIELDS entry works the same way", () => {
-        for (const key of NOT_APPLICABLE_FIELDS) {
-            const cleared = { ...COMPLETE, [key]: null } as AdditionalDetails;
-            expect(additionalDetailsComplete(cleared), `${key} empty`).toBe(false);
-            expect(additionalDetailsComplete({ ...cleared, notApplicableFields: [key] }), `${key} marked`).toBe(true);
-        }
-    });
-
-    test("N/A is not accepted on a required field: a mark on city, guardian name or birthday changes nothing", () => {
-        for (const key of ["city", "guardianName", "birthday", "email", "maritalStatus", "fatherAlive"] as const) {
-            expect(additionalDetailsComplete({ ...COMPLETE, [key]: null, notApplicableFields: [key] } as AdditionalDetails), key).toBe(false);
-        }
-    });
-
-    test("a living parent's or the spouse's details still need real values, not N/A", () => {
-        const father = { ...COMPLETE, fatherAlive: true, fatherFullName: "Sunil Silva", fatherBirthday: "1960-01-01", fatherPassportNumber: null };
-        expect(additionalDetailsComplete({ ...father, notApplicableFields: ["fatherPassportNumber"] })).toBe(false);
-        expect(additionalDetailsComplete({ ...father, fatherPassportNumber: "N1111111" })).toBe(true);
+    test("every field in Physical details, Clothing & sizes and Employment / skills is needed too", () => {
+        const fields = [
+            "bloodGroup", "height", "weightKg", "drivingLicence", "canReadDrawings", "teamLeadingSkills", "otherLanguages", "englishKnowledge",
+            "tshirtSize", "pantSize", "shoeSize", "otherJobSkills", "otherJobSkills2", "otherJobCategory",
+        ] as const;
+        for (const key of fields) expect(additionalDetailsComplete({ ...COMPLETE, [key]: null }), key).toBe(false);
     });
 });

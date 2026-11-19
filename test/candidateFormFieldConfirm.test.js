@@ -176,8 +176,7 @@ describe("confirming one field (CONFIRM-003, 004, 005, 010, 011, 016)", () => {
         assert.equal((await confirm(USERS.ADMIN, await body("basic.fullName"))).status, 200);
         const created = await detailsRow();
         assert.equal(created.nameAsInPassport, "ANUSHA DE SOYSA");
-        // (notApplicableFields is a list column that defaults to []: no value written either)
-        assert.deepEqual(Object.entries(created).filter(([k, v]) => v !== null && !(Array.isArray(v) && v.length === 0) && !["passportId", "createdDate", "updatedDate", "nameAsInPassport"].includes(k)), []);
+        assert.deepEqual(Object.entries(created).filter(([k, v]) => v !== null && !["passportId", "createdDate", "updatedDate", "nameAsInPassport"].includes(k)), []);
     });
 
     test("sex is translated to the record's code; the phone is stored in the canonical +<country code> form", async () => {
@@ -325,12 +324,10 @@ describe("automatic fill of empty Additional Details at submission (AUTOFILL-001
         assert.deepEqual(pendingOf(await view())["basic.birthPlace"], { field: "basic.birthPlace", current: null, submitted: "NEGOMBO" });
     });
 
-    test("AUTOFILL-003 a field staff marked N/A counts as filled; blank text counts as empty; an unusual stored value is never replaced", async () => {
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, notApplicableFields: ["bloodGroup"], email: "   ", tshirtSize: "XXXL" } });
+    test("AUTOFILL-003 blank text counts as empty; an unusual stored value is never replaced", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, email: "   ", tshirtSize: "XXXL" } });
         await submitForm();
         const details = await detailsRow();
-        assert.equal(details.bloodGroup, null, "marked N/A by staff: not filled");
-        assert.deepEqual(details.notApplicableFields, ["bloodGroup"]);
         assert.equal(details.email, "new@example.com", "blank text is empty");
         assert.equal(details.tshirtSize, "XXXL", "a stored value is never overwritten, even an unusual one");
     });
