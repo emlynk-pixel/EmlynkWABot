@@ -7,6 +7,7 @@ import { canWorkFollowUps } from "../auth/roles";
 import { useBreadcrumbLabel } from "../components/Breadcrumbs";
 import { CONFLICT_FIELD_PARAM, useConflictFocus } from "../components/candidate/formConflicts";
 import { AdditionalDetailsPanel } from "../components/candidate/AdditionalDetailsPanel";
+import { additionalDetailsComplete } from "../components/candidate/additionalDetailsCompletion";
 import { CallLogDialog } from "../components/candidate/CallLogDialog";
 import { CandidateStepper, type StepperStep } from "../components/candidate/CandidateStepper";
 import { CandidateStatusPanel } from "../components/candidate/CandidateStatusPanel";
@@ -89,7 +90,7 @@ export function CandidateDeploymentPage() {
     const steps: StepperStep[] = stepperStages.flatMap((s) => {
         const step = { key: s.stage, label: STAGE_LABELS[s.stage], completed: s.completed };
         return s.stage === "CANDIDATE_DETAILS"
-            ? [step, { key: ADDITIONAL_STEP, label: "Additional details", completed: Boolean(additionalView?.details) }]
+            ? [step, { key: ADDITIONAL_STEP, label: "Additional details", completed: additionalDetailsComplete(additionalView?.details) }]
             : [step];
     });
     const canEdit = canManageCandidates(user);

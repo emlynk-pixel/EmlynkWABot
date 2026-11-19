@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { getCandidateSuggestions, SUGGESTION_MIN_LENGTH, type CandidateSuggestion } from "../api/candidates";
+import type { AllocationStatus } from "../api/workAllocation";
 import { useAuth } from "../auth/AuthProvider";
 
 // The candidate quick-search box with live suggestions (an ARIA combobox). While the user types
@@ -19,7 +20,7 @@ export function CandidateSearchBox({ id, value, onChange, onPick, placeholder, a
     // A suggestion was chosen: search for this text.
     onPick: (text: string) => void;
     placeholder: string;
-    allocation?: "ALLOCATED" | "UNALLOCATED";
+    allocation?: AllocationStatus;
 }) {
     const { token } = useAuth();
     const listId = useId();

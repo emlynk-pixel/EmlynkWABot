@@ -3,7 +3,7 @@ import { FormSection } from "../../components/FormSection";
 import type { MessageKey } from "../../i18n/translations";
 import { useLanguage } from "../../i18n/useLanguage";
 import { bind, type StepProps } from "../binding";
-import { showsSpouse } from "../model";
+import { showsChildren, showsSpouse } from "../model";
 import { YES_NO } from "../options";
 import { EARLIEST_DATE, MAX_LENGTH, todayInSriLanka } from "../validation";
 
@@ -11,7 +11,8 @@ type Who = "father" | "mother" | "spouse";
 
 // Family Background: father, mother, spouse (only when Civil Status is
 // Married; entries typed before are kept while hidden, never sent), and up to
-// three children. Every shown answer is required (validation.ts requiredPaths):
+// three children (not when Single; kept and never sent in the same way).
+// Every shown answer is required (validation.ts requiredPaths):
 // "N/A" as a parent's name when that parent does not apply (their other
 // answers are then not needed), "N/A" as Child 1 for no children. Each parent
 // also has a required Yes / No "Father / Mother Alive" (never "N/A").
@@ -41,13 +42,15 @@ export function FamilyStep(props: StepProps) {
             {person("father")}
             {person("mother")}
             {showsSpouse(props.data) && person("spouse")}
-            <FormSection title={t("family.children")} note={t("family.childrenNote")}>
-                <div className="field-grid">
-                    {(["child1", "child2", "child3"] as const).map((child) => (
-                        <TextInput key={child} {...bind(props, `family.${child}`)} label={t(`f.${child}`)} hint={child === "child1" ? t("hint.childNa") : t("hint.na")} uppercase maxLength={MAX_LENGTH.text} />
-                    ))}
-                </div>
-            </FormSection>
+            {showsChildren(props.data) && (
+                <FormSection title={t("family.children")} note={t("family.childrenNote")}>
+                    <div className="field-grid">
+                        {(["child1", "child2", "child3"] as const).map((child) => (
+                            <TextInput key={child} {...bind(props, `family.${child}`)} label={t(`f.${child}`)} hint={child === "child1" ? t("hint.childNa") : t("hint.na")} uppercase maxLength={MAX_LENGTH.text} />
+                        ))}
+                    </div>
+                </FormSection>
+            )}
         </>
     );
 }

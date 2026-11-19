@@ -121,16 +121,63 @@ describe("OFFICER -> automatic allocation", () => {
         assert.deepEqual([await allocationOf(1), await allocationOf(2), await allocationOf(3)], ["u-mary", "admin-OWNER", "u-tara"]);
     });
 
-    test("4-6. unmatched, ambiguous and inactive officers are ERRORS: the row is not imported, nobody is guessed", async () => {
+    test("4-6. ambiguous and inactive officers are ERRORS (not imported); an unmatched one is a WARNING: imported unallocated; nobody is guessed", async () => {
         const rows = renumber([row(1, { OFFICER: "Nobody" }), row(2, { OFFICER: "Nimal" }), row(3, { OFFICER: "Kamal" }), row(4, { OFFICER: "" })]);
-        const { preview: p, chunks } = await importRows(rows);
-        assert.deepEqual(issuesOf(p, 2).errors, ["Officer does not match a system user"]);
+        const { preview: p, chunks, finished } = await importRows(rows);
+        assert.deepEqual(issuesOf(p, 2), { rowNumber: 2, errors: [], warnings: ["Officer does not match a system user: the candidate is imported unallocated"] });
         assert.deepEqual(issuesOf(p, 3).errors, ["Officer matches more than one active user with that first name"]);
         assert.deepEqual(issuesOf(p, 4).errors, ["Officer matches a user who is not active"]);
         assert.deepEqual(issuesOf(p, 5), { rowNumber: 5, errors: [], warnings: ["Officer is missing: the candidate is not assigned"] });
-        assert.equal(p.summary.invalid, 3);
-        assert.equal(chunks[0].counts.created, 1, "only the blank-officer row is imported (unassigned)");
+        assert.equal(p.summary.invalid, 2);
+        assert.deepEqual(p.problems.find((problem) => problem.rowNumber === 2).codes, ["OFFICER_NOT_FOUND"]);
+        assert.equal(chunks[0].counts.created, 2, "the unmatched-officer row and the blank-officer row are imported (unassigned)");
         assert.equal(await prisma.candidateAllocation.count(), 0);
+        assert.equal(await prisma.candidate.count({ where: { passportId: passportOf(1) } }), 1);
+        for (const result of [p, chunks[0], finished]) assert.deepEqual(result.unmatchedOfficers, [{ name: "Nobody", rows: 1 }]);
+    });
+
+    test("no unmatched officer: unmatchedOfficers is an empty list in the preview and the commit results", async () => {
+        const { preview: p, chunks, finished } = await importRows(renumber([row(221, { OFFICER: "John" }), row(222, { OFFICER: "" })]));
+        for (const result of [p, chunks[0], finished]) assert.deepEqual(result.unmatchedOfficers, []);
+    });
+
+    test("unmatched officers are listed once per name (any case and spacing, first spelling), with their rows; the rows land in their views", async () => {
+        // Passports of their own: this suite keeps audit_logs between tests.
+        const rows = renumber([
+            row(201, { OFFICER: "Zed Person", "VISA STATUS": "departed " }),
+            row(202, { OFFICER: "  zed   person ", "VISA STATUS": "DEPARTED" }),
+            row(203, { OFFICER: "Nobody", "VISA STATUS": " Cancelled" }),
+            row(204, { OFFICER: "NOBODY", "VISA STATUS": "rejected" }),
+            row(205, { OFFICER: "Nobody", "VISA STATUS": "Got Visa Not Going" }),
+            row(206, { OFFICER: "Nobody" }),
+            row(207, { OFFICER: "John", "VISA STATUS": "Departed" }),
+            row(208, { OFFICER: "Ghost", "JOB ROLE": "" }), // an ERROR row for its own reason: not imported, not listed
+        ]);
+        const { preview: p, chunks, finished } = await importRows(rows);
+        const expected = [{ name: "Zed Person", rows: 2 }, { name: "Nobody", rows: 4 }];
+        for (const result of [p, chunks[0], finished]) assert.deepEqual(result.unmatchedOfficers, expected);
+        assert.equal(chunks[0].counts.created, 7);
+        assert.deepEqual(await Promise.all([201, 202, 203, 204, 205, 206].map(allocationOf)), [null, null, null, null, null, null]);
+        assert.equal(await allocationOf(207), "u-john");
+        assert.deepEqual(await Promise.all([201, 202, 203, 204, 205, 206, 207].map(statusOf)), ["DEPARTED", "DEPARTED", "CANCELLED", "REJECTED", "VISA_NOT_GOING", "REGISTERED", "DEPARTED"]);
+        const view = async (status) => (await listAllocationCandidates({ db: prisma, params: { page: 1, pageSize: 100, status } })).items.map((item) => item.passportId).sort();
+        assert.deepEqual(await view("COMPLETED"), [201, 202, 203, 204, 207].map(passportOf).sort(), "Departed, Cancelled and Rejected are completed, allocated or not");
+        assert.deepEqual(await view("UNALLOCATED"), [205, 206].map(passportOf).sort(), "Visa Not Going is not completed");
+        assert.deepEqual(await view("ALLOCATED"), []);
+        const counts = await listAllocationAnalysts({ db: prisma });
+        assert.deepEqual([counts.unallocatedCount, counts.completedCount], [2, 5]);
+    });
+
+    test("an officer removed after the preview: the row is still imported at commit, unallocated, and listed as unmatched", async () => {
+        await prisma.user.create({ data: { adminId: "u-zara", authUserId: authIdFor("u-zara"), name: "Zara Temp", email: "u-zara@example.invalid", role: "ANALYST", status: "ACTIVE" } });
+        const rows = renumber([row(211, { OFFICER: "Zara" })]);
+        const p = await preview(rows);
+        assert.deepEqual(p.unmatchedOfficers, []);
+        await prisma.user.delete({ where: { adminId: "u-zara" } });
+        const result = await commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 0, rows, now: TODAY });
+        assert.deepEqual([result.counts.created, result.counts.invalid, result.counts.failed], [1, 0, 0]);
+        assert.deepEqual(result.unmatchedOfficers, [{ name: "Zara", rows: 1 }]);
+        assert.equal(await allocationOf(211), null);
     });
 
     test("7/8. an existing candidate keeps its allocation (fill-only); a repeated import adds no allocation and no audit", async () => {
@@ -500,18 +547,32 @@ describe("re-import and row atomicity", () => {
         assert.equal(await prisma.agent.count(), 0);
     });
 
-    test("verified details: no detail, allocation or Test is written (SKIPPED_VERIFIED), but the visa status still becomes the Status", async () => {
+    test("verified details: no detail or allocation is written (SKIPPED_VERIFIED), but the Test details and the visa status are", async () => {
         await importRows(renumber([row(1, { OFFICER: "" })]));
         await prisma.candidateVerification.create({ data: { passportId: passportOf(1), detailsVerifiedAt: new Date(), detailsVerifiedById: "admin-ADMIN" } });
         const { preview: p } = await importRows(renumber([row(1, { OFFICER: "John", "VISA STATUS": "Submit", "INTERVIEW DATE": "01.11.2026" })]));
-        assert.ok(issuesOf(p, 2).warnings.includes("Candidate details are verified in Emlynk: details not changed (a visa status is still applied)"));
+        assert.ok(issuesOf(p, 2).warnings.includes("Candidate details are verified in Emlynk: details not changed (the Test details and a visa status are still applied)"));
         assert.equal(await allocationOf(1), null);
-        assert.deepEqual((await prisma.candidateStage.findMany({ select: { stage: true, completed: true } })), [{ stage: "VISA_SUBMISSION", completed: true }]);
+        const stages = await prisma.candidateStage.findMany({ select: { stage: true, completed: true, testResult: true }, orderBy: { stage: "asc" } });
+        assert.deepEqual(stages, [{ stage: "TEST_DETAILS", completed: true, testResult: "PASS" }, { stage: "VISA_SUBMISSION", completed: true, testResult: null }], "the Test is written (PASS: the visa step)");
         assert.equal(await statusOf(1), "VISA_SUBMITTED");
         assert.ok((await prisma.candidateVerification.findUnique({ where: { passportId: passportOf(1) } })).detailsVerifiedAt, "the verification is kept");
-        // No visa status at all: nothing is written (SKIPPED_VERIFIED as before).
+        // Nothing new (the same Test, no visa status): nothing is written (SKIPPED_VERIFIED as before).
         const { preview: plain } = await importRows(renumber([row(1, { OFFICER: "John", "INTERVIEW DATE": "01.11.2026" })]));
         assert.equal(plain.summary.skippedVerified, 1);
+    });
+
+    test("verified details with only a Test to write: the Test details are filled, details and verification stay", async () => {
+        await importRows(renumber([row(2, { OFFICER: "" })]));
+        await prisma.candidateVerification.create({ data: { passportId: passportOf(2), detailsVerifiedAt: new Date(), detailsVerifiedById: "admin-ADMIN" } });
+        const before = await prisma.candidate.findUnique({ where: { passportId: passportOf(2) } });
+        const { preview: p } = await importRows(renumber([row(2, { OFFICER: "John", "INTERVIEW DATE": "02.11.2026", "INTERVIEW PASS FAIL": "PASS", "OTHER NAME": "CHANGED NAME" })]));
+        assert.ok(issuesOf(p, 2).warnings.includes("Candidate details are verified in Emlynk: details not changed (the Test details and a visa status are still applied)"));
+        assert.equal((await prisma.candidateStage.findFirst({ where: { passportId: passportOf(2), stage: "TEST_DETAILS" } })).testResult, "PASS");
+        const after = await prisma.candidate.findUnique({ where: { passportId: passportOf(2) } });
+        assert.equal(after.otherName, before.otherName, "verified details unchanged");
+        assert.equal(await allocationOf(2), null);
+        assert.ok((await prisma.candidateVerification.findUnique({ where: { passportId: passportOf(2) } })).detailsVerifiedAt);
     });
 });
 

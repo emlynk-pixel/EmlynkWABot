@@ -35,7 +35,7 @@ import { findUsersByWhatsappNumber } from "./userLookupService.js";
 import { openFollowUp } from "./callLogFollowUpService.js";
 import { candidateJobAssignments, displayJob } from "./jobAssignmentReader.js";
 import { deriveCandidateWorkflowStatus } from "./candidateWorkflowStatus.js";
-import { candidateFilterWhere, derivedFilterMatch, needsDerivedFilter, parseCandidateFilters, queryValue } from "./candidateListFilters.js";
+import { candidateFilterWhere, derivedFilterMatch, needsDerivedFilter, parseCandidateFilters, queryValue, WORK_ALLOCATION_VIEWS, workAllocationViewWhere } from "./candidateListFilters.js";
 import { andWhere } from "./candidateAccess.js";
 import { normalizeSearchText, searchTokens } from "../utils/searchText.js";
 import { setAuditActor } from "./auditActor.js";
@@ -638,7 +638,8 @@ export function candidateSearchWhere(search) {
 
 // GET /api/admin/candidate-suggestions?q=&allocation= : a few candidates for the search box while the
 // user types. The same search as the list (candidateSearchWhere: every word somewhere in the names,
-// passport, NIC or phone numbers), AND-ed with the user's scope and, for Work Allocation, its view,
+// passport, NIC or phone numbers), AND-ed with the user's scope and, for Work Allocation, its view
+// (allocation= UNALLOCATED | ALLOCATED | COMPLETED, workAllocationViewWhere),
 // so a suggestion is always a candidate the list itself would show. Shorter than
 // SUGGESTION_MIN_LENGTH: no suggestions (nothing is read).
 export const SUGGESTION_MIN_LENGTH = 2;
@@ -657,8 +658,8 @@ export function parseSuggestionQuery(query = {}, { filterAccess }) {
     const allocation = queryValue(query, "allocation", errors);
     if (allocation !== undefined) {
         if (!filterAccess.allocation) errors.push({ field: "allocation", message: "is not available for your role" });
-        else if (["ALLOCATED", "UNALLOCATED"].includes(allocation)) params.allocation = allocation;
-        else errors.push({ field: "allocation", message: "must be one of: ALLOCATED, UNALLOCATED" });
+        else if (WORK_ALLOCATION_VIEWS.includes(allocation)) params.allocation = allocation;
+        else errors.push({ field: "allocation", message: `must be one of: ${WORK_ALLOCATION_VIEWS.join(", ")}` });
     }
     return errors.length ? { errors } : { params };
 }
@@ -677,7 +678,7 @@ export function suggestionRank(row, q) {
 export async function listCandidateSuggestions({ db, params, scope = {} }) {
     const q = params.q ?? "";
     if (q.length < SUGGESTION_MIN_LENGTH) return { items: [] };
-    const view = params.allocation === "UNALLOCATED" ? { allocation: { is: null } } : params.allocation === "ALLOCATED" ? { allocation: { isNot: null } } : {};
+    const view = params.allocation ? workAllocationViewWhere(params.allocation) : {};
     const where = andWhere(scope, view, candidateSearchWhere(q));
     // The candidates whose name (or passport, NIC) STARTS with the first word are read first, so a
     // strong match is never pushed out by many newer substring matches; then the newest of the rest.
@@ -1278,6 +1279,31 @@ export async function updateCandidateDetails({ db, passportId, values, actor = n
     return getCandidate({ db, passportId });
 }
 
+// The visa stages need a passed test and a Job: a candidate who failed the test can't go to visa,
+// and a candidate without a Job can't be submitted or approved (the business rule; the Status ladder,
+// candidateWorkflowStatus.js, relies on it). Checked only when a visa stage becomes completed:
+// un-completing it, its notes, and an already completed stage stay editable.
+export const VISA_STAGES = Object.freeze(["VISA_SUBMISSION", "VISA_APPROVAL"]);
+// An active Job assignment: the same signal the Status uses for Job Assigned (WORKFLOW_STATUS_SELECT).
+const hasActiveJob = async (db, passportId) => (await db.jobCandidate.findMany({ where: { passportId, isActive: true }, select: { jobId: true }, take: 1 })).length > 0;
+
+// candidate: getCandidate's result (its saved Test details result is on the TEST_DETAILS stage).
+async function requireVisaPrerequisites(db, candidate) {
+    if (candidate.stages.find((s) => s.stage === "TEST_DETAILS")?.testResult !== TEST_RESULT_PASS) {
+        throw new CandidateError(409, "VISA_NEEDS_TEST_PASS", "The candidate must pass the test before the visa stage can be completed.");
+    }
+    if (!(await hasActiveJob(db, candidate.candidate.passportId))) {
+        throw new CandidateError(409, "VISA_NEEDS_JOB", "Assign the candidate to a Job before completing the visa stage.");
+    }
+}
+
+// Scans need a Job: a candidate without one can't upload them (the other documents stay open).
+export const SCAN_NEEDS_JOB_MESSAGE = "Scans can be uploaded once the candidate is assigned to a Job.";
+async function requireJobForScan(db, passportId, documentType) {
+    if (documentType !== "SCAN") return;
+    if (!(await hasActiveJob(db, passportId))) throw new CandidateError(409, "SCAN_NEEDS_JOB", SCAN_NEEDS_JOB_MESSAGE);
+}
+
 // PUT /api/admin/candidates/:passportId/stages/:stage. Automatic stages take
 // notes only; their completion follows their data.
 export async function updateStage({ db, passportId, stage, values, actor = null, now = new Date() }) {
@@ -1311,6 +1337,7 @@ export async function updateStage({ db, passportId, stage, values, actor = null,
     if (stage === "JOB_DETAILS" && values.jobDate !== undefined) data.jobDetailsDate = values.jobDate;
 
     const changes = diffFields(STAGE_AUDIT_FIELDS, current, values);
+    if (VISA_STAGES.includes(stage) && values.completed === true && !current.completed) await requireVisaPrerequisites(db, candidate);
     await db.$transaction(async (tx) => {
         await tx.candidateStage.upsert({
             where: { passportId_stage: { passportId, stage } },
@@ -1579,6 +1606,7 @@ async function storeCandidateDocument({ db, bucket, admin, passportId, documentT
 // directly (createUploadTarget, then finalizeUpload, below).
 export async function uploadCandidateDocument({ db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now = new Date() }) {
     await requireCandidate(db, passportId);
+    await requireJobForScan(db, passportId, documentType);
     return storeCandidateDocument({
         db, bucket, admin, passportId, documentType, variant, mimeType, buffer, originalFileName, now,
         place: (target) => uploadToFreeName({ bucket, buffer, mimeType, ...target }),
@@ -1631,6 +1659,7 @@ async function removeStaleStagedUploads({ bucket, folder, now }) {
 // POST /api/admin/candidates/:passportId/documents/upload-target
 export async function createUploadTarget({ db, bucket, passportId, documentType, mimeType, fileSize, now = new Date() }) {
     await requireCandidate(db, passportId);
+    await requireJobForScan(db, passportId, documentType);
     const rejection = checkDeclaredFile({ documentType, mimeType, fileSize });
     if (rejection) throw new CandidateError(422, "FILE_REJECTED", rejection);
 
@@ -1655,6 +1684,13 @@ export async function finalizeUpload({ db, bucket, admin, passportId, uploadId, 
 
     const stagedPath = stagedUploadPath(passportId, documentType, uploadId, extensionForMimeType(mimeType));
     const discard = () => removeObject(stagedPath, { bucket });
+    // (the Job may have been removed after the target was issued: the staged file is discarded)
+    try {
+        await requireJobForScan(db, passportId, documentType);
+    } catch (error) {
+        await discard();
+        throw error;
+    }
     const refuse = async (message) => {
         await discard();
         throw new CandidateError(422, "FILE_REJECTED", message);

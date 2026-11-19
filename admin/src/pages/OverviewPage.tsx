@@ -218,7 +218,7 @@ function OverviewContent({ data }: { data: Overview }) {
     return (
         <div className="space-y-6">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <KpiCard label="Total clients" value={kpis.totalClients} hint="Client profiles on record" icon="group" />
+                <KpiCard label="Total candidates" value={kpis.totalClients} hint="Candidate profiles on record" icon="group" />
                 <KpiCard label="Total documents" value={kpis.totalDocuments} hint="Stored in client folders" icon="description" />
                 <KpiCard label="Pending review" value={kpis.pendingReview} hint="Waiting files + stored files to review" icon="fact_check" />
                 <KpiCard label="Received today" value={kpis.receivedToday} hint={`WhatsApp submissions on ${formatDate(`${data.businessDate}T12:00:00+05:30`)}`} icon="mail" />

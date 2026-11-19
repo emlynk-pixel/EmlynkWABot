@@ -239,7 +239,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <h2 id="additional-details-title" className="text-headline-sm text-ink">Additional details</h2>
-                    <p className="mt-1 text-body-sm text-ink-muted">Saved separately from the candidate&apos;s record, which is not changed here. Every field is optional.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Saved separately from the candidate&apos;s record, which is not changed here. Fill every field.</p>
                 </div>
                 {/* The public Candidate Form for this candidate (link + Passport + NIC). */}
                 {canEdit && <ShareFormButton passportId={view.passportId} currentJob={currentJob} activeJobs={activeJobs} />}

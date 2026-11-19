@@ -58,7 +58,7 @@ export const FOLLOW_UP_ROLES: readonly Role[] = CANDIDATE_ROLES;
 // Candidates list reach registration from there and from the header).
 export const REGISTRATION_ENTRY_ROLES: readonly Role[] = [ROLES.REGISTRATION_DESK];
 // Administrators (an OWNER too): user management, Settings, Audit Logs, police-date
-// corrections, job types, verification, confirming Candidate Form values, deleting
+// corrections, job types, verification, deleting
 // follow-ups, the job-group form link and Summary by Roles. Never TEAM_LEAD.
 export const ADMIN_ONLY: readonly Role[] = [ROLES.ADMIN];
 // Work Allocation (src/routes/admin.js ALLOCATION_MANAGERS): ADMIN and TEAM_LEAD.
@@ -99,6 +99,9 @@ export const canVerifyCandidate = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 export const canSetFinalStatus = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 // Work Allocation (the page and its API): ADMIN and TEAM_LEAD.
 export const canManageAllocations = (user: WithRole) => hasRole(user, ALLOCATION_ROLES);
+// "My allocated" on the Candidates list: a Team Lead sees every candidate, and an ADMIN may allocate
+// candidates to them; this narrows the list to their own (the Officer filter, analystId = themselves).
+export const canFilterOwnAllocations = (user: WithRole) => hasRole(user, [ROLES.TEAM_LEAD]);
 // The standard Daily Report (ADMIN, TEAM_LEAD), and its Summary by Roles view (ADMIN only).
 export const canViewDailyReport = (user: WithRole) => hasRole(user, REPORT_VIEW_ROLES);
 export const canViewRoleReport = (user: WithRole) => hasRole(user, ADMIN_ONLY);
@@ -112,9 +115,11 @@ export const canViewJobs = (user: WithRole) => hasRole(user, JOB_VIEW_ROLES);
 // holding one of their candidates).
 export const canEditImportJobSuffix = (user: WithRole) => hasRole(user, [ROLES.ADMIN, ROLES.JOB_HANDLER, ROLES.ANALYST]);
 export const canManageJobs = (user: WithRole) => hasRole(user, JOB_MANAGE_ROLES);
-// Confirming a candidate-submitted Candidate Form value into the candidate's record (one field at a time):
-// ADMIN only. TEAM_LEAD, Analysts and the Registration Desk see the submitted change but cannot apply it.
-export const canConfirmSubmittedChanges = (user: WithRole) => hasRole(user, ADMIN_ONLY);
+// Confirming / rejecting a candidate-submitted Candidate Form value into the candidate's record
+// (src/routes/admin.js FORM_REVIEWERS): ADMIN, TEAM_LEAD and ANALYST (an Analyst only on the candidates
+// allocated to them, which is all their candidate pages show). JOB_HANDLER sees the change but cannot apply it.
+export const FORM_REVIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST];
+export const canConfirmSubmittedChanges = (user: WithRole) => hasRole(user, FORM_REVIEW_ROLES);
 // The job-group Candidate Form link (Share Form > job group): ADMIN only.
 export const canShareJobGroupForm = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 // "Assign to Job" on the candidate's page: an ADMIN workflow (ADMIN only). Job managers (TEAM_LEAD and
@@ -156,6 +161,11 @@ const BELOW_OWNER: readonly Role[] = [ROLES.ADMIN, ...BELOW_ADMIN];
 export const assignableRoles = (user: WithRole): readonly Role[] => (isOwner(user) ? BELOW_OWNER : isAdmin(user) ? BELOW_ADMIN : []);
 export const invitableRoles = assignableRoles;
 export const canInviteUsers = isAdmin;
+// Whether the user may change `target`'s NAME (only the name): their own always (the profile); another
+// user's when they are an OWNER or ADMIN and the target is not the Owner (an ADMIN may rename another ADMIN).
+// The server enforces it (userAccountService.js updateUserName).
+export const canRenameUser = (user: (WithRole & { userId?: string }) | null | undefined, target: { userId: string; role: string }) =>
+    Boolean(user && (user.userId === target.userId || (isAdmin(user) && target.role !== ROLES.OWNER)));
 // Whether the user may change `target` (its role, its status, a re-invite): never their own
 // account, never an Owner's. An account holding a retired role: an OWNER only.
 export const canManageUser = (user: (WithRole & { userId?: string }) | null | undefined, target: { userId: string; role: string }) =>

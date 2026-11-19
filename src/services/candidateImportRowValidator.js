@@ -24,6 +24,9 @@ export const ROW_STATUS = Object.freeze({ VALID: "VALID", WARNING: "WARNING", IN
 // The record's limits (candidateService.js, candidateFormFieldConfirmService.js, clientService.js).
 const MAX_NAME = 100;
 const MAX_COMPANY_NUMBER = 50;
+// VISA STATUS values that complete a visa stage (Submit, Got Visa, Got Visa Not Going): the candidate passed the
+// test and must have a Job (candidateImportClassifier.js VISA_STAGE).
+const VISA_STEP_STATUSES = new Set(["VISA_SUBMITTED", "VISA_APPROVED", "VISA_NOT_GOING"]);
 const TEXT_LIMITS = Object.freeze({
     address: 500, placeOfBirth: 100, jobExperience: 2000, fullName: 200, city: 150, district: 150, dsDivision: 150, gnDivision: 150,
     otherSkills1: 1000, otherSkills2: 150, guardianName: 150, guardianRelationship: 150, guardianAddress: 500,
@@ -198,6 +201,10 @@ export function validateLegacyRow({ rowNumber, values }, { activeJobTypes, alias
     if (cells.uniqueNumber !== undefined) {
         take("uniqueNumber", normalizeUniqueNumber(cells.uniqueNumber));
         if (out.testDate && out.uniqueNumber === undefined && !issues.some((i) => i.code === "INVALID_UNIQUE_NUMBER")) note("uniqueNumber", "JOB_GROUP_INCOMPLETE");
+        if (cells.testDate !== undefined && !out.testDate && out.uniqueNumber !== undefined && !issues.some((i) => i.code === "INVALID_DATE" && i.field === "testDate")) note("testDate", "JOB_GROUP_NO_INTERVIEW_DATE");
+        // A visa step means the candidate must have a Job: say so when the row can't be put on one. Still imported
+        // (the visa status is applied); the Job is then assigned by hand.
+        if (VISA_STEP_STATUSES.has(out.visaStatus) && (!out.testDate || out.uniqueNumber === undefined)) note("visaStatus", "VISA_WITHOUT_JOB");
     }
 
     const status = errors.length ? ROW_STATUS.INVALID : issues.length ? ROW_STATUS.WARNING : ROW_STATUS.VALID;

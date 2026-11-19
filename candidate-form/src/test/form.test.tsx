@@ -189,19 +189,20 @@ describe("family", () => {
         await user.type(field("f.spouseName"), "kumari");
         await user.type(field("f.child1"), "nimal");
 
-        // Back to Personal Details, change to Single: the spouse is hidden, the children stay.
+        // Back to Personal Details, change to Single: the spouse and the children are hidden.
         await user.click(screen.getByRole("button", { name: en("form.previous") }));
         await user.selectOptions(field("f.civilStatus"), "SINGLE");
         await user.click(screen.getByRole("button", { name: en("step.work") }));
         expect(stepHeading("step.work")).toBeInTheDocument();
         expect(queryField("f.spouseName")).toBeNull();
-        expect(field("f.child1")).toHaveValue("NIMAL");
+        expect(queryField("f.child1")).toBeNull();
 
         // Married again: what was typed is still there.
         await user.click(screen.getByRole("button", { name: en("form.previous") }));
         await user.selectOptions(field("f.civilStatus"), "MARRIED");
         await user.click(screen.getByRole("button", { name: en("step.work") }));
         expect(field("f.spouseName")).toHaveValue("KUMARI");
+        expect(field("f.child1")).toHaveValue("NIMAL");
 
         const single = emptyForm();
         single.basic.civilStatus = "DIVORCED";
@@ -213,7 +214,7 @@ describe("family", () => {
 
     test("the family section is marked important; Child 1 is required (N/A for none), later children only after a real one", async () => {
         const { user } = await verified();
-        await goToWork(user);
+        await goToWork(user, "MARRIED"); // children are not asked when Single
         expect(sectionHeading("step.family")).toHaveTextContent(en("form.important"));
         expect(screen.getByText(en("family.childrenNote"))).toBeInTheDocument();
         expect(field("f.child1")).toBeRequired();
@@ -534,7 +535,8 @@ describe("accessibility and layout", () => {
                 await next(user);
             }
         }
-        expect(screen.getByRole("progressbar")).toHaveAccessibleName(/^\d+ of 49 required answers completed$/);
+        // Single: no Child 1 among the required answers.
+        expect(screen.getByRole("progressbar")).toHaveAccessibleName(/^\d+ of 48 required answers completed$/);
         expect(screen.getByRole("navigation", { name: en("form.sections") })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: en("step.work") })).toHaveAttribute("aria-current", "step");
     });

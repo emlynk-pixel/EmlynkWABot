@@ -125,7 +125,7 @@ export async function next(user: User) {
 
 // Valid answers for EVERY field (all are required), step by step, with "N/A"
 // where the form allows it (no other names, no second phone, no skills, no
-// father, no children). The prefill already has the surname, other names and sex.
+// father, no children when not Single). The prefill already has the surname, other names and sex.
 export function fillBasic(civilStatus = "SINGLE") {
     setField("f.fullName", "shamal");
     setField("f.surname", "sathsara");
@@ -180,7 +180,8 @@ export function fillFamily({ spouse = false }: { spouse?: boolean } = {}) {
         setField("f.spousePassport", "N/A");
         setField("f.spouseBirthDate", "1992-07-08");
     }
-    setField("f.child1", "N/A");
+    // Children are not asked when Single.
+    if (queryField("f.child1")) setField("f.child1", "N/A");
 }
 export function fillGuardian() {
     setField("f.guardianName", "kamal perera");

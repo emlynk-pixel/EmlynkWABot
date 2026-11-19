@@ -23,7 +23,7 @@ function statusLine(document: CandidateDocument | null, description?: string, sh
 // (a police report with no known variant). Remove deletes the stored document
 // and its file, after a confirmation with a reason (kept in the audit log).
 // onUploaded gets the candidate after an upload or a removal.
-export function DocumentRow({ passportId, documentType, label, removeTitle = label, description, required, document, variant, uploadable = true, removable = true, accept = DOCUMENT_ACCEPT, readOnly, onUploaded, title }: {
+export function DocumentRow({ passportId, documentType, label, removeTitle = label, description, required, document, variant, uploadable = true, removable = true, accept = DOCUMENT_ACCEPT, readOnly, onUploaded, title, lockedReason = null }: {
     passportId: string;
     documentType: CandidateDocumentType;
     label: string;
@@ -39,6 +39,8 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
     removable?: boolean;
     onUploaded: (details: CandidateDetails) => void;
     title?: string;
+    // Upload / Replace not possible yet, and why (e.g. Scans need a Job). Viewing and Remove are unaffected.
+    lockedReason?: string | null;
 }) {
     const { token } = useAuth();
     const input = useRef<HTMLInputElement>(null);
@@ -109,8 +111,8 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
                 <div className="flex items-center gap-2">
                     {uploadable && (
                         <>
-                            <input ref={input} type="file" accept={accept} className="hidden" aria-label={`${removeTitle} file`} disabled={readOnly || busy} onChange={(event) => upload(event.target.files?.[0])} />
-                            <button type="button" disabled={readOnly || busy} onClick={() => input.current?.click()} className={`${secondaryButton} inline-flex items-center gap-1.5`}>
+                            <input ref={input} type="file" accept={accept} className="hidden" aria-label={`${removeTitle} file`} disabled={readOnly || busy || Boolean(lockedReason)} onChange={(event) => upload(event.target.files?.[0])} />
+                            <button type="button" disabled={readOnly || busy || Boolean(lockedReason)} title={lockedReason ?? undefined} onClick={() => input.current?.click()} className={`${secondaryButton} inline-flex items-center gap-1.5`}>
                                 <Icon name="upload" className="size-4" />{busy && !removing ? "Uploading…" : document ? "Replace" : "Upload"}
                             </button>
                         </>
@@ -122,6 +124,7 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
                     )}
                 </div>
             </div>
+            {lockedReason && uploadable && !readOnly && <p className="mt-2 text-label-sm text-ink-muted">{lockedReason}</p>}
             {error && <p role="alert" className="mt-2 text-label-sm text-critical">{error}</p>}
             {removing && document && (
                 <ActionDialog title={`Remove ${removeTitle}?`} busy={busy} onClose={closeRemove}>

@@ -23,15 +23,15 @@ import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge
 import { Icon } from "../components/Icon";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 
-// Admin > Work Allocation (ADMIN only): assign candidates to
-// Analysts. The list is paged on the server (100 a page, newest registered
+// Work Allocation (ADMIN and TEAM_LEAD): assign candidates to Analysts and Team Leads (a Team Lead may
+// also assign to themselves). The list is paged on the server (100 a page, newest registered
 // first), like Candidates. Selection is per page: Select all ticks the rows
 // on this page only, and changing page, view, search or a filter clears it, so a
 // selection can never silently grow beyond what is on screen. One request
 // assigns the whole selection (all or nothing on the server).
 // Filters (the Candidates list's, components/AdvancedFilters.tsx) are URL
 // parameters sent to the server, which applies them BEFORE paging and always together with the
-// view (Unallocated / Allocated): the count and every page are those of the whole filtered list,
+// view (Unallocated / Allocated / Completed): the count and every page are those of the whole filtered list,
 // never a filter over the rows already loaded.
 
 const th = "h-10 whitespace-nowrap border-b border-border px-3 text-left text-label-md text-ink";
@@ -40,16 +40,27 @@ const countInput = "h-8 w-16 rounded-lg border border-border-strong bg-surface p
 
 // The filters' URL parameters: the API names, except the ones this page used before the advanced
 // filters (kept, so existing links still work). The view is the allocation, so there is no
-// allocation filter; the Analyst ("analyst") is the Officer filter, on Allocated only.
+// allocation filter; the Analyst ("analyst") is the Officer filter, on Allocated and Completed only.
 const LEGACY_PARAMS: Partial<Record<FilterKey, string>> = { registeredFrom: "from", registeredTo: "to", workflowStatus: "wstatus", analystId: "analyst" };
 const FILTER_PARAMS = FILTER_KEYS.filter((key) => key !== "allocation").map((key) => [key, LEGACY_PARAMS[key] ?? key] as const);
 const HIDDEN_UNALLOCATED: FilterKey[] = ["allocation", "analystId"];
 const HIDDEN_ALLOCATED: FilterKey[] = ["allocation"];
 
+// An ADMIN or a TEAM_LEAD may allocate to Analysts and to Team Leads (a Team Lead included themselves;
+// the server lists them). They are shown after the Analysts, each marked "Team Lead".
+const TEAM_LEAD = "TEAM_LEAD";
+const isTeamLead = (holder: { role?: string } | null | undefined) => holder?.role === TEAM_LEAD;
+function TeamLeadBadge() {
+    return <span className="ml-1.5 rounded bg-primary-soft px-1.5 py-0.5 text-label-sm text-primary">Team Lead</span>;
+}
+
 const VIEWS: { status: AllocationStatus; label: string }[] = [
     { status: "UNALLOCATED", label: "Unallocated" },
     { status: "ALLOCATED", label: "Allocated" },
+    { status: "COMPLETED", label: "Completed" },
 ];
+const VIEW_PARAM: Record<AllocationStatus, string | null> = { UNALLOCATED: null, ALLOCATED: "allocated", COMPLETED: "completed" };
+const viewFromParam = (value: string | null): AllocationStatus => (value === "allocated" ? "ALLOCATED" : value === "completed" ? "COMPLETED" : "UNALLOCATED");
 
 export function WorkAllocationPage() {
     const { user } = useAuth();
@@ -59,7 +70,7 @@ export function WorkAllocationPage() {
                 <div role="alert" className="rounded-lg border border-critical-border bg-critical-bg p-6 text-center text-critical">
                     <Icon name="lock" className="mx-auto mb-2 size-8 text-critical" />
                     <h1 className="text-headline-sm font-semibold">Access Restricted</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">Only Admins can allocate candidates.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Only Admins and Team Leads can allocate candidates.</p>
                 </div>
             </div>
         );
@@ -68,19 +79,20 @@ export function WorkAllocationPage() {
 }
 
 function WorkAllocationView() {
-    const { token } = useAuth();
+    const { token, user } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
-    const status: AllocationStatus = searchParams.get("view") === "allocated" ? "ALLOCATED" : "UNALLOCATED";
-    // Status is the candidate's workflow status (not the allocation state, which the tab already says); Unallocated rows have no Analyst column.
-    const allocatedView = status === "ALLOCATED";
-    // One Analyst (the header's select) or several (Filters), comma-separated.
-    const analystFilter = status === "ALLOCATED" ? searchParams.get("analyst") || undefined : undefined;
+    const status = viewFromParam(searchParams.get("view"));
+    // Status is the candidate's workflow status; "Assigned to" is the allocation (Unallocated rows say so).
+    // One Analyst (the header's select) or several (Filters), comma-separated. Completed filters by the
+    // current holder, like Allocated.
+    const analystView = status !== "UNALLOCATED";
+    const analystFilter = analystView ? searchParams.get("analyst") || undefined : undefined;
     const search = searchParams.get("search") || undefined;
     const pageNumber = Number(searchParams.get("page"));
     const page = Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : 1;
 
     const panelFilters = cleanFilters(Object.fromEntries(FILTER_PARAMS.map(([key, param]) => [key, searchParams.get(param) ?? ""])));
-    if (status !== "ALLOCATED") delete panelFilters.analystId;
+    if (!analystView) delete panelFilters.analystId;
     // The Analyst goes to the server as analystId (as the header's select always sent it).
     const filters: CandidateFilters = { ...panelFilters };
     delete filters.analystId;
@@ -97,9 +109,11 @@ function WorkAllocationView() {
     const [selectedAnalysts, setSelectedAnalysts] = useState<Set<string>>(new Set());
     const [counts, setCounts] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState(false);
+    // Which button started the save, so only that one reads "Saving…".
+    const [busySource, setBusySource] = useState<"me" | "manual" | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
-    const [confirm, setConfirm] = useState<"reassign" | "unassign" | "allocate" | null>(null);
+    const [confirm, setConfirm] = useState<"reassign" | "unassign" | "allocate" | "assignMe" | null>(null);
 
     // A new page, view or search starts with nothing selected.
     const listKey = searchParams.toString();
@@ -128,7 +142,7 @@ function WorkAllocationView() {
         const clean = cleanFilters(next);
         go(Object.fromEntries(FILTER_PARAMS.map(([key, param]) => [param, clean[key] ?? null])));
     };
-    const filterFields = useFilterFields({ value: panelFilters, options: filterOptions.data, hidden: status === "ALLOCATED" ? HIDDEN_ALLOCATED : HIDDEN_UNALLOCATED, onChange: applyFilters });
+    const filterFields = useFilterFields({ value: panelFilters, options: filterOptions.data, hidden: analystView ? HIDDEN_ALLOCATED : HIDDEN_UNALLOCATED, onChange: applyFilters });
     const clearFilters = () => applyFilters({});
 
     const items = list.status === "error" ? [] : list.data?.items ?? [];
@@ -148,7 +162,14 @@ function WorkAllocationView() {
     const selection = [...selected.values()];
     const selectedCount = selection.length;
     const alreadyAllocated = selection.filter((item) => item.analyst);
-    const activeAnalysts = analysts.data?.analysts ?? [];
+    // Analysts first, then Team Leads (each group in the server's name order).
+    const activeAnalysts = useMemo(() => {
+        const all = analysts.data?.analysts ?? [];
+        return [...all.filter((a) => !isTeamLead(a)), ...all.filter(isTeamLead)];
+    }, [analysts.data]);
+    const hasTeamLeads = activeAnalysts.some(isTeamLead);
+    // "Assign to me": only for a signed-in user the server lists as assignable (an active Team Lead).
+    const me = user ? activeAnalysts.find((a) => a.analystId === user.userId && isTeamLead(a)) : undefined;
     const parsedCounts = activeAnalysts.map((analyst) => {
         const raw = (counts[analyst.analystId] ?? "").trim();
         const value = raw === "" ? 0 : Number(raw);
@@ -226,15 +247,24 @@ function WorkAllocationView() {
         }
     };
 
-    const runAssign = async () => {
-        if (!token || validation || busy) return;
+    // The whole selection to the signed-in Team Lead (the same assign endpoint, one allocation).
+    // Candidates already owned by the user stay as they are (the server counts them as unchanged), so only
+    // the others are listed and confirmed.
+    const ownedByMe = alreadyAllocated.filter((item) => item.analyst?.analystId === user?.userId);
+    const movedFromOthers = alreadyAllocated.filter((item) => item.analyst?.analystId !== user?.userId);
+    const assignToMe = () => (movedFromOthers.length ? setConfirm("assignMe") : runAssign(true));
+    const runAssign = async (toMe = false) => {
+        if (!token || busy || (toMe ? !me || !selectedCount : validation)) return;
         setBusy(true);
+        setBusySource(toMe ? "me" : "manual");
         setActionError(null);
         setNotice(null);
         try {
             const result = await assignCandidates(token, {
                 candidateIds: selection.map((item) => item.passportId),
-                allocations: parsedCounts.filter((entry) => entry.value > 0).map((entry) => ({ analystId: entry.analyst.analystId, count: entry.value })),
+                allocations: toMe && me
+                    ? [{ analystId: me.analystId, count: selectedCount }]
+                    : parsedCounts.filter((entry) => entry.value > 0).map((entry) => ({ analystId: entry.analyst.analystId, count: entry.value })),
                 reassign: alreadyAllocated.length > 0,
             });
             const parts = result.byAnalyst.map((entry) => `${entry.name} ${formatNumber(entry.count)}`).join(", ");
@@ -256,7 +286,7 @@ function WorkAllocationView() {
         setNotice(null);
         try {
             const result = await unassignCandidates(token, alreadyAllocated.map((item) => item.passportId));
-            setNotice(`${formatNumber(result.unassigned)} ${result.unassigned === 1 ? "candidate is" : "candidates are"} unallocated again.`);
+            setNotice(`${formatNumber(result.unassigned)} ${result.unassigned === 1 ? "candidate is" : "candidates are"} unallocated again. Their previous assignees are no longer assigned to them; an Analyst loses access to the candidate immediately.`);
             setConfirm(null);
             clearSelection();
             reloadAll();
@@ -267,6 +297,7 @@ function WorkAllocationView() {
         }
     };
     const onAssign = () => (alreadyAllocated.length ? setConfirm("reassign") : runAssign());
+    const confirmRun = () => runAssign(confirm === "assignMe");
 
     const data = list.status === "error" ? null : list.data;
     const changingPage = list.status === "loading" && Boolean(data);
@@ -293,16 +324,24 @@ function WorkAllocationView() {
             ? "There are no candidates on this page."
             : status === "UNALLOCATED"
                 ? "All candidates are currently allocated."
-                : analystFilter
-                    ? "No candidates are allocated to this Analyst."
-                    : "No candidates are allocated yet.";
+                : status === "COMPLETED"
+                    ? analystFilter
+                        ? "No completed candidates are allocated to this Analyst."
+                        : "No candidates are cancelled, rejected or departed yet."
+                    : analystFilter
+                        ? "No candidates are allocated to this Analyst."
+                        : "No candidates are allocated yet.";
     const filterAnalysts = [...activeAnalysts, ...(analysts.data?.unavailableAnalysts ?? [])];
 
     return (
         <section aria-labelledby="page-title" className="space-y-4">
             <div>
                 <h1 id="page-title" className="text-headline-lg text-ink">Work Allocation</h1>
-                <p className="mt-1 text-body-sm text-ink-muted">Assign candidates to Analysts. An Analyst only sees and works on the candidates allocated to them.</p>
+                <p className="mt-1 text-body-sm text-ink-muted">
+                    {hasTeamLeads
+                        ? "Assign candidates to Analysts or Team Leads. An Analyst only sees and works on the candidates allocated to them; a Team Lead sees every candidate and finds theirs with My allocated."
+                        : "Assign candidates to Analysts. An Analyst only sees and works on the candidates allocated to them."}
+                </p>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -312,11 +351,12 @@ function WorkAllocationView() {
                             key={view.status}
                             type="button"
                             aria-pressed={status === view.status}
-                            onClick={() => go({ view: view.status === "ALLOCATED" ? "allocated" : null, analyst: null })}
+                            onClick={() => go({ view: VIEW_PARAM[view.status], analyst: null })}
                             className={`h-8 rounded-lg px-3 text-label-md ${status === view.status ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
                         >
                             {view.label}
                             {view.status === "UNALLOCATED" && analysts.data && <span className="ml-1.5 tabular-nums opacity-80">{formatNumber(analysts.data.unallocatedCount)}</span>}
+                            {view.status === "COMPLETED" && typeof analysts.data?.completedCount === "number" && <span className="ml-1.5 tabular-nums opacity-80">{formatNumber(analysts.data.completedCount)}</span>}
                         </button>
                     ))}
                 </div>
@@ -356,7 +396,7 @@ function WorkAllocationView() {
                     <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2">
                         <span className="text-label-md text-ink tabular-nums" aria-live="polite">{formatNumber(selectedCount)} selected</span>
                         {selectedCount > 0 && <button type="button" onClick={clearSelection} className="text-label-md text-primary hover:underline">Clear selection</button>}
-                        {status === "ALLOCATED" && (
+                        {analystView && (
                             <label className="ml-auto flex items-center gap-2 text-label-md text-ink-soft">
                                 Analyst
                                 <select
@@ -366,7 +406,7 @@ function WorkAllocationView() {
                                 >
                                     <option value="">All Analysts</option>
                                     {analystCount > 1 && <option value="__several" disabled>{formatNumber(analystCount)} Analysts (Filters)</option>}
-                                    {filterAnalysts.map((analyst) => <option key={analyst.analystId} value={analyst.analystId}>{analyst.name}</option>)}
+                                    {filterAnalysts.map((analyst) => <option key={analyst.analystId} value={analyst.analystId}>{analyst.name}{isTeamLead(analyst) ? " (Team Lead)" : ""}</option>)}
                                 </select>
                             </label>
                         )}
@@ -390,7 +430,7 @@ function WorkAllocationView() {
                         <>
                             {changingPage && <p role="status" className="px-3 pt-3 text-label-sm text-ink-muted">Loading page…</p>}
                             <div aria-busy={changingPage} className={`overflow-x-auto ${changingPage ? "opacity-60" : ""}`}>
-                                <table className={`w-full ${allocatedView ? "min-w-[40rem]" : "min-w-[32rem]"} border-separate border-spacing-0`}>
+                                <table className={`w-full min-w-[40rem] border-separate border-spacing-0`}>
                                     <caption className="sr-only">Candidates to allocate</caption>
                                     <thead>
                                         <tr>
@@ -401,7 +441,7 @@ function WorkAllocationView() {
                                             <th scope="col" className={th}>Candidate</th>
                                             <th scope="col" className={th}>Registered</th>
                                             <th scope="col" className={th}>Status</th>
-                                            {allocatedView && <th scope="col" className={th}>Analyst</th>}
+                                            <th scope="col" className={th}>Assigned to</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -418,16 +458,15 @@ function WorkAllocationView() {
                                                     <td className={`${td} text-ink`}>{item.name ?? "—"}</td>
                                                     <td className={`${td} whitespace-nowrap text-ink-muted`}>{formatDate(item.registeredDate)}</td>
                                                     <td className={td}>{item.workflowStatus ? <WorkflowStatusBadge status={item.workflowStatus} /> : "—"}</td>
-                                                    {allocatedView && (
-                                                        <td className={`${td} text-ink-muted`}>
-                                                            {item.analyst ? (
-                                                                <>
-                                                                    {item.analyst.name}
-                                                                    {!item.analyst.active && <span className="ml-1 text-label-sm text-critical">(inactive)</span>}
-                                                                </>
-                                                            ) : "—"}
-                                                        </td>
-                                                    )}
+                                                    <td className={`${td} text-ink-muted`}>
+                                                        {item.analyst ? (
+                                                            <>
+                                                                {item.analyst.name}
+                                                                {isTeamLead(item.analyst) && <TeamLeadBadge />}
+                                                                {!item.analyst.active && <span className="ml-1 text-label-sm text-critical">(inactive)</span>}
+                                                            </>
+                                                        ) : <span className="rounded bg-canvas px-1.5 py-0.5 text-label-sm text-ink-subtle">Unallocated</span>}
+                                                    </td>
                                                 </tr>
                                             );
                                         })}
@@ -445,6 +484,11 @@ function WorkAllocationView() {
                         {formatNumber(selectedCount)} selected
                         {alreadyAllocated.length > 0 && <span className="text-review"> · {formatNumber(alreadyAllocated.length)} already allocated</span>}
                     </p>
+                    {me && (
+                        <button type="button" onClick={assignToMe} disabled={!selectedCount || busy} className={`${primaryButton} mt-3 w-full`}>
+                            {busy && !confirm && busySource === "me" ? "Saving…" : "Assign to me"}
+                        </button>
+                    )}
                     {analysts.status === "error" && <ErrorState message={analysts.error.message} onRetry={analysts.reload} />}
                     {analysts.status === "loading" && !analysts.data && <LoadingState label="Loading Analysts…" />}
                     {analysts.data && activeAnalysts.length === 0 && (
@@ -470,7 +514,7 @@ function WorkAllocationView() {
                                             className="size-4 accent-primary"
                                         />
                                         <div className="min-w-0 flex-1">
-                                            <p className="truncate text-body-sm text-ink">{analyst.name}</p>
+                                            <p className="truncate text-body-sm text-ink">{analyst.name}{isTeamLead(analyst) && <TeamLeadBadge />}</p>
                                             <p className="text-label-sm text-ink-subtle tabular-nums">
                                                 {formatNumber(analyst.assignedCount)} {analyst.assignedCount === 1 ? "candidate" : "candidates"}
                                                 {valid && value > 0 && <span className="text-primary"> → {formatNumber(analyst.assignedCount + value)}</span>}
@@ -527,6 +571,7 @@ function WorkAllocationView() {
                             >
                                 {busy && confirm === "allocate" ? "Allocating…" : "Allocate"}
                             </button>
+                            <p className="mt-1 text-label-sm text-ink-muted">Allocate splits the selected unallocated candidates equally and skips candidates that are already allocated. To move those, use Reassign below.</p>
 
                             <div className="mt-3 border-t border-border pt-2">
                                 <p className="flex justify-between text-label-sm tabular-nums text-ink-muted">
@@ -540,7 +585,7 @@ function WorkAllocationView() {
                                     disabled={Boolean(validation) || busy}
                                     className={`${secondaryButton} mt-2 w-full`}
                                 >
-                                    {busy && !confirm ? "Saving…" : alreadyAllocated.length ? `Reassign ${formatNumber(selectedCount)} candidates` : `Assign ${formatNumber(selectedCount)} candidates`}
+                                    {busy && !confirm && busySource === "manual" ? "Saving…" : alreadyAllocated.length ? `Reassign ${formatNumber(selectedCount)} candidates` : `Assign ${formatNumber(selectedCount)} candidates`}
                                 </button>
                             </div>
                         </>
@@ -569,7 +614,7 @@ function WorkAllocationView() {
                         )}
                         {alreadyAllocated.length > 0 && (
                             <p className="text-label-sm text-review">
-                                {formatNumber(alreadyAllocated.length)} already allocated {alreadyAllocated.length === 1 ? "candidate" : "candidates"} will be skipped and remain with their current analysts.
+                                {formatNumber(alreadyAllocated.length)} already allocated {alreadyAllocated.length === 1 ? "candidate" : "candidates"} will be skipped and remain with their current assignees. To move them, cancel and use Reassign.
                             </p>
                         )}
                         <div className="space-y-1 rounded-lg border border-border bg-canvas p-3 text-label-sm">
@@ -601,26 +646,31 @@ function WorkAllocationView() {
                 </ActionDialog>
             )}
 
-            {confirm === "reassign" && (
+            {(confirm === "reassign" || confirm === "assignMe") && (
                 <ActionDialog title="Reassign candidates?" busy={busy} onClose={() => setConfirm(null)}>
                     <p className="text-body-sm text-ink-soft">
-                        {formatNumber(alreadyAllocated.length)} of the {formatNumber(selectedCount)} selected candidates already have an Analyst. They will move to the new Analysts, and their current Analysts lose access to them immediately.
+                        {formatNumber(confirm === "assignMe" ? movedFromOthers.length : alreadyAllocated.length)} of the {formatNumber(selectedCount)} selected candidates are already allocated. They will move to {confirm === "assignMe" ? "you" : "the new assignees"}, and their current assignees are no longer assigned to them; an Analyst loses access to the candidate immediately.
+                        {confirm === "assignMe" && ownedByMe.length > 0 && ` ${formatNumber(ownedByMe.length)} already ${ownedByMe.length === 1 ? "belongs" : "belong"} to you and stays unchanged.`}
                     </p>
                     <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto text-body-sm text-ink-muted">
-                        {alreadyAllocated.map((item) => <li key={item.passportId}>{item.name ?? item.passportId} · now {item.analyst?.name}</li>)}
+                        {(confirm === "assignMe" ? movedFromOthers : alreadyAllocated).map((item) => <li key={item.passportId}>{item.name ?? item.passportId} · now {item.analyst?.name}</li>)}
+                        {confirm === "assignMe" && ownedByMe.map((item) => <li key={item.passportId}>{item.name ?? item.passportId} · already yours (unchanged)</li>)}
                     </ul>
                     <DialogError message={actionError} />
                     <div className="mt-4 flex justify-end gap-2">
                         <button type="button" onClick={() => setConfirm(null)} disabled={busy} className={secondaryButton}>Cancel</button>
-                        <button type="button" onClick={runAssign} disabled={busy} className={primaryButton}>{busy ? "Saving…" : "Reassign"}</button>
+                        <button type="button" onClick={confirmRun} disabled={busy} className={primaryButton}>{busy ? "Saving…" : "Reassign"}</button>
                     </div>
                 </ActionDialog>
             )}
             {confirm === "unassign" && (
                 <ActionDialog title="Unassign candidates?" busy={busy} onClose={() => setConfirm(null)}>
                     <p className="text-body-sm text-ink-soft">
-                        {formatNumber(alreadyAllocated.length)} {alreadyAllocated.length === 1 ? "candidate goes" : "candidates go"} back to Unallocated. Their Analysts lose access to them immediately.
+                        {formatNumber(alreadyAllocated.length)} {alreadyAllocated.length === 1 ? "candidate goes" : "candidates go"} back to Unallocated. Their current assignees are no longer assigned to them; an Analyst loses access to the candidate immediately.
                     </p>
+                    <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto text-body-sm text-ink-muted">
+                        {alreadyAllocated.map((item) => <li key={item.passportId}>{item.name ?? item.passportId} · now {item.analyst?.name}</li>)}
+                    </ul>
                     <DialogError message={actionError} />
                     <div className="mt-4 flex justify-end gap-2">
                         <button type="button" onClick={() => setConfirm(null)} disabled={busy} className={secondaryButton}>Cancel</button>

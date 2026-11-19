@@ -285,7 +285,7 @@ describe("GROUP: lockout and double submit", () => {
 });
 
 describe("SUBMIT / DBSEC: what the database itself enforces", () => {
-    test("SUBMIT-007..013 / DBSEC-006..008 the answers go only to candidate_form_response; the main tables are untouched; response and snapshot cannot be edited", async () => {
+    test("SUBMIT-007..013 / DBSEC-006..008 the answers go to candidate_form_response; the core record and stages are untouched; response and snapshot cannot be edited", async () => {
         const candidateBefore = JSON.stringify(await prisma.candidate.findUnique({ where: { passportId: A.passportId } }));
         const secret = await personalLink(A);
         const token = await session(secret, A);
@@ -293,7 +293,8 @@ describe("SUBMIT / DBSEC: what the database itself enforces", () => {
         const snapshot = await prisma.candidateFormPrefillSnapshot.findUnique({ where: { passportId: A.passportId } });
         assert.equal((await submit(token)).status, 200);
         assert.equal(JSON.stringify(await prisma.candidate.findUnique({ where: { passportId: A.passportId } })), candidateBefore, "candidate row unchanged");
-        assert.equal(await prisma.candidateAdditionalDetails.count(), 0);
+        // Only the EMPTY Additional Details of this candidate are filled (applyAutoFill); nothing else.
+        assert.deepEqual((await prisma.candidateAdditionalDetails.findMany({ select: { passportId: true } })).map((d) => d.passportId), [A.passportId]);
         assert.equal(await prisma.candidateStage.count({ where: { NOT: { stage: "TEST_DETAILS" } } }), 0, "no stage written (only the seeded Test result PASS rows exist)");
         const response = await prisma.candidateFormResponse.findUnique({ where: { passportId: A.passportId } });
         assert.equal(response.fullName, "ANUSHA DE SOYSA", "server upper-cases English");

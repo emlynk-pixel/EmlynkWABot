@@ -7,6 +7,7 @@ import path from "node:path";
 import express from "express";
 
 import { createTestDatabase, migrationNames } from "./helpers/pgliteDatabase.js";
+import { giveTestPassAndJob } from "./helpers/visaPrerequisites.js";
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
@@ -346,6 +347,7 @@ describe("what can be saved (STAGE-JOB-010 to 015)", () => {
 
 describe("other stages are unchanged (STAGE-JOB-016 to 020)", () => {
     test("every other stage still saves notes and completion; Candidate details and Document submission stay automatic", async () => {
+        await giveTestPassAndJob(prisma, P1, USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         for (const key of ["VISA_SUBMISSION", "VISA_APPROVAL"]) {
             const response = await save(P1, key, { completed: true, notes: `${key} note` });
             assert.equal(response.status, 200, key);

@@ -323,3 +323,46 @@ export async function deactivateUser({ db, actor, userId }) {
         return toUserSummary(updated);
     });
 }
+
+// ---------------------------------------------------------------- names
+//
+// A user's display name (only the name: never the email, role or status). Every user changes their
+// own (the profile menu, PUT /api/auth/me/name); OWNER and ADMIN change another user's in Settings >
+// Change Roles (PUT /api/admin/users/:userId/name), any account but the Owner's: only the Owner
+// changes the Owner's name, through their own profile. Looser than role changes on purpose (an ADMIN
+// may rename another ADMIN). Audited UPDATE_USER_NAME, old -> new; the same name again writes nothing.
+
+// PUT .../name body: { name }, trimmed, inner spaces collapsed, 1 to MAX_NAME_LENGTH characters.
+export function parseNameBody(body) {
+    if (!body || typeof body !== "object" || Array.isArray(body)) return { errors: [{ field: "body", message: "must be a JSON object" }] };
+    const name = typeof body.name === "string" ? body.name.trim().replace(/\s+/g, " ") : "";
+    if (!name || name.length > MAX_NAME_LENGTH) return { errors: [{ field: "name", message: `is required (at most ${MAX_NAME_LENGTH} characters)` }] };
+    return { values: { name } };
+}
+
+const ownerNameLocked = () => new UserAccountError(403, "OWNER_LOCKED", "Only the Owner can change the Owner's name.");
+
+async function renameRow(tx, { actor, target, name, reason }) {
+    if (target.name === name) return target;
+    const updated = await tx.user.update({ where: { adminId: target.adminId }, data: { name } });
+    await audit(tx, { actor, action: "UPDATE_USER_NAME", previousStatus: target.status, newStatus: target.status, reason, previousValue: target.name, newValue: name });
+    return updated;
+}
+
+// The signed-in user's own name (any role). Returns the updated row.
+export async function updateOwnName({ db, actor, name }) {
+    if (actor?.status !== USER_STATUS.ACTIVE) throw forbidden();
+    return runInTransaction(db, async (tx) => {
+        const { actor: current } = await lockUserRows(tx, { actorId: actor.adminId });
+        if (current?.status !== USER_STATUS.ACTIVE) throw forbidden();
+        return renameRow(tx, { actor: current, target: current, name, reason: "Name changed" });
+    });
+}
+
+// Another user's name (OWNER or ADMIN; never the Owner's account).
+export async function updateUserName({ db, actor, userId, name }) {
+    return changeUser(db, actor, userId, async (tx, current, target) => {
+        if (target.role === ROLES.OWNER) throw ownerNameLocked();
+        return toUserSummary(await renameRow(tx, { actor: current, target, name, reason: `Name changed for user ${userId}` }));
+    });
+}

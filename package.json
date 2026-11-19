@@ -20,6 +20,7 @@
     "db:check": "node scripts/checkDatabaseConnection.js",
     "db:audit-stages": "node scripts/auditCandidateStages.js",
     "auth:audit-users": "node scripts/auditUserAccounts.js",
+    "form:backfill-autofill": "node scripts/backfillCandidateFormAutoFill.mjs",
     "admin:install": "npm --prefix admin install",
     "admin:dev": "npm --prefix admin run dev",
     "admin:build": "npm --prefix admin run build",

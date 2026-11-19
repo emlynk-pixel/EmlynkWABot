@@ -678,7 +678,7 @@ Extra details of a candidate (Admin > Candidates > **Additional Details** tab), 
 
 ### `PUT /api/admin/candidates/:passportId/additional-details`
 
-The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtSize, pantSize, shoeSize, fatherAlive, fatherFullName, fatherBirthday, motherAlive, motherFullName, motherBirthday, maritalStatus, wifeFullName, wifeBirthday, child1Name, child2Name, child3Name, otherJobSkills`. It responds with the same shape as GET.
+The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtSize, pantSize, shoeSize, fatherAlive, fatherFullName, fatherBirthday, motherAlive, motherFullName, motherBirthday, maritalStatus, wifeFullName, wifeBirthday, child1Name, child2Name, child3Name, otherJobSkills` and the Candidate Form answers. It responds with the same shape as GET.
 
 - **Full replacement**: a field left out or blank is cleared. Unknown fields, including a `passportId` in the body, are ignored; the candidate is the one in the URL.
 - **Version check**: the body may carry `expectedUpdatedDate`, the `updatedDate` the form was loaded with (`null` when nothing was saved yet). If the stored version is different, the save is refused with **409** `{ code: "DETAILS_CHANGED" }` and nothing is written, so one person's save never silently undoes another's. A stale form whose values already equal the stored ones is accepted as a no-op. Omitting the field skips the check. The write is compare-and-swap on that version, so two saves at the same moment can't both win.
@@ -730,19 +730,19 @@ ADMIN only (an OWNER too; `requireRole`): every other role gets 403. Rules: `Doc
 
 ### `GET /api/admin/work-allocation/candidates?status=&analystId=&search=&page=`
 
-- `status`: `UNALLOCATED` (default) or `ALLOCATED`. `analystId` (with `ALLOCATED`): one Analyst's candidates. `search`: as `GET /candidates`. `page`: 100 a page, newest registered first.
+- `status`: `UNALLOCATED` (default), `ALLOCATED` or `COMPLETED`. `COMPLETED` lists the completed placements (outcome `CANCELLED` or `REJECTED`, or departed), allocated or not; `UNALLOCATED` and `ALLOCATED` leave them out (`Docs/20-candidate-management.md` §4.5). `analystId` (with `ALLOCATED` or `COMPLETED`; ignored on `UNALLOCATED`): one Analyst's candidates. `search`: as `GET /candidates`. `page`: 100 a page, newest registered first.
 - Each item: `passportId, uniqueId, name, nic, jobTypes, whatsappNumber, contactNumber, registeredDate, stagesCompleted, stagesTotal, currentStage, analyst ({ analystId, name, active } or null), assignedDate`, plus `pagination` and `filters`.
 
 ### `GET /api/admin/work-allocation/analysts`
 
-`{ analysts: [{ analystId, name, email, assignedCount }], unavailableAnalysts: [{ analystId, name, assignedCount }], unallocatedCount }`. `analysts` holds the ACTIVE Analysts, the only valid targets. `unavailableAnalysts` holds users who still have candidates but are no longer active Analysts. The counts come from one grouped query.
+`{ analysts: [{ analystId, name, email, role, assignedCount }], unavailableAnalysts: [{ analystId, name, role, assignedCount }], unallocatedCount, completedCount }`. `unallocatedCount` is the Unallocated view (completed placements excluded); `completedCount` is the Completed view, allocated or not. `assignedCount` is every candidate the user holds, completed ones included. `analysts` holds the ACTIVE Analysts and ACTIVE Team Leads (`role` is `ANALYST` or `TEAM_LEAD`), the only valid targets, whoever asks. `unavailableAnalysts` holds users who still have candidates but are no longer active, or no longer an Analyst or Team Lead. The counts come from one grouped query.
 
 ### `POST /api/admin/work-allocation/assign`
 
 Body `{ candidateIds: [passportId…], allocations: [{ analystId, count }…], reassign?: boolean }`. One transaction, all or nothing. Responds `{ assigned, reassigned, unchanged, byAnalyst: [{ analystId, name, count }] }`.
 
 - 400: empty or repeated `candidateIds` (at most 500), counts that aren't whole numbers ≥ 0, an Analyst listed twice, or counts that don't add up to the number of candidates (`code: "COUNT_MISMATCH"` on the error).
-- 409: `CANDIDATE_NOT_AVAILABLE`, `ANALYST_NOT_FOUND`, `NOT_AN_ANALYST`, `ANALYST_INACTIVE`, or `ALREADY_ALLOCATED` (allocated candidates without `reassign: true`).
+- 409: `CANDIDATE_NOT_AVAILABLE`, `ANALYST_NOT_FOUND`, `NOT_AN_ANALYST` (the target is neither an Analyst nor a Team Lead), `ANALYST_INACTIVE`, or `ALREADY_ALLOCATED` (allocated candidates without `reassign: true`).
 
 ### `POST /api/admin/work-allocation/unassign`
 
@@ -939,7 +939,7 @@ Endpoint tiers (`src/routes/admin.js`):
 | Candidate reads (`CANDIDATE_READERS`) | ADMIN, TEAM_LEAD, ANALYST, JOB_HANDLER | `GET /candidates`, `GET /candidates/:passportId` and its call logs, additional details and submitted form |
 | Registration workflow (`REGISTRATION_WORKFLOW`) | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | `GET /candidates/:passportId` (lookup), `PUT /candidates/:passportId`, `PUT …/stages/:stage` and `POST …/documents/upload-target` / `finalize`; REGISTRATION_DESK only for the `CANDIDATE_DETAILS` stage and `PASSPORT` / `NIC` / `SKILL_VIDEO` (otherwise 403) |
 | Job candidate picker (`JOB_MANAGERS`) | ADMIN, TEAM_LEAD, JOB_HANDLER | `GET /job-candidate-options?search=&page=&pageSize=`: test-PASS candidates only, `{ passportId, uniqueId, name, nic, workflowStatus }` per item, paged like `GET /candidates` |
-| Work Allocation (`ALLOCATION_MANAGERS`) | ADMIN, TEAM_LEAD | `/work-allocation/*` (section 4p); work goes to ACTIVE Analysts only |
+| Work Allocation (`ALLOCATION_MANAGERS`) | ADMIN, TEAM_LEAD | `/work-allocation/*` (section 4p); work goes to ACTIVE Analysts and Team Leads only |
 | Registration (`REGISTRATION_STAFF`) | ADMIN, TEAM_LEAD, REGISTRATION_DESK | `POST /candidates` |
 | Verification, Candidate Form confirm / reject | ADMIN | `POST /candidates/:id/verification`, `POST /candidates/:id/form-submission/*` |
 | Follow-up delete (Need Attention page) | ADMIN | `DELETE /follow-ups/:id`: removes the follow-up row only (never the call log, candidate or documents); TEAM_LEAD, ANALYST and REGISTRATION_DESK get 403. The role is the signed-in user's, read from the database on every request |
@@ -950,6 +950,8 @@ Endpoint tiers (`src/routes/admin.js`):
 The tiers in `src/routes/admin.js` name ADMIN only; OWNER passes each of them through `hasRole()`. TEAM_LEAD passes only the tiers that name it (it inherits nothing from ADMIN). Jobs, Agents and Clients have their own tiers (ADMIN, TEAM_LEAD, JOB_HANDLER; an ANALYST reads the jobs holding their own candidates; job types and the job-group form link: ADMIN only): see `JOB_MANAGEMENT_IMPLEMENTATION.md` and `AGENT_CLIENT_MANAGEMENT.md`.
 
 `GET /auth/me` and `POST /auth/complete-invite` need a Supabase session but not a particular role.
+
+`PUT /auth/me/name` `{ name }`: the signed-in user changes their own display name (every role, an ACTIVE account; only the name). Trimmed, inner spaces collapsed, 1 to 100 characters (400 otherwise). Answers `{ user }` (the profile, as `GET /auth/me`). Audited `UPDATE_USER_NAME` (old -> new); the same name again writes nothing.
 
 ### 12.3 Transport and CSRF
 
@@ -976,6 +978,7 @@ Summary of the rules (all enforced server-side on the database rows, inside the 
 | `GET` | `/api/admin/users` | List application users (profile fields only) |
 | `POST` | `/api/admin/users/invite` | Invite a user: `{ name, email, role }` (OWNER: ADMIN and below; ADMIN: below ADMIN; nobody invites an OWNER) |
 | `PUT` | `/api/admin/users/:userId/role` | Change a user's role (not your own; 403 `OWNER_LOCKED` for an OWNER account or the OWNER role; 403 `OWNER_REQUIRED` for an ADMIN touching an ADMIN or giving ADMIN) |
+| `PUT` | `/api/admin/users/:userId/name` | Change another user's display name `{ name }` (only the name). OWNER: any account but an Owner's; ADMIN: any account but an Owner's, another ADMIN included. 403 `OWNER_LOCKED` for an OWNER account (the Owner changes their own name through `PUT /auth/me/name`); 400 `SELF_CHANGE` for your own account; 400 for a blank or too long name. Audited `UPDATE_USER_NAME` |
 | `POST` | `/api/admin/users/:userId/deactivate` | Deactivate a user (not your own account; same rules) |
 
 **Invitation flow.**

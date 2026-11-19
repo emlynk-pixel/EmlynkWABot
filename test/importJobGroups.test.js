@@ -13,7 +13,7 @@ import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js"
 import { chunkRows, commitChunk, finishImport, previewImport, updateImportJobGroups } from "../src/services/candidateImportService.js";
 import { normalizeUniqueNumber } from "../src/services/candidateImportNormalizers.js";
 import {
-    GROUP_STATE, applySuffixEdits, buildJobGroupPlan, hundredsBlock, importJobCode, isValidSuffix, jobMembership,
+    GROUP_STATE, applySuffixEdits, buildJobGroupPlan, hundredsBlock, importJobCode, isOddRow, isValidSuffix, jobMembership, noteGroupOutcomes, plannedJobMembers,
 } from "../src/services/importJobGroups.js";
 
 // ---------------------------------------------------------------- pure rules
@@ -39,9 +39,9 @@ describe("hundreds block", () => {
 });
 
 // A classified row as planRows makes it (only what the plan reads).
-const member = (date, uniqueNumber, { pass = true, company = "ACME", agent = "AG", n = 0 } = {}) => ({
+const member = (date, uniqueNumber, { pass = true, visaPass = false, company = "ACME", agent = "AG", n = 0 } = {}) => ({
     rowNumber: n, org: {}, codes: [], issues: [],
-    job: jobMembership({ testDate: new Date(`${date}T00:00:00Z`), uniqueNumber, pass, passportId: `P${n}`, values: { company, agent, jobRole: "PLASTER" } }),
+    job: jobMembership({ testDate: new Date(`${date}T00:00:00Z`), uniqueNumber, pass, visaPass, passportId: `P${n}`, values: { company, agent, jobRole: "PLASTER" } }),
 });
 const suffixes = (groups) => Object.fromEntries(groups.map((g) => [`${g.interviewDate} ${g.from}-${g.to}`, g.suffix]));
 
@@ -84,13 +84,37 @@ describe("suffixes per date (the plan)", () => {
         assert.equal(plan[0].suffix, "02");
     });
 
-    test("problems: different companies -> ERROR; nobody passed -> SKIPPED (no Job yet); another client on an existing Job -> ERROR", () => {
+    test("problems: a tie between companies -> ERROR; nobody passed -> SKIPPED (no Job yet); another client on an existing Job -> that row only is left off", () => {
         const conflict = buildJobGroupPlan([member("2026-07-11", 3100, { company: "ACME" }), member("2026-07-11", 3150, { company: "Other" })]);
         assert.deepEqual([conflict[0].state, conflict[0].codes], [GROUP_STATE.ERROR, ["JOB_GROUP_COMPANY_CONFLICT"]]);
         const skipped = buildJobGroupPlan([member("2026-07-11", 3100, { pass: false })]);
         assert.deepEqual([skipped[0].state, skipped[0].suffix], [GROUP_STATE.SKIPPED, null]);
         const existing = [{ interviewDate: "2026-07-11", block: 31, suffix: "01", jobId: "j1", jobCode: "JOB-2026-071101", jobStatus: "PROCESSING", clientName: "Other Co" }];
-        assert.equal(buildJobGroupPlan([member("2026-07-11", 3100)], { existing })[0].state, GROUP_STATE.ERROR);
+        const rows = [member("2026-07-11", 3100, { n: 1 }), member("2026-07-11", 3110, { company: "Other Co", n: 2 })];
+        const [group] = buildJobGroupPlan(rows, { existing });
+        assert.deepEqual([group.state, group.codes, group.companyName, group.candidates], [GROUP_STATE.EXISTING, [], "Other Co", 1]);
+        assert.deepEqual(rows.map((r) => isOddRow(r.job, group)), [true, false], "only the row naming another company than the Job's Client");
+    });
+
+    test("only odd rows fail: the company / agent most rows name is the group's; a row naming another is left off, the rest get the Job", () => {
+        const rows = [
+            member("2026-07-11", 3100, { n: 1 }), member("2026-07-11", 3110, { n: 2 }), member("2026-07-11", 3120, { company: "Other", n: 3 }),
+            member("2026-07-11", 3130, { agent: "Other Agent", n: 4 }), member("2026-07-11", 3140, { company: null, agent: null, n: 5 }),
+        ];
+        const [group] = buildJobGroupPlan(rows);
+        assert.deepEqual([group.state, group.codes, group.companyName, group.agentName, group.candidates, group.passed], [GROUP_STATE.NEW, [], "ACME", "AG", 3, 3]);
+        assert.deepEqual(rows.map((r) => isOddRow(r.job, group)), [false, false, true, true, false], "a row naming no company or agent is not odd");
+        assert.equal(plannedJobMembers(rows, [group]), 3);
+        noteGroupOutcomes(rows, [group]);
+        assert.deepEqual(rows.map((r) => r.codes.includes("JOB_GROUP_ROW_MISMATCH")), [false, false, true, true, false]);
+        // A tie between agents still gives no Job.
+        const tie = buildJobGroupPlan([member("2026-07-11", 3100, { agent: "A1" }), member("2026-07-11", 3110, { agent: "A2" })]);
+        assert.deepEqual([tie[0].state, tie[0].codes], [GROUP_STATE.ERROR, ["JOB_GROUP_AGENT_CONFLICT"]]);
+    });
+
+    test("a visa step counts as passed: a group of visa rows gets its Job", () => {
+        const [group] = buildJobGroupPlan([member("2026-07-11", 3100, { pass: true, visaPass: true })]);
+        assert.deepEqual([group.state, group.passed], [GROUP_STATE.NEW, 1]);
     });
 
     test("edits: two digits, NEW groups only, unique within the upload and against existing codes; nothing applied on an error", () => {
@@ -112,7 +136,7 @@ const USERS = {
     "u-jay": ["Jay Handler", "JOB_HANDLER"], "u-tim": ["Tim Lead", "TEAM_LEAD"], "u-rita": ["Rita Desk", "REGISTRATION_DESK"],
 };
 const HEADERS = ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "NIC NUMBER", "WHATSAPP NUMBER", "JOB ROLE", "OFFICER",
-    "INTERVIEW DATE", "INTERVIEW PASS FAIL", "COMPANY", "AGENT", "UNIQUE NUMBER"];
+    "INTERVIEW DATE", "INTERVIEW PASS FAIL", "COMPANY", "AGENT", "UNIQUE NUMBER", "VISA STATUS"];
 const TODAY = new Date("2026-11-04T06:00:00Z");
 
 let database;
@@ -233,6 +257,56 @@ describe("sheet upload -> Jobs (end to end)", () => {
         assert.equal(await prisma.job.count(), 0);
         assert.equal(await prisma.candidate.count(), 2);
         assert.ok(p.rowIssues.find((r) => r.rowNumber === 2).warnings.includes("Its Job group has a problem (see Jobs from this upload): not put on a Job"));
+    });
+
+    test("one odd row no longer stops the block: the others get the Job, the odd row is imported and told why", async () => {
+        const { preview: p } = await importRows(renumber([row(1, 3100), row(2, 3110), row(3, 3150, "11.07.2026", { COMPANY: "Other Co" })]));
+        assert.deepEqual([p.jobGroups[0].state, p.jobGroups[0].clientName, p.jobGroups[0].candidates], ["NEW", "Synth Builders", 2]);
+        assert.deepEqual(await membersOf("JOB-2026-071101"), [1, 2].map(passportOf).sort());
+        assert.equal(await prisma.candidate.count(), 3);
+        assert.ok(p.rowIssues.find((r) => r.rowNumber === 4).warnings.includes("Names a different company or agent than the rest of its Job group: imported, but not put on that Job"));
+    });
+
+    test("a visa step (Submit / Got Visa) means the test was passed: put on the Job with a FAIL, blank or future result, and the Test result becomes PASS", async () => {
+        const { preview: p, chunks } = await importRows(renumber([
+            row(1, 3100, "11.07.2026", { "VISA STATUS": "Submit", "INTERVIEW PASS FAIL": "FAIL" }),
+            row(2, 3110, "11.07.2026", { "VISA STATUS": "Got Visa", "INTERVIEW PASS FAIL": "" }),
+            row(3, 3120, "20.11.2026", { "VISA STATUS": "Submit", "INTERVIEW PASS FAIL": "" }),
+            row(4, 3130, "11.07.2026", { "INTERVIEW PASS FAIL": "FAIL" }),
+        ]));
+        assert.deepEqual(await membersOf("JOB-2026-071101"), [1, 2].map(passportOf).sort());
+        assert.deepEqual(await membersOf("JOB-2026-112001"), [passportOf(3)], "a future interview date with a visa step");
+        assert.equal(chunks[0].counts.jobAssignments, 3);
+        assert.ok(p.rowIssues.find((r) => r.rowNumber === 2).warnings.includes("Test result says FAIL, but the visa status means the test was passed: treated as PASS and put on its Job"));
+        assert.ok(p.rowIssues.find((r) => r.rowNumber === 5).warnings.includes("Test result is not PASS: imported, but not put on its Job"), "no visa step: the FAIL rule stands");
+        const results = await prisma.candidateStage.findMany({ where: { stage: "TEST_DETAILS" }, select: { passportId: true, testResult: true }, orderBy: { passportId: "asc" } });
+        assert.deepEqual(results.map((r) => r.testResult), ["PASS", "PASS", "PASS", "FAIL"]);
+    });
+
+    test("a FAIL already saved is never overwritten, but a visa step still puts the candidate on the Job", async () => {
+        await importRows(renumber([row(1, 3100, "11.07.2026", { "INTERVIEW PASS FAIL": "FAIL" })]));
+        assert.deepEqual(await membersOf("JOB-2026-071101"), []);
+        const { preview: p } = await importRows(renumber([row(1, 3100, "11.07.2026", { "VISA STATUS": "Submit", "INTERVIEW PASS FAIL": "" })]));
+        assert.deepEqual(await membersOf("JOB-2026-071101"), [passportOf(1)]);
+        assert.equal((await prisma.candidateStage.findFirst({ where: { stage: "TEST_DETAILS" } })).testResult, "FAIL", "fill-only");
+        assert.ok(p.rowIssues.find((r) => r.rowNumber === 2).warnings.includes("Test result says FAIL, but the visa status means the test was passed: treated as PASS and put on its Job"));
+    });
+
+    test("a visa row without an Interview date or Unique number is imported with its visa status and a warning; a number without a date is reported", async () => {
+        const { preview: p } = await importRows(renumber([
+            row(1, 3100, "", { "VISA STATUS": "Submit" }),
+            row(2, null, "11.07.2026", { "VISA STATUS": "Got Visa" }),
+            row(3, 3120, ""),
+        ]));
+        assert.equal(await prisma.job.count(), 0);
+        const warnings = (n) => p.rowIssues.find((r) => r.rowNumber === n).warnings.join(" | ");
+        assert.match(warnings(2), /Visa status is set, but without an Interview date and a Unique number/);
+        assert.match(warnings(2), /Interview date is missing/);
+        assert.match(warnings(3), /Visa status is set, but without an Interview date and a Unique number/);
+        assert.match(warnings(4), /Interview date is missing/);
+        assert.doesNotMatch(warnings(4), /Visa status/);
+        const stages = await prisma.candidateStage.findMany({ where: { stage: { in: ["VISA_SUBMISSION", "VISA_APPROVAL"] } }, select: { passportId: true, stage: true }, orderBy: { passportId: "asc" } });
+        assert.deepEqual(stages.map((s) => [s.passportId, s.stage]), [[passportOf(1), "VISA_SUBMISSION"], [passportOf(2), "VISA_APPROVAL"]], "the visa status is still applied");
     });
 
     test("an invalid or missing UNIQUE NUMBER (with an Interview date) puts nobody on a Job, reported", async () => {

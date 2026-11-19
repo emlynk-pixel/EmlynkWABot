@@ -25,12 +25,12 @@ Before anything else, the page asks for its title, logo and colours (`POST /api/
 | 2 | Contact & Location Details | Address\*, City, District\*, DS Division\*, GN Division, **WhatsApp Number (verified, read-only)**, Alternative Contact Number, Email\* |
 | 3 | Passport & Qualifications | **Passport Number (verified, read-only)**, Passport Issue Date\*, Passport Expiry Date\*, Job Category\* (+ Other Job Category\* when OTHER), Experience, Other Skills 1, Other Skills 2, English Knowledge\* |
 | 4 | Physical Measurements | Shirt Size, Hip / Waist Size (inches), Shoe Size (UK list, or Other, e.g. EU 43) |
-| 5 | Family Background (marked *Important*) | Father and Mother: Name, Surname, Passport Number, Date of Birth. **Spouse** (same four) only when Civil Status is Married. Child 1-3 names (optional) |
+| 5 | Family Background (marked *Important*) | Father and Mother: Name, Surname, Passport Number, Date of Birth. **Spouse** (same four) only when Civil Status is Married. Child 1-3 names (optional), hidden when Civil Status is Single |
 | 6 | Guardian Details | Guardian Name\*, Relationship, NIC\*, Date of Birth, Phone Number\*, Address\* |
 | 7 | Review | read-only summary |
 
 - The Passport Number, NIC and WhatsApp Number come from the server (`POST /form`) and are shown read-only. They are never part of the answers sent; the server knows the candidate from the token. There is no register number (staff-only) and nothing else staff-only.
-- Hidden entries stay in the form (switching back shows them) but are never sent: spouse details unless Married, Other Job Category unless OTHER.
+- Hidden entries stay in the form (switching back shows them) but are never sent: spouse details unless Married, children when Single (a Single candidate has no children; nothing is sent for them), Other Job Category unless OTHER.
 - Checks (`src/form/validation.ts`): required answers; the guardian's NIC as on the staff form (9 digits + V/X, or 12 digits); email format; phone numbers (`+` optional, 9-15 digits); passport numbers (letters and digits); real dates from 1900, birth and issue dates not in the future, expiry after issue; sizes and lengths. The server checks everything again and refuses unknown fields.
 
 **Choices are English codes.** Every choice is kept as an English code; only its label is translated (Married / විවාහක are both `MARRIED`). The lists live in `src/form/options.ts`:

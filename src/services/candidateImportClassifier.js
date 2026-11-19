@@ -284,13 +284,16 @@ function matchOfficer(name, officers) {
 const stageOf = (existing, stage) => existing?.stages?.find((row) => row.stage === stage) ?? null;
 
 // The Test details to write, fill-only: { fill: { testDate?, testResult?, testId? }, create, differs }.
-// The Test ID is generated from the Test date (testId.js) when the stage has none.
-function planTest(values, existing) {
+// The Test ID is generated from the Test date (testId.js) when the stage has none. visaPass: the row (or the
+// candidate) has a visa step, which means the test was passed: the result written is PASS (fill-only, so a
+// result already saved is never overwritten).
+function planTest(values, existing, { visaPass = false } = {}) {
     if (!values.testDate && !values.testResult) return null;
     const stored = stageOf(existing, "TEST_DETAILS");
     const imported = {};
     if (values.testDate) imported.testDate = values.testDate;
-    if (values.testResult) imported.testResult = values.testResult;
+    const testResult = visaPass ? "PASS" : values.testResult;
+    if (testResult) imported.testResult = testResult;
     // The Test ID names the date the stage will hold (a date already there is kept).
     const testDate = stored?.testDate ?? values.testDate;
     if (testDate) imported.testId = formatTestId(testDate);
@@ -359,6 +362,7 @@ function planOrg(values, snapshot, numberConflict) {
 //   extras: { allocation: { analystId } | null, test: planTest() | null, stages: [stage to complete], departed: boolean,
 //             outcome: "VISA_NOT_GOING" | "CANCELLED" | "REJECTED" | null }
 // org (internal): planOrg(), for every row that is not an ERROR row. officer: { sheetName, userName }.
+// unmatchedOfficer: the sheet's OFFICER (trimmed) when it matched no user (OFFICER_NOT_FOUND), else null.
 export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
     const duplicates = new Set(flags.duplicateRows ?? []);
     const nicConflicts = new Set(flags.nicConflictRows ?? []);
@@ -373,19 +377,24 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
         };
         const plan = {
             rowNumber: row.rowNumber, maskedPassport: row.maskedPassport, status: row.status, action: ROW_ACTION.NONE, existing: false, codes, issues, differing: 0,
-            write: null, org: null, officer: null, blankResult: Boolean(row.values.testResultDefaulted),
+            write: null, org: null, officer: null, unmatchedOfficer: null, blankResult: Boolean(row.values.testResultDefaulted),
         };
         if (row.status === ROW_STATUS.INVALID) return plan;
-        // OFFICER: an unmatched officer is an ERROR (never assigned to a guess).
+        // OFFICER: never assigned to a guess. An ambiguous or inactive officer is an ERROR; one that matches
+        // no user is a WARNING: the row is imported unallocated (unmatchedOfficer, listed by the preview).
         let officer = null;
         if (row.values.officer) {
             const match = matchOfficer(row.values.officer, snapshot.officers ?? new Map());
-            if (match.error) {
+            if (match.error === "OFFICER_NOT_FOUND") {
+                note(match.error, "officer");
+                plan.unmatchedOfficer = row.values.officer;
+            } else if (match.error) {
                 note(match.error, "officer");
                 return { ...plan, status: ROW_STATUS.INVALID };
+            } else {
+                officer = match.user;
+                plan.officer = { sheetName: row.values.officer, userName: officer.name };
             }
-            officer = match.user;
-            plan.officer = { sheetName: row.values.officer, userName: officer.name };
         }
         if (duplicates.has(row.rowNumber)) {
             note("DUPLICATE_SOURCE_ROW", "passport");
@@ -420,18 +429,27 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
         orgPlan.codes.forEach((code) => note(code, code.startsWith("COMPANY_NUMBER") ? "companyNumber" : code.startsWith("AGENT") ? "agent" : "company"));
         plan.org = orgPlan.org;
 
+        // VISA STATUS -> its visa stage (Submit, Got Visa; Got Visa Not Going also got the visa).
+        const visaStatus = row.values.visaStatus ?? null;
+        const visaStage = VISA_STAGE[visaStatus] ?? (visaStatus === "VISA_NOT_GOING" ? VISA_STAGE.VISA_APPROVED : null);
+        // A candidate with a visa step (this row's, or a visa stage already completed in Emlynk) passed the test:
+        // the business rule. They belong on their Job whatever the Test result cell says.
+        const visaPass = Boolean(visaStage || stageOf(existing, VISA_STAGE.VISA_SUBMITTED)?.completed || stageOf(existing, VISA_STAGE.VISA_APPROVED)?.completed);
+        const testResult = stageOf(existing, "TEST_DETAILS")?.testResult ?? row.values.testResult ?? null;
+        if (visaPass && testResult === "FAIL") note("TEST_FAIL_WITH_VISA", "testResult");
+
         // The Job group (importJobGroups.js): Interview Date + the UNIQUE NUMBER's hundreds block. Only a
-        // candidate whose Test result is PASS (the one already saved wins, as the import never overwrites
-        // it) is put on the Job; the others are imported and reported.
+        // candidate who passed (Test result PASS, the one already saved winning as the import never overwrites
+        // it, or a visa step) is put on the Job; the others are imported and reported.
         const { testDate, uniqueNumber } = row.values;
         if (testDate && uniqueNumber !== undefined) {
-            const pass = (stageOf(existing, "TEST_DETAILS")?.testResult ?? row.values.testResult ?? null) === "PASS";
-            plan.job = jobMembership({ testDate, uniqueNumber, pass, passportId: existing?.passportId ?? row.passport, values: row.values });
+            const pass = visaPass || testResult === "PASS";
+            plan.job = jobMembership({ testDate, uniqueNumber, pass, visaPass, passportId: existing?.passportId ?? row.passport, values: row.values });
             if (!pass) note("NOT_PASSED_NO_JOB", "testResult");
         }
 
         // Allocation, Test and visa stages: fill-only.
-        const extras = { allocation: null, test: planTest(row.values, existing), stages: [], departed: false, outcome: null };
+        const extras = { allocation: null, test: planTest(row.values, existing, { visaPass }), stages: [], departed: false, outcome: null };
         if (officer) {
             const holder = existing?.allocation?.analystId ?? null;
             if (!holder) extras.allocation = { analystId: officer.adminId };
@@ -439,10 +457,8 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
         }
         if (extras.test?.differs) note("TEST_DETAILS_DIFFER", "testDate");
         if (extras.test && !Object.keys(extras.test.fill).length) extras.test = null;
-        // VISA STATUS: a stage (Submit, Got Visa; Got Visa Not Going also got the visa), or a final status
-        // (Departed, an outcome) set only when the candidate has none; a different one is kept.
-        const visaStatus = row.values.visaStatus ?? null;
-        const visaStage = VISA_STAGE[visaStatus] ?? (visaStatus === "VISA_NOT_GOING" ? VISA_STAGE.VISA_APPROVED : null);
+        // VISA STATUS: a stage (above), or a final status (Departed, an outcome) set only when the candidate
+        // has none; a different one is kept.
         if (visaStage && !stageOf(existing, visaStage)?.completed) extras.stages.push(visaStage);
         const wantedFinal = visaStatus === "DEPARTED" || VISA_OUTCOMES.includes(visaStatus) ? visaStatus : null;
         const currentFinal = finalStatusOf(existing);
@@ -470,10 +486,11 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
         if (!changes && !hasExtras) return { ...plan, status, differing, action: ROW_ACTION.NO_CHANGE };
         if (existing.verification?.detailsVerifiedAt) {
             note("SKIPPED_VERIFIED");
-            // Verified details are never changed, but the sheet's visa status still becomes the Status
-            // (stages and the final status are not details: they never clear a verification).
-            if (!hasStatusExtras) return { ...plan, status, differing, action: ROW_ACTION.SKIP_VERIFIED };
-            const statusOnly = { allocation: null, test: null, stages: extras.stages, departed: extras.departed, outcome: extras.outcome };
+            // Verified details are never changed, but the sheet's Test details and visa status are still
+            // written (stages and the final status are not details: they never clear a verification). The
+            // Test result is what puts the candidate on their Job.
+            if (!hasStatusExtras && !extras.test) return { ...plan, status, differing, action: ROW_ACTION.SKIP_VERIFIED };
+            const statusOnly = { allocation: null, test: extras.test, stages: extras.stages, departed: extras.departed, outcome: extras.outcome };
             return {
                 ...plan, status, differing, action: ROW_ACTION.FILL,
                 write: { passportId: existing.passportId, candidate: {}, details: {}, detailsExists: Boolean(storedDetails), extras: statusOnly },
@@ -516,6 +533,23 @@ export function summarizePlans(plans) {
         companyNumbersToFill: new Set(plans.filter((p) => p.org?.companyNumber).map((p) => p.org.company.key)).size,
     };
 }
+
+// The officer names (in row order) that matched no user -> [{ name, rows }]: one entry per name, any
+// letter case and spacing ("john  silva" = "John Silva"), spelled as on its first row.
+export function tallyUnmatchedOfficers(names) {
+    const map = new Map();
+    for (const name of names) {
+        const key = name.replace(/\s+/g, " ").trim().toLowerCase();
+        if (!map.has(key)) map.set(key, { name: name.trim(), rows: 0 });
+        map.get(key).rows += 1;
+    }
+    return [...map.values()];
+}
+
+// The rows that are imported (not an ERROR, a duplicate or a conflict) whose officer matched no user.
+export const unmatchedOfficersOf = (plans) => tallyUnmatchedOfficers(plans
+    .filter((p) => p.unmatchedOfficer && (p.status === ROW_STATUS.VALID || p.status === ROW_STATUS.WARNING))
+    .map((p) => p.unmatchedOfficer));
 
 // The automatic actions the preview shows before anything is confirmed (no candidate data: user,
 // Client and Agent names, and counts). Lists are capped; `rows` is how many rows lead to each.

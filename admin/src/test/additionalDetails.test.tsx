@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useNavigate } from "react-router";
 import { describe, expect, test, vi } from "vitest";
 import { CANDIDATE_STAGES, SHOE_SIZE_PRESETS, type AdditionalDetails, type AdditionalDetailsView, type CandidateDetails } from "../api/candidates";
+import type { CandidateJobAssignment } from "../api/jobs";
 import { AppRoutes } from "../App";
 import { AuthProvider } from "../auth/AuthProvider";
 import { ADMIN, RENDER_STEP, renderApp, signedInBackend, type FetchRoutes } from "./helpers";
@@ -25,6 +26,17 @@ const DETAILS: CandidateDetails = {
     jobAssignments: { current: null, history: [] },
     requiredDocuments: [],
 };
+// The same candidate with a passed test and an active Job: the visa stages and the Scans are open.
+const JOB: CandidateJobAssignment = {
+    jobId: "00000000-0000-4000-8000-000000000007", jobCode: "JOB-2026-000007", companyJobId: null, status: "PROCESSING",
+    jobType: { id: "t1", code: "WELDER", name: "Welder" }, client: { id: "c1", name: "Acme Construction" },
+    responsibleAgent: { id: "a1", name: "Ion Popescu", countryCode: "RO" }, countryCode: "RO", fromCountryCode: "RO", vacancies: 5,
+    createdAt: "2026-10-01T05:00:00.000Z", completedAt: null, cancelledAt: null, cancelReason: null,
+    assignedAt: "2026-10-02T05:00:00.000Z", removed: false, removedAt: null,
+};
+const withTest = (details: CandidateDetails, testResult: "PASS" | "FAIL" | null): CandidateDetails => ({ ...details, stages: details.stages.map((s) => (s.stage === "TEST_DETAILS" ? { ...s, testResult } : s)) });
+const withJob = (details: CandidateDetails): CandidateDetails => ({ ...details, jobAssignments: { current: JOB, active: [JOB], history: [] } });
+const READY = withJob(withTest(DETAILS, "PASS"));
 
 const EMPTY: AdditionalDetails = {
     nameAsInPassport: null, permanentAddress: null, birthday: null, tshirtSize: null, pantSize: null, shoeSize: null,
@@ -40,6 +52,17 @@ const SUGGESTED = { nameAsInPassport: "SAMAN SILVA", permanentAddress: "1 Main S
 const NEW_VIEW: AdditionalDetailsView = { passportId: "N0000002", details: null, suggested: SUGGESTED, updatedDate: null };
 const SAVED: AdditionalDetails = { ...EMPTY, nameAsInPassport: "SAMAN K SILVA", tshirtSize: "L", pantSize: "31", shoeSize: "42", fatherAlive: true, fatherFullName: "Sunil Silva", maritalStatus: "SINGLE" };
 const SAVED_VIEW: AdditionalDetailsView = { passportId: "N0000002", details: SAVED, suggested: SUGGESTED, updatedDate: "2026-10-09T05:00:00.000Z" };
+// Every field the form shows filled (father alive, mother not, single): the step is completed.
+const COMPLETE: AdditionalDetails = {
+    ...EMPTY, nameAsInPassport: "SAMAN K SILVA", permanentAddress: "1 Main Street", birthday: "1990-03-12",
+    bloodGroup: "O+", height: "175 cm", weightKg: "70.5", drivingLicence: true, canReadDrawings: false, teamLeadingSkills: false, otherLanguages: "Tamil", englishKnowledge: "GOOD",
+    email: "saman@example.invalid", city: "Kandy", district: "Kandy", dsDivision: "Gangawata Korale", gnDivision: "Mahaiyawa", cityInRomania: "Bucharest",
+    tshirtSize: "L", pantSize: "31", shoeSize: "42",
+    fatherAlive: true, fatherFullName: "Sunil Silva", fatherBirthday: "1960-01-01", fatherPassportNumber: "N1111111", motherAlive: false,
+    maritalStatus: "SINGLE", otherJobSkills: "Welding", otherJobSkills2: "Forklift", otherJobCategory: "Mason",
+    guardianName: "Sunil Silva", guardianRelationship: "Father", guardianNic: "600011111V", guardianBirthday: "1960-01-01", guardianPhone: "+94771234567", guardianAddress: "1 Main Street",
+};
+const COMPLETE_VIEW: AdditionalDetailsView = { ...SAVED_VIEW, details: COMPLETE };
 
 const PATH = "/api/admin/candidates/N0000002/additional-details";
 
@@ -394,20 +417,36 @@ describe("progress stepper", () => {
         expect(stepper().getByRole("button", { name: /^5. Document submission/ })).toHaveAttribute("aria-current", "step");
     });
 
-    test("the step is completed when details are saved", async () => {
-        backend(SAVED_VIEW);
+    test("the step is completed when every field the form shows is filled", async () => {
+        backend(COMPLETE_VIEW);
         renderApp("/candidates/N0000002");
         await screen.findByRole("navigation", { name: "Deployment stages" }, RENDER_STEP);
         await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/), RENDER_STEP);
     });
 
     test("the step turns completed right after Save", async () => {
-        backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: COMPLETE_VIEW } });
         renderApp("/candidates/N0000002?tab=additional");
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
         expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
         await userEvent.setup().click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName(/\(completed/));
+    });
+
+    test("a details row with only some fields (as a sheet import creates it) leaves the step incomplete", async () => {
+        backend({ ...SAVED_VIEW, details: { ...EMPTY, city: "Kandy", district: "Kandy", bloodGroup: "O+", tshirtSize: "L" } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
+    });
+
+    test("a save that still leaves fields empty keeps the step incomplete", async () => {
+        backend(NEW_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        await userEvent.setup().click(screen.getByRole("button", { name: "Save additional details" }));
+        expect(await screen.findByText("Additional details saved.")).toBeInTheDocument();
+        expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
     });
 
     test("a link to a retired stage (IVS interview, Finalizing the job) opens the first open step instead", async () => {
@@ -491,7 +530,8 @@ describe("progress steps: one shared step UI", () => {
 
     test("Visa submission is completed by hand, like Visa approval: notes and Stage completed, saved to its own stage", async () => {
         const { calls } = backend(NEW_VIEW, {
-            "PUT /api/admin/candidates/N0000002/stages/VISA_SUBMISSION": { status: 200, body: { ...DETAILS, stages: DETAILS.stages.map((s) => (s.stage === "VISA_SUBMISSION" ? { ...s, completed: true } : s)) } },
+            "GET /api/admin/candidates/N0000002": { status: 200, body: READY },
+            "PUT /api/admin/candidates/N0000002/stages/VISA_SUBMISSION": { status: 200, body: { ...READY, stages: READY.stages.map((s) => (s.stage === "VISA_SUBMISSION" ? { ...s, completed: true } : s)) } },
         });
         renderApp("/candidates/N0000002?stage=VISA_SUBMISSION");
         expect(await screen.findByRole("heading", { name: "Visa submission" }, RENDER_STEP)).toBeInTheDocument();
@@ -501,6 +541,57 @@ describe("progress steps: one shared step UI", () => {
         await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.path === "/api/admin/candidates/N0000002/stages/VISA_SUBMISSION")).toBe(true));
         expect(calls.find((c) => c.path.endsWith("/stages/VISA_SUBMISSION"))!.body).toEqual({ notes: null, completed: true });
         await vi.waitFor(() => expect(step(/^6. Visa submission/)).toHaveAccessibleName(/\(completed/));
+    });
+});
+
+describe("visa stages and Scans need a passed test and a Job", () => {
+    const open = async (details: CandidateDetails, stage: string) => {
+        backend(NEW_VIEW, { "GET /api/admin/candidates/N0000002": { status: 200, body: details } });
+        renderApp(`/candidates/N0000002?stage=${stage}`);
+    };
+
+    test("no passed test: the visa stage can't be ticked, and says why", async () => {
+        await open(withJob(withTest(DETAILS, "FAIL")), "VISA_SUBMISSION");
+        expect(await screen.findByRole("heading", { name: "Visa submission" }, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeDisabled();
+        expect(screen.getByText("The candidate must pass the test before this stage can be completed.")).toBeInTheDocument();
+    });
+
+    test("a passed test without a Job: Visa approval can't be ticked, and says why", async () => {
+        await open(withTest(DETAILS, "PASS"), "VISA_APPROVAL");
+        expect(await screen.findByRole("heading", { name: "Visa approval" }, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeDisabled();
+        expect(screen.getByText("Assign the candidate to a Job before completing this stage.")).toBeInTheDocument();
+    });
+
+    test("a passed test and a Job: the visa stage can be ticked", async () => {
+        await open(READY, "VISA_APPROVAL");
+        expect(await screen.findByRole("heading", { name: "Visa approval" }, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeEnabled();
+        expect(screen.queryByText(/before completing this stage|must pass the test/)).toBeNull();
+    });
+
+    test("a visa stage already completed can still be unticked, even without a Job", async () => {
+        const completed = { ...DETAILS, stages: DETAILS.stages.map((s) => (s.stage === "VISA_SUBMISSION" ? { ...s, completed: true } : s)) };
+        await open(completed, "VISA_SUBMISSION");
+        expect(await screen.findByRole("heading", { name: "Visa submission" }, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeEnabled();
+    });
+
+    test("no Job: the Scans upload is disabled with its reason; the other documents stay open", async () => {
+        await open(withTest(DETAILS, "PASS"), "DOCUMENT_SUBMISSION");
+        expect(await screen.findByText("Scans can be uploaded once the candidate is assigned to a Job.", undefined, RENDER_STEP)).toBeInTheDocument();
+        const scans = screen.getByTitle("Scans can be uploaded once the candidate is assigned to a Job.");
+        expect(scans).toBeDisabled();
+        const uploads = screen.getAllByRole("button", { name: /^Upload$/ });
+        expect(uploads.filter((button) => !(button as HTMLButtonElement).disabled).length).toBe(uploads.length - 1); // only the Scans button is locked
+    });
+
+    test("with a Job: the Scans upload is open", async () => {
+        await open(READY, "DOCUMENT_SUBMISSION");
+        await screen.findAllByRole("button", { name: /^Upload$/ }, RENDER_STEP);
+        expect(screen.queryByText("Scans can be uploaded once the candidate is assigned to a Job.")).toBeNull();
+        expect(screen.getAllByRole("button", { name: /^Upload$/ }).every((button) => !(button as HTMLButtonElement).disabled)).toBe(true);
     });
 });
 
@@ -585,7 +676,7 @@ describe("one load, versions and resets", () => {
         let release!: () => void;
         const held = new Promise<void>((resolve) => { release = resolve; });
         const B_DETAILS = { ...DETAILS, candidate: { ...DETAILS.candidate, passportId: "N0000003", uniqueId: "0003", name: "NIMAL FERNANDO" } };
-        backend(SAVED_VIEW, {
+        backend(COMPLETE_VIEW, {
             "GET /api/admin/candidates/N0000003": { status: 200, body: B_DETAILS },
             "GET /api/admin/candidates/N0000003/additional-details": async () => {
                 await held;
@@ -612,5 +703,23 @@ describe("one load, versions and resets", () => {
         expect(await screen.findByRole("heading", { name: "NIMAL FERNANDO" }, RENDER_STEP)).toBeInTheDocument();
         expect(nav().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
         release();
+    });
+});
+
+describe("every field is needed for completion", () => {
+    const stepper = () => within(screen.getByRole("navigation", { name: "Deployment stages" }));
+
+    test("an empty physical-details, size or skills field keeps the step incomplete", async () => {
+        backend({ ...COMPLETE_VIEW, details: { ...COMPLETE, bloodGroup: null } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        expect(stepper().getByRole("button", { name: /^4. Additional details/ })).toHaveAccessibleName("4. Additional details (incomplete)");
+    });
+
+    test("the form offers no N/A checkbox", async () => {
+        backend(NEW_VIEW);
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        expect(screen.queryAllByRole("checkbox", { name: /not applicable/ })).toHaveLength(0);
     });
 });

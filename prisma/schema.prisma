@@ -339,8 +339,10 @@ model CandidateFormAccess {
 }
 
 // The answers the candidate submitted (every field nullable). Written once;
-// a trigger refuses any later change. The main candidate tables are never
-// written by the public form.
+// a trigger refuses any later change. The public form never writes the core
+// candidate table; in the submission's transaction it only FILLS the EMPTY
+// candidate_additional_details fields (applyAutoFill in
+// candidateFormFieldConfirmService.js). A field with a value is left for Confirm / Reject.
 model CandidateFormResponse {
   passportId            String    @id @map("passport_id")
   fullName              String?   @map("full_name")
@@ -924,8 +926,8 @@ model CandidateAdditionalDetails {
 
   // Candidate Form answers confirmed by an Admin (candidateFormFieldConfirmService.js),
   // migration 20261102120000_candidate_form_finalized_details. NULL until confirmed or entered by
-  // staff on the Additional Details form (a save that leaves one out keeps it). Never written by the
-  // public form.
+  // staff on the Additional Details form (a save that leaves one out keeps it), or filled from the
+  // submission when it was EMPTY (applyAutoFill, in the submission's transaction; never over a value).
   // A+ | A- | B+ | B- | AB+ | AB- | O+ | O-
   bloodGroup           String?   @map("blood_group")
   // In the candidate's own unit, tidied ("175 cm", "5'9\"").

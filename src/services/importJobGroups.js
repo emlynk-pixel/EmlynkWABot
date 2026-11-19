@@ -14,9 +14,12 @@
 // The preview builds the plan for the whole file (buildJobGroupPlan, stored in candidate_import.
 // job_groups, editable: applySuffixEdits); each commit chunk applies it (executeJobGroups) inside its
 // transaction, under a per-date advisory lock, so two imports never create the same group twice.
-// Only candidates whose Test result is PASS are put on a Job (the existing assignment rule); the
-// others are imported and reported. The Job's Client, responsible Agent and Job Types come from the
-// group's COMPANY, AGENT and Job roles; an Agent with no country gives the Job the To Country RO.
+// Only candidates who passed are put on a Job: Test result PASS (the existing assignment rule), or a
+// visa step (VISA STATUS Submit / Got Visa, or a visa stage already completed), which means the test
+// was passed whatever the result cell says. The others are imported and reported. The Job's Client,
+// responsible Agent and Job Types come from the group's COMPANY, AGENT and Job roles (the one most of
+// its rows name; a row naming another is left off the Job, a tie gives no Job); an Agent with no
+// country gives the Job the To Country RO.
 
 import crypto from "node:crypto";
 
@@ -47,16 +50,34 @@ const formatSuffix = (n) => String(n).padStart(2, "0");
 const ALL_SUFFIXES = Array.from({ length: 99 }, (_, i) => formatSuffix(i + 1));
 
 // What a row tells about its Job group (candidateImportClassifier.js planRows): { key, interviewDate,
-// block, pass, passportId, companyKey, companyName, agentKey, agentName, jobRoles }.
-export function jobMembership({ testDate, uniqueNumber, pass, passportId, values }) {
+// block, pass, visaPass, passportId, companyKey, companyName, agentKey, agentName, jobRoles }.
+// visaPass: the candidate has a visa step, so they are put on the Job whatever their saved Test result.
+export function jobMembership({ testDate, uniqueNumber, pass, visaPass = false, passportId, values }) {
     const block = hundredsBlock(uniqueNumber);
     return {
-        key: jobGroupKey(testDate, block), interviewDate: isoDayOf(testDate), block, pass, passportId,
+        key: jobGroupKey(testDate, block), interviewDate: isoDayOf(testDate), block, pass, visaPass: Boolean(visaPass), passportId,
         companyKey: values.company ? orgKey(values.company) : null, companyName: values.company ?? null,
         agentKey: values.agent ? orgKey(values.agent) : null, agentName: values.agent ?? null,
         jobRoles: typeof values.jobRole === "string" ? values.jobRole.split(",").map((r) => r.trim()).filter(Boolean) : [],
         hasOrg: false,
     };
+}
+
+// A row of a group that names a different company or agent than the group's own (the one most of its rows
+// name, or an existing Job's Client): left off the Job, while the rest of the group still gets it. A row
+// naming none is not odd.
+export const isOddRow = (membership, group) => Boolean(
+    (membership.companyKey && group?.companyKey && membership.companyKey !== group.companyKey)
+    || (membership.agentKey && group?.agentKey && membership.agentKey !== group.agentKey),
+);
+
+// The key most rows name: [key, name, tie]. No key named: [null, null, false]. Two or more keys sharing the
+// highest count: a tie (there is no way to tell which one is right).
+function mostNamed(counts) {
+    const ranked = [...counts.entries()].sort((a, b) => b[1].count - a[1].count);
+    if (!ranked.length) return [null, null, false];
+    if (ranked.length > 1 && ranked[1][1].count === ranked[0][1].count) return [null, null, true];
+    return [ranked[0][0], ranked[0][1].name, false];
 }
 
 // ---------------------------------------------------------------- the plan (preview)
@@ -89,37 +110,42 @@ export async function loadJobGroupContext(db, dates) {
 // passed: no Job), ERROR (the group's rows disagree, or no Client: no Job, nobody assigned).
 export function buildJobGroupPlan(plans, { existing = [], takenCodes = new Set() } = {}) {
     const groups = new Map();
+    const count = (map, key, name) => { if (key) map.set(key, { name, count: (map.get(key)?.count ?? 0) + 1 }); };
     for (const plan of plans) {
         if (!plan.job) continue;
         const m = plan.job;
         if (!groups.has(m.key)) {
             groups.set(m.key, {
                 key: m.key, interviewDate: m.interviewDate, block: m.block, from: m.block * 100, to: m.block * 100 + 99,
-                prefix: importJobCodePrefix(m.interviewDate), candidates: 0, passed: 0,
-                companies: new Map(), agents: new Map(), jobRoles: new Set(), hasOrg: false,
+                prefix: importJobCodePrefix(m.interviewDate), companies: new Map(), agents: new Map(), rows: [],
             });
         }
         const g = groups.get(m.key);
-        g.candidates += 1;
-        if (m.pass) g.passed += 1;
-        if (m.companyKey) g.companies.set(m.companyKey, m.companyName);
-        if (m.agentKey) g.agents.set(m.agentKey, m.agentName);
-        m.jobRoles.forEach((role) => g.jobRoles.add(role));
-        if (plan.org) g.hasOrg = true;
+        g.rows.push(plan);
+        count(g.companies, m.companyKey, m.companyName);
+        count(g.agents, m.agentKey, m.agentName);
     }
     const stored = new Map(existing.map((e) => [jobGroupKey(e.interviewDate, e.block), e]));
     const result = [];
     for (const g of groups.values()) {
         const codes = [];
-        const [companyKey, companyName] = g.companies.size === 1 ? [...g.companies][0] : [null, null];
-        const [agentKey, agentName] = g.agents.size === 1 ? [...g.agents][0] : [null, null];
-        if (g.companies.size > 1) codes.push("JOB_GROUP_COMPANY_CONFLICT");
-        if (g.agents.size > 1) codes.push("JOB_GROUP_AGENT_CONFLICT");
         const found = stored.get(g.key);
+        // The group's company: an existing Job's Client, otherwise the one most rows name. Its agent: the one
+        // most rows name. A row naming another is an odd row (isOddRow), left off the Job.
+        let [companyKey, companyName, companyTie] = mostNamed(g.companies);
+        if (found?.clientName) [companyKey, companyName, companyTie] = [orgKey(found.clientName), found.clientName, false];
+        const [agentKey, agentName, agentTie] = mostNamed(g.agents);
+        if (companyTie) codes.push("JOB_GROUP_COMPANY_CONFLICT");
+        if (agentTie) codes.push("JOB_GROUP_AGENT_CONFLICT");
+        // The rows that go on the Job decide it: an odd row never makes it fail or succeed.
+        const members = g.rows.filter((plan) => !isOddRow(plan.job, { companyKey, agentKey }));
+        g.candidates = members.length;
+        g.passed = members.filter((plan) => plan.job.pass).length;
+        g.jobRoles = new Set(members.flatMap((plan) => plan.job.jobRoles));
+        g.hasOrg = members.some((plan) => plan.org);
         let state;
         if (found) {
             state = GROUP_STATE.EXISTING;
-            if (companyKey && found.clientName && orgKey(found.clientName) !== companyKey) codes.push("JOB_GROUP_COMPANY_DIFFERS");
             if (found.jobStatus !== PROCESSING) codes.push("JOB_GROUP_JOB_CLOSED");
             if (codes.some((c) => c !== "JOB_GROUP_JOB_CLOSED")) state = GROUP_STATE.ERROR;
         } else if (codes.length) state = GROUP_STATE.ERROR;
@@ -187,10 +213,11 @@ export const jobGroupView = (g) => ({
     existingJobCode: g.existingJobCode, edited: Boolean(g.edited), messages: g.codes.map((code) => describeIssue({ code }).message),
 });
 
-// How many rows the import will put on a Job (a PASS candidate of a group that gets or has one).
+// How many rows the import will put on a Job (a candidate who passed, of a group that gets or has one, and
+// not an odd row of it).
 export const plannedJobMembers = (plans, groups) => {
-    const usable = new Set(groups.filter((g) => g.state === GROUP_STATE.NEW || g.state === GROUP_STATE.EXISTING).map((g) => g.key));
-    return plans.filter((p) => p.job?.pass && usable.has(p.job.key)).length;
+    const usable = new Map(groups.filter((g) => g.state === GROUP_STATE.NEW || g.state === GROUP_STATE.EXISTING).map((g) => [g.key, g]));
+    return plans.filter((p) => p.job?.pass && usable.has(p.job.key) && !isOddRow(p.job, usable.get(p.job.key))).length;
 };
 
 // Rows of a group that gets no Job say so (their own issue list, the "Rows to review" table).
@@ -204,6 +231,7 @@ export function noteGroupOutcomes(plans, groups) {
             if (!plan.issues.some((i) => i.code === code)) plan.issues.push({ field, code });
         };
         if (!g || g.state === GROUP_STATE.ERROR || g.state === GROUP_STATE.SKIPPED) add("JOB_GROUP_NOT_CREATED");
+        else if (isOddRow(plan.job, g)) add("JOB_GROUP_ROW_MISMATCH", "company");
         else if (g.codes.includes("JOB_GROUP_JOB_CLOSED")) add("JOB_GROUP_JOB_CLOSED");
     }
 }
@@ -266,9 +294,15 @@ export async function executeJobGroups(tx, plans, storedGroups, { actor, importI
     }
     const note = (plan, code) => { if (!plan.codes.includes(code)) plan.codes.push(code); };
     for (const key of [...members.keys()].sort()) {
-        const rows = members.get(key);
         const group = byKey.get(key);
-        if (!group || (group.state !== GROUP_STATE.NEW && group.state !== GROUP_STATE.EXISTING)) { rows.forEach((p) => note(p, "JOB_GROUP_NOT_CREATED")); continue; }
+        if (!group || (group.state !== GROUP_STATE.NEW && group.state !== GROUP_STATE.EXISTING)) { members.get(key).forEach((p) => note(p, "JOB_GROUP_NOT_CREATED")); continue; }
+        // A row naming another company or agent than the group's is left off the Job (the rest still get it).
+        const rows = members.get(key).filter((p) => {
+            if (!isOddRow(p.job, group)) return true;
+            note(p, "JOB_GROUP_ROW_MISMATCH");
+            return false;
+        });
+        if (!rows.length) continue;
         // One date at a time across every import: its groups and suffixes are read and written alone.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`import_job_group:${group.interviewDate}`}))`;
         let stored = await tx.importJobGroup.findUnique({
@@ -300,13 +334,17 @@ export async function executeJobGroups(tx, plans, storedGroups, { actor, importI
         if (job.status !== PROCESSING) { rows.forEach((p) => note(p, "JOB_GROUP_JOB_CLOSED")); continue; }
 
         // Only a candidate whose SAVED Test result is PASS (the existing rule, read now: this chunk may
-        // have just written it), and never one a user removed from this Job (that decision stays).
+        // have just written it) or who has a visa step (plan.job.visaPass: they passed, whatever the saved
+        // result says), and never one a user removed from this Job (that decision stays).
         const passports = [...new Set(rows.map((p) => p.job.passportId))];
         const [results, memberships] = await Promise.all([
             tx.candidateStage.findMany({ where: { passportId: { in: passports }, stage: "TEST_DETAILS" }, select: { passportId: true, testResult: true } }),
             tx.jobCandidate.findMany({ where: { jobId: job.id, passportId: { in: passports } }, select: { passportId: true, isActive: true } }),
         ]);
-        const passed = new Set(results.filter((r) => r.testResult === PASS).map((r) => r.passportId));
+        const passed = new Set([
+            ...results.filter((r) => r.testResult === PASS).map((r) => r.passportId),
+            ...rows.filter((p) => p.job.visaPass).map((p) => p.job.passportId),
+        ]);
         const already = new Map(memberships.map((m) => [m.passportId, m.isActive]));
         const toAdd = [];
         for (const plan of rows) {

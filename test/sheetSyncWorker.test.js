@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
 import { createTestDatabase } from "./helpers/pgliteDatabase.js";
+import { giveTestPassAndJob } from "./helpers/visaPrerequisites.js";
 import { createFakeGoogleSheet, googleError } from "./helpers/fakeGoogleSheet.js";
 import { CANDIDATE_DOCUMENT_TYPES, createCandidate, parseCandidateBody, parseStageBody, updateStage } from "../src/services/candidateService.js";
 import { createCandidateAggregateReader } from "../src/services/candidateAggregateReader.js";
@@ -125,6 +126,7 @@ describe("no real-time synchronization: database changes wait for a scheduled or
     test("stage change: queued, no immediate Sheet write", async () => {
         const { sheet, worker } = setup();
         const { passportId } = await register();
+        await giveTestPassAndJob(prisma, passportId); // the visa stages need a PASS and a Job
         await prisma.sheetSyncQueue.deleteMany();
         await updateStage({ db: prisma, passportId, stage: "VISA_APPROVAL", values: parseStageBody({ completed: true }, "VISA_APPROVAL").values });
         await worker.tick();
@@ -175,6 +177,7 @@ describe("scheduled and manual reconciliation", () => {
     test("several changes between runs: one write per run, with the latest state only", async () => {
         const { sheet, store, worker } = setup();
         const { passportId, uniqueId } = await register();
+        await giveTestPassAndJob(prisma, passportId); // the visa stages need a PASS and a Job
         for (const stage of ["JOB_DETAILS", "VISA_SUBMISSION", "VISA_APPROVAL"]) {
             await updateStage({ db: prisma, passportId, stage, values: parseStageBody({ completed: true }, stage).values });
         }
@@ -205,6 +208,7 @@ describe("scheduled and manual reconciliation", () => {
     test("a change made while a run is in progress is not lost: its queue row stays PENDING for the next run", async () => {
         const { store, newWorker } = setup();
         const { passportId } = await register();
+        await giveTestPassAndJob(prisma, passportId); // the visa stages need a PASS and a Job
         // Right after the run has read the open queue rows, a stage changes.
         const racing = newWorker({
             ...store,

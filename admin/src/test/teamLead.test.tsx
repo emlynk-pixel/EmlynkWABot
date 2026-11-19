@@ -32,14 +32,14 @@ describe("roles.ts", () => {
     });
 
     test("allowed: the operational areas", () => {
-        for (const allowed of [canViewCandidates, canManageCandidates, canRegisterCandidates, canManageAllocations, canViewJobs, canManageJobs, canManageMasterData, canViewDailyReport]) {
+        for (const allowed of [canViewCandidates, canManageCandidates, canConfirmSubmittedChanges, canRegisterCandidates, canManageAllocations, canViewJobs, canManageJobs, canManageMasterData, canViewDailyReport]) {
             expect(allowed(TL), allowed.name).toBe(true);
         }
     });
 
     test("forbidden: every ADMIN-only action, administration, dashboards, review and Job Types (it inherits nothing from ADMIN)", () => {
         for (const refused of [isAdmin, canInviteUsers, canViewDashboard, canReview, canCorrectPoliceDates, canCreateJobTypes, canImportCandidates,
-            canVerifyCandidate, canConfirmSubmittedChanges, canDeleteFollowUps, canShareJobGroupForm, canViewRoleReport, canAssignJobFromCandidatePage]) {
+            canVerifyCandidate, canDeleteFollowUps, canShareJobGroupForm, canViewRoleReport, canAssignJobFromCandidatePage]) {
             expect(refused(TL), refused.name).toBe(false);
         }
         expect(assignableRoles(TL)).toEqual([]);
