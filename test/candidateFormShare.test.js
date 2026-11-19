@@ -263,7 +263,7 @@ describe("the form: identity and prefill", () => {
 });
 
 describe("submission (once)", () => {
-    test("a valid submission is stored in the response table, normalised (N/A in one spelling), with nulls for empty answers; the main tables are untouched", async () => {
+    test("a valid submission is stored in the response table, normalised (N/A in one spelling), with nulls for empty answers; the core record and stages are untouched", async () => {
         const { token } = await session(A);
         await pub("/form", { token, body: {} });
         const before = await rowOf(A.passportId);
@@ -282,7 +282,17 @@ describe("submission (once)", () => {
         assert.deepEqual([saved.child2Name, saved.child3Name], [null, null], "no children (Child 1 = N/A): the later child answers are not needed and stay empty");
         assert.equal(saved.spouseName, null, "hidden spouse answers are never stored (civil status SINGLE)");
         assert.equal(saved.jobCategoryOther, null);
-        assert.deepEqual(await rowOf(A.passportId), before, "candidate, additional details and stages are unchanged");
+        const after = await rowOf(A.passportId);
+        assert.deepEqual([after.candidate, after.stages], [before.candidate, before.stages], "candidate and stages are unchanged");
+        // Additional details: every value on record is kept as it was; only the EMPTY fields took the
+        // submitted value (applyAutoFill), never "N/A".
+        for (const [column, value] of Object.entries(before.details)) {
+            if (["updatedDate"].includes(column)) continue;
+            const empty = value === null || (typeof value === "string" && value.trim() === "");
+            if (!empty) assert.deepEqual(after.details[column], value, column);
+        }
+        assert.equal(after.details.guardianNic, "901234567V", "an empty field was filled");
+        assert.ok(Object.values(after.details).every((value) => value !== "N/A"));
         assert.equal((await prisma.candidateFormAccess.findUnique({ where: { passportId: A.passportId } })).status, "SUBMITTED");
         await assert.rejects(pg.exec(`UPDATE candidate_form_response SET full_name = 'X'`), /cannot be changed/);
     });

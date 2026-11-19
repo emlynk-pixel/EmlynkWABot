@@ -120,11 +120,11 @@ describe("Candidate Form conflict indicator (GET /candidates formConflicts)", ()
         assert.deepEqual((await listItem(USERS.ADMIN, A.passportId)).formConflicts, []);
     });
 
-    test("CONFLICT-008 RBAC: only ADMIN (an OWNER too) may confirm or reject; JOB_HANDLER, ANALYST and REGISTRATION_DESK get 403 and nothing changes", async () => {
+    test("CONFLICT-008 RBAC: JOB_HANDLER and REGISTRATION_DESK get 403 on confirm / reject and nothing changes (ANALYST may: candidateFormFieldConfirm.test.js)", async () => {
         await prisma.candidate.create({ data: A });
         await prisma.candidateAllocation.create({ data: { passportId: A.passportId, analystId: USERS.ANALYST.adminId } });
         await submit(A.passportId, { birthPlace: "KANDY" });
-        for (const role of ["JOB_HANDLER", "ANALYST", "REGISTRATION_DESK"]) {
+        for (const role of ["JOB_HANDLER", "REGISTRATION_DESK"]) {
             for (const action of ["confirm-field", "reject-field"]) {
                 assert.equal((await review(USERS[role], action, A.passportId, "basic.birthPlace", "NEGOMBO", "KANDY")).status, 403, `${role} ${action}`);
             }

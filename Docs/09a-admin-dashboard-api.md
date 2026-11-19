@@ -736,14 +736,14 @@ ADMIN only (an OWNER too; `requireRole`): every other role gets 403. Rules: `Doc
 
 ### `GET /api/admin/work-allocation/analysts`
 
-`{ analysts: [{ analystId, name, email, assignedCount }], unavailableAnalysts: [{ analystId, name, assignedCount }], unallocatedCount }`. `analysts` holds the ACTIVE Analysts, the only valid targets. `unavailableAnalysts` holds users who still have candidates but are no longer active Analysts. The counts come from one grouped query.
+`{ analysts: [{ analystId, name, email, role, assignedCount }], unavailableAnalysts: [{ analystId, name, role, assignedCount }], unallocatedCount }`. `analysts` holds the ACTIVE Analysts and ACTIVE Team Leads (`role` is `ANALYST` or `TEAM_LEAD`), the only valid targets, whoever asks. `unavailableAnalysts` holds users who still have candidates but are no longer active, or no longer an Analyst or Team Lead. The counts come from one grouped query.
 
 ### `POST /api/admin/work-allocation/assign`
 
 Body `{ candidateIds: [passportId…], allocations: [{ analystId, count }…], reassign?: boolean }`. One transaction, all or nothing. Responds `{ assigned, reassigned, unchanged, byAnalyst: [{ analystId, name, count }] }`.
 
 - 400: empty or repeated `candidateIds` (at most 500), counts that aren't whole numbers ≥ 0, an Analyst listed twice, or counts that don't add up to the number of candidates (`code: "COUNT_MISMATCH"` on the error).
-- 409: `CANDIDATE_NOT_AVAILABLE`, `ANALYST_NOT_FOUND`, `NOT_AN_ANALYST`, `ANALYST_INACTIVE`, or `ALREADY_ALLOCATED` (allocated candidates without `reassign: true`).
+- 409: `CANDIDATE_NOT_AVAILABLE`, `ANALYST_NOT_FOUND`, `NOT_AN_ANALYST` (the target is neither an Analyst nor a Team Lead), `ANALYST_INACTIVE`, or `ALREADY_ALLOCATED` (allocated candidates without `reassign: true`).
 
 ### `POST /api/admin/work-allocation/unassign`
 
@@ -940,7 +940,7 @@ Endpoint tiers (`src/routes/admin.js`):
 | Candidate reads (`CANDIDATE_READERS`) | ADMIN, TEAM_LEAD, ANALYST, JOB_HANDLER | `GET /candidates`, `GET /candidates/:passportId` and its call logs, additional details and submitted form |
 | Registration workflow (`REGISTRATION_WORKFLOW`) | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | `GET /candidates/:passportId` (lookup), `PUT /candidates/:passportId`, `PUT …/stages/:stage` and `POST …/documents/upload-target` / `finalize`; REGISTRATION_DESK only for the `CANDIDATE_DETAILS` stage and `PASSPORT` / `NIC` / `SKILL_VIDEO` (otherwise 403) |
 | Job candidate picker (`JOB_MANAGERS`) | ADMIN, TEAM_LEAD, JOB_HANDLER | `GET /job-candidate-options?search=&page=&pageSize=`: test-PASS candidates only, `{ passportId, uniqueId, name, nic, workflowStatus }` per item, paged like `GET /candidates` |
-| Work Allocation (`ALLOCATION_MANAGERS`) | ADMIN, TEAM_LEAD | `/work-allocation/*` (section 4p); work goes to ACTIVE Analysts only |
+| Work Allocation (`ALLOCATION_MANAGERS`) | ADMIN, TEAM_LEAD | `/work-allocation/*` (section 4p); work goes to ACTIVE Analysts and Team Leads only |
 | Registration (`REGISTRATION_STAFF`) | ADMIN, TEAM_LEAD, REGISTRATION_DESK | `POST /candidates` |
 | Verification, Candidate Form confirm / reject | ADMIN | `POST /candidates/:id/verification`, `POST /candidates/:id/form-submission/*` |
 | Follow-up delete (Need Attention page) | ADMIN | `DELETE /follow-ups/:id`: removes the follow-up row only (never the call log, candidate or documents); TEAM_LEAD, ANALYST and REGISTRATION_DESK get 403. The role is the signed-in user's, read from the database on every request |

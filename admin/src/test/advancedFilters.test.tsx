@@ -275,6 +275,33 @@ describe("Candidates: Filters", () => {
     });
 });
 
+describe("Candidates: My allocated (Team Lead)", () => {
+    test("a Team Lead toggles the list to their own allocated candidates (analystId = themselves) and back", async () => {
+        const { calls } = candidatesBackend({ role: "TEAM_LEAD", options: { ...OPTIONS, officers: [...OPTIONS.officers!, { id: ADMIN.userId, name: ADMIN.name, active: true }] } });
+        renderApp("/candidates");
+        await screen.findByRole("link", { name: "CANDIDATE 1" }, RENDER_STEP);
+        const user = userEvent.setup();
+        const button = screen.getByRole("button", { name: "My allocated" });
+        expect(button).toHaveAttribute("aria-pressed", "false");
+        expect(lastQuery(calls).get("analystId")).toBeNull();
+        await user.click(button);
+        await waitFor(() => expect(lastQuery(calls).get("analystId")).toBe(ADMIN.userId));
+        expect(screen.getByRole("button", { name: "My allocated" })).toHaveAttribute("aria-pressed", "true");
+        await user.click(screen.getByRole("button", { name: "My allocated" }));
+        await waitFor(() => expect(lastQuery(calls).get("analystId")).toBeNull());
+        expect(screen.getByRole("button", { name: "My allocated" })).toHaveAttribute("aria-pressed", "false");
+    });
+
+    for (const role of ["ADMIN", "OWNER", "ANALYST", "JOB_HANDLER"]) {
+        test(`${role}: no My allocated button`, async () => {
+            candidatesBackend({ role, options: role === "ANALYST" ? ANALYST_OPTIONS : role === "JOB_HANDLER" ? HANDLER_OPTIONS : OPTIONS });
+            renderApp("/candidates");
+            await screen.findByRole("link", { name: "CANDIDATE 1" }, RENDER_STEP);
+            expect(screen.queryByRole("button", { name: "My allocated" })).toBeNull();
+        });
+    }
+});
+
 describe("RBAC: what each role is offered (the server checks it too)", () => {
     test("UI-17 ANALYST: filters, but no Allocation, Officer, Client or Agent", async () => {
         candidatesBackend({ role: "ANALYST", options: ANALYST_OPTIONS });

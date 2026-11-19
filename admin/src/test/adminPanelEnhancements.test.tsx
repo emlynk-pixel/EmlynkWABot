@@ -136,7 +136,7 @@ describe("CONFLICT-UI: the candidate page highlights unresolved fields and focus
     });
 
     test("roles that cannot review still see the highlight, but no Confirm / Revoke", async () => {
-        candidateBackend([PLACE], "TEAM_LEAD");
+        candidateBackend([PLACE], "JOB_HANDLER");
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS&field=basic.birthPlace");
         await screen.findByTestId("submitted-hint-basic.birthPlace", undefined, RENDER_STEP);
         expect(fieldBox("basic.birthPlace")).toHaveAttribute("data-conflict", "focused");

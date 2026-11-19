@@ -591,10 +591,10 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/final-status", // Departed / Visa Not Going / Cancelled / Rejected: ADMIN only, audited (candidateWorkflowStatus.test.js)
             "POST /candidates/:passportId/form-share", // Candidate Form share link: create (replaces the old one), audited (candidateFormShare.test.js)
             "POST /candidates/:passportId/form-share/revoke",
-            "POST /candidates/:passportId/form-submission/confirm-all", // ADMIN only: every pending field in one transaction, audited per field (candidateFormBulkReview.test.js)
-            "POST /candidates/:passportId/form-submission/confirm-field", // ADMIN only: one field, audited (candidateFormFieldConfirm.test.js)
-            "POST /candidates/:passportId/form-submission/reject-all", // ADMIN only: dismiss every pending value, record unchanged, audited per field
-            "POST /candidates/:passportId/form-submission/reject-field", // ADMIN only: dismiss one proposed value, record unchanged, audited
+            "POST /candidates/:passportId/form-submission/confirm-all", // ADMIN, TEAM_LEAD, ANALYST (own candidates): every pending field in one transaction, audited per field (candidateFormBulkReview.test.js)
+            "POST /candidates/:passportId/form-submission/confirm-field", // ADMIN, TEAM_LEAD, ANALYST (own candidates): one field, audited (candidateFormFieldConfirm.test.js)
+            "POST /candidates/:passportId/form-submission/reject-all", // ADMIN, TEAM_LEAD, ANALYST (own candidates): dismiss every pending value, record unchanged, audited per field
+            "POST /candidates/:passportId/form-submission/reject-field", // ADMIN, TEAM_LEAD, ANALYST (own candidates): dismiss one proposed value, record unchanged, audited
             "POST /candidates/:passportId/verification", // Verify details / documents: ADMIN only, audited (candidateWorkflowStatus.test.js)
             "POST /client-management",
             "POST /documents/:documentId/police-date",

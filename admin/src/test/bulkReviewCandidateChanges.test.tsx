@@ -86,7 +86,7 @@ describe("Candidate Form changes: Confirm All / Reject All", () => {
     });
 
     test("BULK-UI-003 RBAC: only the roles that may confirm Candidate Form changes see the buttons", async () => {
-        for (const [role, sees] of [["ADMIN", true], ["OWNER", true], ["TEAM_LEAD", false], ["ANALYST", false], ["JOB_HANDLER", false]] as const) {
+        for (const [role, sees] of [["ADMIN", true], ["OWNER", true], ["TEAM_LEAD", true], ["ANALYST", true], ["JOB_HANDLER", false]] as const) {
             backend(role);
             const { unmount } = openPage();
             // Every role still sees the inline hint (the submission itself is readable).

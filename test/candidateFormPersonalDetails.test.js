@@ -351,11 +351,12 @@ describe("routes: the new answers are stored, read back and reviewed", () => {
         assert.equal(confirmed.status, 200, JSON.stringify(confirmed.body));
         const details = await prisma.candidateAdditionalDetails.findUnique({ where: { passportId: A.passportId } });
         assert.deepEqual([details.fatherAlive, details.motherAlive], [false, true], "only the confirmed column changed");
-        // The other new answers are confirmable into Additional Details too (20261102120000_candidate_form_finalized_details),
-        // always against the stored submission: a value the screen did not see is stale.
+        // The other new answers were EMPTY in Additional Details: the submission filled them (applyAutoFill),
+        // so there is nothing left to confirm for them.
+        assert.deepEqual([details.bloodGroup, details.height, details.cityInRomania], ["O+", "175 cm", "Cluj-Napoca"]);
         for (const field of ["basic.bloodGroup", "basic.height", "contact.cityInRomania"]) {
             const r = await call("POST", `/api/admin/candidates/${A.passportId}/form-submission/confirm-field`, { body: { field, expectedCurrentValue: null, expectedSubmittedValue: "x" } });
-            assert.deepEqual([r.status, r.body.code], [409, "FORM_FIELD_STALE"], field);
+            assert.deepEqual([r.status, r.body.code], [409, "FORM_FIELD_NOT_PENDING"], field);
         }
     });
 });
