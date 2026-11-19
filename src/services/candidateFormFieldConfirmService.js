@@ -317,18 +317,16 @@ async function lockAndRead(tx, passportId) {
 }
 
 // Apply ONE decision on a pending change inside the caller's transaction: a Confirm checks the field's
-// rules and writes its column(s); both record the review and write the audit entry. Returns the
-// columns written ({} for a Reject). `bulk`: the decision was part of Confirm All / Reject All.
-async function decide(tx, { actor, passportId, pending, decision, candidate, details, response, bulk = false }) {
+// rules and writes its column(s); both record the review and write the audit entry.
+async function decide(tx, { actor, passportId, pending, decision, candidate, details, response }) {
     const { field } = pending;
     const mapping = CONFIRMABLE_FIELDS[field];
-    const via = bulk ? (decision === "CONFIRMED" ? " (Confirm All)" : " (Reject All)") : "";
     // The columns a Confirm writes: the field's own, and any its rules write with it.
     let written = {};
     if (decision === "CONFIRMED") {
         const { value } = mapping.toDb(submittedValueOf(response, field));
         const refused = mapping.requires?.({ candidate, details, value, response });
-        if (refused) throw new CandidateError(409, "FORM_FIELD_PREREQUISITE", bulk ? `Nothing was confirmed (${field}): ${refused} Review that change on its own, then use Confirm All again.` : refused);
+        if (refused) throw new CandidateError(409, "FORM_FIELD_PREREQUISITE", refused);
         const stored = (mapping.table === "candidate" ? candidate : details)?.[mapping.column] ?? null;
         written = { [mapping.column]: mapping.write ? mapping.write(stored, value) : value, ...mapping.alsoWrite?.({ details, value, response }) };
         if (mapping.table === "candidate") {
@@ -344,7 +342,7 @@ async function decide(tx, { actor, passportId, pending, decision, candidate, det
         data: decision === "CONFIRMED"
             ? {
                 auditId: crypto.randomUUID(), adminId: actor.adminId, action: CONFIRM_AUDIT_ACTION, passportId,
-                previousStatus: "PENDING_CONFIRMATION", newStatus: "CONFIRMED", reason: `Confirmed candidate-submitted value for ${field}${via}`,
+                previousStatus: "PENDING_CONFIRMATION", newStatus: "CONFIRMED", reason: `Confirmed candidate-submitted value for ${field}`,
                 // The record's column name, like the other candidate audit entries (never a secret);
                 // a column written with it (a spouse name with Married) is listed too.
                 previousValue: JSON.stringify({ [mapping.column]: pending.current, ...Object.fromEntries(Object.keys(written).filter((c) => c !== mapping.column).map((c) => [c, null])) }),
@@ -352,66 +350,19 @@ async function decide(tx, { actor, passportId, pending, decision, candidate, det
             }
             : {
                 auditId: crypto.randomUUID(), adminId: actor.adminId, action: REJECT_AUDIT_ACTION, passportId,
-                previousStatus: "PENDING_CONFIRMATION", newStatus: "REJECTED", reason: `Rejected candidate-submitted value for ${field}${via}`,
+                previousStatus: "PENDING_CONFIRMATION", newStatus: "REJECTED", reason: `Rejected candidate-submitted value for ${field}`,
                 // The record is NOT changed: the current value and the value that was turned down.
                 newValue: JSON.stringify({ field, currentValue: pending.current, rejectedSubmittedValue: pending.submitted }),
             },
     });
-    return written;
 }
 
 export const confirmFormField = (args) => reviewFormField({ ...args, expectedCurrentValue: args.expectedCurrentValue ?? null, expectedSubmittedValue: args.expectedSubmittedValue ?? null, decision: "CONFIRMED" });
 export const rejectFormField = (args) => reviewFormField({ ...args, expectedCurrentValue: args.expectedCurrentValue ?? null, expectedSubmittedValue: args.expectedSubmittedValue ?? null, decision: "REJECTED" });
 
-// ---------------------------------------------------------------- Confirm All / Reject All
-//
-// POST .../form-submission/confirm-all | reject-all { changes: [{ field, expectedCurrentValue, expectedSubmittedValue }] }.
-// Every pending change of the submission in ONE transaction, with exactly the per-field rules,
-// review rows and audit entries of Confirm / Reject (one entry per field, its reason marked
-// "(Confirm All)" / "(Reject All)"). All or nothing:
-//   - `changes` must be EXACTLY the pending set the server finds now (same fields, same values):
-//     a field added, decided or changed since the page was loaded refuses the whole request
-//     (409 FORM_FIELD_STALE), so nothing is decided that the Admin did not see;
-//   - a Confirm whose field rules refuse it (a spouse without Married, children out of order, too many
-//     job types, ...) refuses the whole request (409 FORM_FIELD_PREREQUISITE, naming the field) and
-//     the transaction is rolled back: nothing is written. That field can then be decided on its own.
-// Confirm All applies Civil Status first, so the spouse and children it allows are checked against
-// the confirmed status; each later field is checked against the record as already updated. A field
-// that an earlier one has already brought in line (the spouse name written with Married) is no
-// longer a change and is left without a decision, exactly as after the single Confirm.
-// Already-reviewed fields are never in the pending set, so they are never reprocessed.
+// Civil Status first, so the spouse and children it allows are checked against it (autoFillChanges).
 const CONFIRM_ORDER = ["basic.civilStatus"];
 const ordered = (fields) => [...CONFIRM_ORDER.filter((field) => fields.includes(field)), ...fields.filter((field) => !CONFIRM_ORDER.includes(field))];
-
-async function reviewAllFormFields({ db, actor, passportId, changes, decision }) {
-    return db.$transaction(async (tx) => {
-        let { candidate, details, response } = await lockAndRead(tx, passportId);
-        const reviews = await tx.candidateFormFieldReview.findMany({ where: { passportId }, select: { fieldKey: true } });
-        const reviewed = new Set(reviews.map((review) => review.fieldKey));
-        const confirmable = Object.fromEntries(Object.keys(CONFIRMABLE_FIELDS).map((field) => [field, submittedValueOf(response, field)]));
-        const pending = pendingChanges({ candidate, details, submitted: confirmable }, reviewed);
-        if (!pending.length) throw new CandidateError(409, "FORM_FIELD_NOT_PENDING", "There are no Candidate Form changes left to review.");
-        const seen = new Map(changes.map((change) => [change.field, change]));
-        const matches = seen.size === changes.length && seen.size === pending.length
-            && pending.every((change) => seen.has(change.field) && (seen.get(change.field).expectedCurrentValue ?? null) === change.current && (seen.get(change.field).expectedSubmittedValue ?? null) === change.submitted);
-        if (!matches) throw new CandidateError(409, "FORM_FIELD_STALE", "The Candidate Form changes changed since you opened the page. Refresh and review again.");
-
-        const decided = [];
-        for (const field of ordered(pending.map((change) => change.field))) {
-            // Against the record as the earlier decisions of this request left it.
-            const change = pendingChange(field, { candidate, details, submitted: confirmable });
-            if (!change) continue;
-            const written = await decide(tx, { actor, passportId, pending: change, decision, candidate, details, response, bulk: true });
-            if (CONFIRMABLE_FIELDS[field].table === "candidate") candidate = { ...candidate, ...written };
-            else details = { ...details, ...written };
-            decided.push({ field, decision, current: change.current, submitted: change.submitted });
-        }
-        return { decision, decided };
-    });
-}
-
-export const confirmAllFormFields = (args) => reviewAllFormFields({ ...args, decision: "CONFIRMED" });
-export const rejectAllFormFields = (args) => reviewAllFormFields({ ...args, decision: "REJECTED" });
 
 // ---------------------------------------------------------------- automatic fill of EMPTY Additional Details
 //

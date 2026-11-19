@@ -97,7 +97,7 @@ import {
 } from "../services/jobService.js";
 import { getFormSubmission, pendingConflictsByCandidate } from "../services/candidateFormSubmissionService.js";
 import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE, resolveCandidateJobTypes } from "../services/jobTypeCatalog.js";
-import { CONFIRMABLE_FIELDS, confirmAllFormFields, confirmFormField, isConfirmableField, rejectAllFormFields, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
+import { confirmFormField, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
@@ -205,7 +205,7 @@ const REPORT_READERS = [ADMIN, TEAM_LEAD];                              // the D
 const CANDIDATE_STAFF = [ADMIN, TEAM_LEAD, ANALYST];                    // the Candidates area and Need Attention
 const REVIEWERS = [ADMIN];                                              // review actions
 const ADMINS_ONLY = [ADMIN];                                            // administrators only
-// Candidate Form Confirm / Reject (and Confirm All / Reject All): the Candidates-area roles, each within
+// Candidate Form Confirm / Reject: the Candidates-area roles, each within
 // its candidate scope (an Analyst only for candidates allocated to them: storedCandidateId, 404 otherwise).
 const FORM_REVIEWERS = [ADMIN, TEAM_LEAD, ANALYST];
 // A 256 KB logo as base64 in JSON, with the title and colours.
@@ -880,30 +880,6 @@ export function createAdminRouter({
             return candidateAction(res, async () => {
                 const passportId = await storedCandidateId(client, req.params.passportId, req.user);
                 await review({ db: client, actor: req.user, passportId, field: body.field, expectedCurrentValue: body.expectedCurrentValue ?? null, expectedSubmittedValue: body.expectedSubmittedValue ?? null });
-                return res.json(await getFormSubmission({ db: client, passportId }));
-            });
-        });
-    }
-
-    // Confirm All / Reject All: every pending candidate-submitted change at once, in one transaction
-    // (FORM_REVIEWERS, like the per-field actions). The body lists the changes the user saw; the server
-    // refuses the whole request unless they are exactly the pending set (candidateFormFieldConfirmService.js).
-    for (const [action, review] of [["confirm-all", confirmAllFormFields], ["reject-all", rejectAllFormFields]]) {
-        router.post(`/candidates/:passportId/form-submission/${action}`, requireRole(FORM_REVIEWERS), async (req, res) => {
-            if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
-            const body = req.body;
-            const allowed = new Set(["field", "expectedCurrentValue", "expectedSubmittedValue"]);
-            const textOrNull = (value) => value === null || value === undefined || typeof value === "string";
-            const validChange = (change) => change && typeof change === "object" && !Array.isArray(change) && Object.keys(change).every((key) => allowed.has(key))
-                && isConfirmableField(change.field) && textOrNull(change.expectedCurrentValue) && textOrNull(change.expectedSubmittedValue);
-            if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((key) => key !== "changes")
-                || !Array.isArray(body.changes) || !body.changes.length || body.changes.length > Object.keys(CONFIRMABLE_FIELDS).length || !body.changes.every(validChange)) {
-                return res.status(400).json({ message: "Invalid request body", errors: [{ field: "changes", message: "must be a list of { field, expectedCurrentValue, expectedSubmittedValue }" }] });
-            }
-            const client = await resolveDb(db);
-            return candidateAction(res, async () => {
-                const passportId = await storedCandidateId(client, req.params.passportId, req.user);
-                await review({ db: client, actor: req.user, passportId, changes: body.changes });
                 return res.json(await getFormSubmission({ db: client, passportId }));
             });
         });

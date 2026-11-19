@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../../api/client";
-import { confirmAllFormFields, confirmFormField, rejectAllFormFields, rejectFormField, type PendingChange } from "../../api/candidates";
-import { ActionDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../Dialog";
+import { confirmFormField, rejectFormField, type PendingChange } from "../../api/candidates";
+import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { formatDay, humanize } from "../format";
 
 // Per-field "Candidate submitted: <value> [Confirm]" under the fields of the
@@ -11,8 +11,6 @@ import { formatDay, humanize } from "../format";
 // Confirm applies that ONE field after a confirmation; Revoke dismisses the proposal and leaves the record as it
 // is (it is not an undo of a Confirm). Both are final for that field and share one review state on the server.
 // Roles that cannot confirm still see the hint, without the button.
-// FormChangesButtons offers Confirm All / Reject All (one server transaction each) in the forms' footers;
-// they are shown only to the roles that can confirm, while something is pending.
 
 type Kind = "text" | "date" | "code";
 export const CONFIRMABLE_LABELS: Record<string, { label: string; kind: Kind }> = {
@@ -117,8 +115,6 @@ type Context = {
     rejected: ReadonlySet<string>;
     canConfirm: boolean;
     ask: (change: PendingChange, action: Action) => void;
-    // Confirm All / Reject All: every pending change at once (one server transaction).
-    askAll: (action: Action) => void;
     takeConfirmed: (keys: readonly string[]) => string[];
     // The field the page was opened for (the Candidates list's "!", ?field=), highlighted more strongly.
     focusField: string | null;
@@ -138,8 +134,6 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
     children: ReactNode;
 }) {
     const [asking, setAsking] = useState<{ change: PendingChange; action: Action } | null>(null);
-    // Confirm All / Reject All: the changes listed when the dialog opened are exactly what is sent.
-    const [askingAll, setAskingAll] = useState<{ changes: readonly PendingChange[]; action: Action } | null>(null);
     // Form keys the Admin just confirmed: the forms take them once the refreshed record arrives.
     const confirmedKeys = useRef(new Set<string>());
     const takeConfirmed = useCallback((keys: readonly string[]) => {
@@ -154,33 +148,11 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
         rejected: new Set(rejected),
         canConfirm: canConfirm && Boolean(token),
         ask: (change, action) => { setError(null); setAsking({ change, action }); },
-        askAll: (action) => { setError(null); setAskingAll({ changes: pending, action }); },
         takeConfirmed,
         focusField,
     }), [pending, rejected, canConfirm, token, takeConfirmed, focusField]);
 
-    const close = () => { if (!busy) { setAsking(null); setAskingAll(null); setError(null); } };
-    const reviewAll = async () => {
-        // busy also guards a second click before the button re-renders disabled.
-        if (!askingAll || !token || busy) return;
-        setBusy(true);
-        setError(null);
-        try {
-            const { changes, action } = askingAll;
-            const body = { changes: changes.map((change) => ({ field: change.field, expectedCurrentValue: change.current, expectedSubmittedValue: change.submitted })) };
-            if (action === "confirm") await confirmAllFormFields(token, passportId, body);
-            else await rejectAllFormFields(token, passportId, body);
-            setAskingAll(null);
-            if (action === "confirm") for (const change of changes) if (RECORD_KEY[change.field]) confirmedKeys.current.add(RECORD_KEY[change.field]);
-            onConfirmed();
-        } catch (caught) {
-            setError(caught instanceof ApiError ? caught.message : "The changes could not be saved. Please try again.");
-            // Nothing was decided (the server rolls the whole request back): show the current state behind the dialog.
-            if (caught instanceof ApiError && caught.status === 409) onConfirmed();
-        } finally {
-            setBusy(false);
-        }
-    };
+    const close = () => { if (!busy) { setAsking(null); setError(null); } };
     const confirm = async () => {
         if (!asking || !token) return;
         setBusy(true);
@@ -222,67 +194,7 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
                     </div>
                 </ActionDialog>
             )}
-            {askingAll && (
-                <ActionDialog title={askingAll.action === "confirm" ? `Confirm all ${askingAll.changes.length} Candidate Form changes?` : `Reject all ${askingAll.changes.length} Candidate Form changes?`} busy={busy} onClose={close}>
-                    <ChangesTable changes={askingAll.changes} />
-                    <p className="mt-3 text-label-sm text-ink-muted">{askingAll.action === "confirm"
-                        ? "Every change listed is applied to the candidate's record, with the same checks as confirming each one. If any one cannot be applied, nothing is changed. The submitted form is kept as it is."
-                        : "The current values are kept. Every submitted value listed is dismissed and will not be offered again; the submitted form itself is kept as it is."}</p>
-                    <DialogError message={error} />
-                    <div className="mt-4 flex justify-end gap-2">
-                        <button type="button" className={secondaryButton} disabled={busy} onClick={close}>{error ? "Close" : "Cancel"}</button>
-                        {!error && (
-                            <button type="button" className={askingAll.action === "confirm" ? primaryButton : dangerSolidButton} disabled={busy} onClick={reviewAll}>
-                                {busy ? (askingAll.action === "confirm" ? "Confirming…" : "Rejecting…") : askingAll.action === "confirm" ? "Confirm all" : "Reject all"}
-                            </button>
-                        )}
-                    </div>
-                </ActionDialog>
-            )}
         </SubmittedChanges.Provider>
-    );
-}
-
-// Field / Current / Submitted for the changes a Confirm All / Reject All will decide.
-function ChangesTable({ changes }: { changes: readonly PendingChange[] }) {
-    return (
-        <div className="max-h-80 overflow-auto rounded-lg border border-border">
-            <table className="w-full text-left text-body-sm">
-                <thead className="sticky top-0 bg-canvas text-label-sm text-ink-muted">
-                    <tr>
-                        <th scope="col" className="px-3 py-2 font-medium">Field</th>
-                        <th scope="col" className="px-3 py-2 font-medium">Current</th>
-                        <th scope="col" className="px-3 py-2 font-medium">Submitted</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {changes.map((change) => (
-                        <tr key={change.field} data-testid={`change-row-${change.field}`} className="border-t border-border align-top">
-                            <th scope="row" className="px-3 py-2 font-medium text-ink">{CONFIRMABLE_LABELS[change.field]?.label ?? change.field}</th>
-                            <td className="break-words px-3 py-2 text-ink-muted">{display(change.field, change.current)}</td>
-                            <td className="break-words px-3 py-2 font-medium text-ink">{display(change.field, change.submitted)}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    );
-}
-
-// [Confirm All] [Reject All] in the footer of the Candidate details and Additional details forms, left of
-// Cancel. Only for the roles that may review Candidate Form changes, and only while the submission still
-// has a pending change: they go away with the last decision. The values themselves stay in the inline
-// hints; the dialog lists every change it will decide (Field / Current / Submitted).
-export function FormChangesButtons() {
-    const context = useContext(SubmittedChanges);
-    if (!context?.canConfirm || context.pending.size === 0) return null;
-    const count = context.pending.size;
-    const summary = count === 1 ? "1 Candidate Form change to review" : `${count} Candidate Form changes to review`;
-    return (
-        <span data-testid="candidate-form-changes" role="group" aria-label={summary} title={summary} className="flex gap-2">
-            <button type="button" className={primaryButton} onClick={() => context.askAll("confirm")}>Confirm All</button>
-            <button type="button" className={secondaryButton} onClick={() => context.askAll("reject")}>Reject All</button>
-        </span>
     );
 }
 
