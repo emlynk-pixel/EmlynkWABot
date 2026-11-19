@@ -20,7 +20,7 @@ import { Field, fieldControl, textAreaControl, type NotApplicableToggle } from "
 import { NOT_APPLICABLE_FIELDS } from "./additionalDetailsCompletion";
 import type { CandidateJobAssignment } from "../../api/jobs";
 import { ShareFormButton } from "./ShareFormButton";
-import { mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
+import { FormChangesButtons, mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
 
 // Additional Details tab of a candidate: passport and personal details,
 // physical details and skills, contact and location, clothing sizes, parents,
@@ -383,6 +383,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
                 {notice && !changed && <p role="status" className="text-body-sm text-verified">Additional details saved.</p>}
                 <DialogError message={error} />
                 <div className="mt-4 flex flex-wrap justify-end gap-2 empty:hidden">
+                    <FormChangesButtons />
                     {canEdit && (
                         <>
                             <button type="button" onClick={() => { setForm(initial); setErrors({}); setError(null); setResets((n) => n + 1); }} disabled={busy || !changed} className={secondaryButton}>Cancel</button>

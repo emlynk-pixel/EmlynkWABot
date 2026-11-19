@@ -525,3 +525,16 @@ export function rejectFormField(
 ): Promise<FormSubmission> {
     return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/reject-field`, { method: "POST", token, body });
 }
+
+// Confirm All / Reject All (ADMIN only): every pending change at once, in one server transaction.
+// `changes` is the pending list the Admin saw; the server refuses the whole request (409, nothing
+// decided) when it is no longer exactly the pending set, or when one Confirm breaks a field rule.
+export type ReviewAllBody = { changes: { field: string; expectedCurrentValue: string | null; expectedSubmittedValue: string | null }[] };
+
+export function confirmAllFormFields(token: string, passportId: string, body: ReviewAllBody): Promise<FormSubmission> {
+    return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/confirm-all`, { method: "POST", token, body });
+}
+
+export function rejectAllFormFields(token: string, passportId: string, body: ReviewAllBody): Promise<FormSubmission> {
+    return apiRequest<FormSubmission>(`${base(passportId)}/form-submission/reject-all`, { method: "POST", token, body });
+}
