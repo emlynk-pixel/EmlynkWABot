@@ -50,29 +50,29 @@ The detailed per-endpoint record in [§5](#5-endpoint-documentation-by-module) u
 
 ### 2.1 Summary counts
 
-Counted from the `router.<method>(…)` and `app.<method>(…)` registrations. Method used: 88 statements in `src/routes/admin.js`, two of which run inside `for` loops that register two routes each (lines 853 and 875), giving **90 admin routes**. The router mounted by `router.use("/users", …)` and the routers mounted under `/settings/sheet-sync` are counted separately.
+Counted from the `router.<method>(…)` and `app.<method>(…)` registrations. Method used: 87 statements in `src/routes/admin.js`, one of which runs inside a `for` loop that registers two routes (line 869), giving **88 admin routes**. The router mounted by `router.use("/users", …)` and the routers mounted under `/settings/sheet-sync` are counted separately.
 
 | Category | Count |
 |---|---:|
-| **Total internal endpoints (main Express app)** | **114** |
+| **Total internal endpoints (main Express app)** | **112** |
 | GET | 48 |
-| POST | 50 |
+| POST | 48 |
 | PUT | 7 |
 | PATCH | 6 |
 | DELETE | 3 |
 | Public (no staff session): `/health`, WhatsApp webhook ×2, Candidate Form ×5 | 8 |
-| Authenticated (Supabase session): `/auth/*` ×2 + `/api/admin/*` ×104 | 106 |
-| Restricted to ADMIN* (or OWNER/ADMIN for user management) | 50 |
+| Authenticated (Supabase session): `/auth/*` ×2 + `/api/admin/*` ×102 | 104 |
+| Restricted to ADMIN* (or OWNER/ADMIN for user management) | 48 |
 | Aliases: `POST /work-allocation/allocate` = same handler as `/auto-allocate` | 1 (counted) |
 | Backend routes with **no frontend caller** | 5 (see [§2.4](#24-routes-with-no-frontend-caller)) |
-| Worker service endpoints (not part of the 114) | 5 |
+| Worker service endpoints (not part of the 112) | 5 |
 | External API integrations | 8 (see [§2.3](#23-external-apis-called-by-the-project)) |
 
-The 50 ADMIN*-only endpoints are: 36 in `admin.js` (tiers `ADMINS_ONLY` ×17 counting the loop routes, `DASHBOARD_READERS` ×10, `REVIEWERS` ×9, all `[ADMIN]`), plus users ×4 (OWNER and ADMIN), Sheet Sync settings ×5 and bulk import ×5.
+The 48 ADMIN*-only endpoints are: 34 in `admin.js` (tiers `ADMINS_ONLY` ×15 counting the loop routes, `DASHBOARD_READERS` ×10, `REVIEWERS` ×9, all `[ADMIN]`), plus users ×4 (OWNER and ADMIN), Sheet Sync settings ×5 and bulk import ×5.
 
 ### 2.2 Internal endpoint inventory
 
-`/api/admin` is abbreviated **A**. "Session" = a valid Supabase access token **and** an ACTIVE `user` row with a supported role. "Form token" = the encrypted Candidate Form token.
+`/api/admin` is abbreviated **A**. "Session" = a valid Supabase access token **and** an ACTIVE `user` row with a supported role. "Form token" = the encrypted Candidate Form token. Numbers 57 and 58 are no longer used (their endpoints were removed); the other numbers are kept so that cross-references stay valid, so the last number (114) is two more than the total.
 
 | # | Module | Method | Endpoint | Auth | Allowed roles | Frontend usage |
 |---:|---|---|---|---|---|---|
@@ -132,8 +132,6 @@ The 50 ADMIN*-only endpoints are: 36 in `admin.js` (tiers `ADMINS_ONLY` ×17 cou
 | 54 | Form review | GET | A`/candidates/:passportId/form-submission` | Session | #35 roles | `CandidateDeploymentPage` |
 | 55 | Form review | POST | A`/candidates/:passportId/form-submission/confirm-field` | Session | ADMIN* | `submittedChanges.tsx` |
 | 56 | Form review | POST | A`/candidates/:passportId/form-submission/reject-field` | Session | ADMIN* | `submittedChanges.tsx` |
-| 57 | Form review | POST | A`/candidates/:passportId/form-submission/confirm-all` | Session | ADMIN* | `submittedChanges.tsx` |
-| 58 | Form review | POST | A`/candidates/:passportId/form-submission/reject-all` | Session | ADMIN* | `submittedChanges.tsx` |
 | 59 | Form share | GET | A`/candidates/:passportId/form-share` | Session | ADMIN*, TEAM_LEAD, ANALYST (scoped) | `ShareFormButton` |
 | 60 | Form share | POST | A`/candidates/:passportId/form-share` | Session | as #59 | `ShareFormButton` |
 | 61 | Form share | POST | A`/candidates/:passportId/form-share/revoke` | Session | as #59 | `ShareFormButton` |
@@ -191,7 +189,7 @@ The 50 ADMIN*-only endpoints are: 36 in `admin.js` (tiers `ADMINS_ONLY` ×17 cou
 | 113 | Settings | GET | A`/settings/form-branding` | Session | ADMIN* | `FormBrandingSettings` |
 | 114 | Settings | PUT | A`/settings/form-branding` | Session | ADMIN* | `FormBrandingSettings` |
 
-**Worker service endpoints** (separate processes, not in the 114):
+**Worker service endpoints** (separate processes, not in the 112):
 
 | Process | Method | Endpoint | Auth | Caller |
 |---|---|---|---|---|
@@ -293,7 +291,7 @@ Additional baseline facts:
 
 **How to read this section.** Each row is one user action or one automatic request. The endpoint number (`#`) links the row to the inventory and to its card in [§5](#5-endpoint-documentation-by-module), where the backend route, role, service, database work, response and failure handling are documented once. "Auto" marks requests that fire without a click.
 
-Total rows mapped: **118** (see the count note at the end of this section).
+Total rows mapped: **117** (see the count note at the end of this section).
 
 ### 4.1 Application shell (every page)
 
@@ -363,7 +361,6 @@ Total rows mapped: **118** (see the count note at the end of this section).
 | Share form → Create link | `ShareFormButton` (`:73`) | **#60** | |
 | Share form → Revoke | `ShareFormButton` (`:80`) | **#61** | |
 | Confirm / Reject one field | `submittedChanges.tsx:191-192` | **#55** / **#56** | Each returns the whole submission |
-| Confirm all / Reject all | `submittedChanges.tsx:171-172` | **#57** / **#58** | |
 | Add to job (ADMIN, panel) | `JobAssignmentPanel` load | **#74** GET `/jobs?view=processing` | Paged; search re-queries |
 | Add to job → choose a job | `JobAssignmentPanel` (`:135-137`) | **#78** → **#39** | Sequential: re-reads the candidate |
 
@@ -485,7 +482,7 @@ Total rows mapped: **118** (see the count note at the end of this section).
 
 ### 4.15 Count note
 
-The tables above contain **118 rows**. A row that lists several calls counts once; the same action reached from two pages counts on each page. Actions that call **no** API (navigation links, PDF export, theme toggle) are only listed where they explain an API interaction.
+The tables above contain **117 rows**. A row that lists several calls counts once; the same action reached from two pages counts on each page. Actions that call **no** API (navigation links, PDF export, theme toggle) are only listed where they explain an API interaction.
 
 ---
 
@@ -641,7 +638,7 @@ All review routes run `router.param("reviewId")` first, which for a candidate-sc
 
 **#54 GET `.../form-submission`** (`candidateFormSubmissionService.js:44`). 6 parallel `findUnique`/`findMany`. Risk: **LOW**.
 
-**#55-#58 confirm/reject field/all** (`candidateFormFieldConfirmService.js`). Transaction (review row(s), candidate/details update, audit), then **#54 again** in the same request for the response. Risk: **LOW**.
+**#55-#56 confirm/reject field** (`candidateFormFieldConfirmService.js`). Transaction (review row, candidate/details update, audit), then **#54 again** in the same request for the response. Risk: **LOW**.
 
 **#59-#61 form-share status/create/revoke** (`candidateFormShareService.js:50, 93, 136`). 2 reads; create/revoke = transaction with `FOR UPDATE` lock on the access row, revoke earlier links, insert link, bump version, audit. Risk: **LOW**.
 
@@ -1168,7 +1165,7 @@ Therefore:
 |---|---|
 | **1. Measured slow APIs** | **None** (no measurements exist) |
 | **2. Potential bottlenecks (source-code evidence)** | #11, #12, #14, #16, #17, #21 (bell), #22, #35 (derived filters), #38, #62 (derived filters) — HIGH; the MEDIUM rows of §9.1 |
-| **3. Not yet measured** | All 114 endpoints |
+| **3. Not yet measured** | All 112 endpoints |
 
 ### 10.1 How to measure safely (future task, not implemented)
 
@@ -1285,7 +1282,7 @@ Expected benefits are qualitative until measured.
 |---|---|
 | `src/createApp.js` | App assembly, middleware order, `/health` |
 | `api/index.js`, `src/httpHandler.js` | Vercel entry (no worker, no listener) |
-| `src/routes/admin.js` | 90 admin routes, role tiers (`:201-217`), scope resolution (`:569-573`) |
+| `src/routes/admin.js` | 88 admin routes, role tiers (`:201-217`), scope resolution (`:569-573`) |
 | `src/routes/auth.js` | `/auth/me`, `/auth/complete-invite` |
 | `src/routes/users.js` | User management |
 | `src/routes/sheetSyncSettings.js` | Sheet Sync settings |
