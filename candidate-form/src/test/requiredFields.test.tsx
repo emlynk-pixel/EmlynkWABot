@@ -49,8 +49,13 @@ describe("all answers are required", () => {
         const data = validData();
         const visible = visiblePaths(data);
         const optional = visible.filter((path) => !requiredPaths(data).includes(path));
-        // Father = N/A (his other answers are not needed); Child 1 = N/A (no later children).
-        expect(optional.sort()).toEqual(["family.child2", "family.child3", "family.father.birthDate", "family.father.passportNumber", "family.father.surname"]);
+        // Father = N/A (his other answers are not needed); Single: no children are asked.
+        expect(optional.sort()).toEqual(["family.father.birthDate", "family.father.passportNumber", "family.father.surname"]);
+        // Not Single: Child 1 = N/A (no later children).
+        data.basic.civilStatus = "DIVORCED";
+        expect(errorsOf(data)).toEqual({});
+        const optionalDivorced = visiblePaths(data).filter((path) => !requiredPaths(data).includes(path));
+        expect(optionalDivorced.sort()).toEqual(["family.child2", "family.child3", "family.father.birthDate", "family.father.passportNumber", "family.father.surname"]);
     });
 
     test("FORM-REQ-001 every visible editable answer blocks Next while empty (Personal Details, then Work & Family Details)", async () => {
@@ -62,7 +67,8 @@ describe("all answers are required", () => {
         expect(personal.length).toBe(22);
         for (const control of personal) expect(control, control.id).toHaveAttribute("aria-invalid", "true");
 
-        fillBasic();
+        // Not Single, so the children are asked.
+        fillBasic("DIVORCED");
         setField("f.otherNames", "N/A");
         fillContact();
         await next(user);
@@ -123,7 +129,12 @@ describe("all answers are required", () => {
         }
         const sent = toPayload(validData());
         expect(sent.contact.alternativePhone).toBe("N/A"); // typed "n/a" in a field that is not capitalised
-        expect([sent.basic.otherNames, sent.family.child1, sent.family.mother.passportNumber]).toEqual(["N/A", "N/A", "N/A"]);
+        expect([sent.basic.otherNames, sent.family.mother.passportNumber]).toEqual(["N/A", "N/A"]);
+        // Child 1 is only sent when not Single (Single: no children, sent as null).
+        expect(sent.family.child1).toBeNull();
+        const divorced = validData();
+        divorced.basic.civilStatus = "DIVORCED";
+        expect(toPayload(divorced).family.child1).toBe("N/A");
     });
 
     test("FORM-REQ-004b in the form: n/a typed in the alternative number is accepted (no phone error)", async () => {

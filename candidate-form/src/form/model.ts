@@ -162,6 +162,8 @@ const answer = (path: string, value: string): string | null => {
 
 // Spouse details only go with Married.
 export const showsSpouse = (data: CandidateFormData) => data.basic.civilStatus === "MARRIED";
+// Children go with every Civil Status but Single (and while it is not answered yet).
+export const showsChildren = (data: CandidateFormData) => data.basic.civilStatus !== "SINGLE";
 // "Other Job Category" only goes with OTHER.
 export const showsOtherJobCategory = (data: CandidateFormData) => data.qualifications.jobCategory === OTHER_JOB_CATEGORY;
 
@@ -192,13 +194,17 @@ export function fromPayload(payload: CandidateFormPayload): CandidateFormData {
 
 // What is sent on submit (POST /submit). Blanks become null; "n/a" becomes "N/A".
 // Hidden entries are kept in the form (switching Civil Status back shows the
-// spouse again) but are never sent: no spouse unless Married, no "Other Job
-// Category" unless OTHER is chosen.
+// spouse again) but are never sent: no spouse unless Married, no children when
+// Single, no "Other Job Category" unless OTHER is chosen. The same payload is
+// the draft (Next sends its step's groups of it), so the draft never holds them either.
 export function toPayload(data: CandidateFormData): CandidateFormPayload {
     const clean = <T extends Record<string, string>>(prefix: string, group: T) =>
         Object.fromEntries(Object.entries(group).map(([key, value]) => [key, answer(`${prefix}.${key}`, value)])) as { [K in keyof T]: string | null };
     const person = (who: "father" | "mother" | "spouse") => clean(`family.${who}`, data.family[who]);
     const nobody = { name: null, surname: null, passportNumber: null, birthDate: null };
+    const children = showsChildren(data)
+        ? { child1: answer("family.child1", data.family.child1), child2: answer("family.child2", data.family.child2), child3: answer("family.child3", data.family.child3) }
+        : { child1: null, child2: null, child3: null };
     return {
         basic: clean("basic", data.basic),
         contact: clean("contact", data.contact),
@@ -209,9 +215,7 @@ export function toPayload(data: CandidateFormData): CandidateFormPayload {
             father: person("father"),
             mother: person("mother"),
             spouse: showsSpouse(data) ? person("spouse") : nobody,
-            child1: answer("family.child1", data.family.child1),
-            child2: answer("family.child2", data.family.child2),
-            child3: answer("family.child3", data.family.child3),
+            ...children,
             fatherAlive: answer("family.fatherAlive", data.family.fatherAlive),
             motherAlive: answer("family.motherAlive", data.family.motherAlive),
         },

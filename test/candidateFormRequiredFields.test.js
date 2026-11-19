@@ -46,16 +46,17 @@ describe("server: every answer is required (parseSubmission)", () => {
         const result = parse(ANSWERS());
         assert.deepEqual(result.errors, undefined);
         const v = result.values;
-        assert.deepEqual([v.otherNames, v.alternativePhone, v.otherSkills1, v.otherSkills2, v.fatherName, v.motherPassportNumber, v.child1Name], ["N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]);
+        assert.deepEqual([v.otherNames, v.alternativePhone, v.otherSkills1, v.otherSkills2, v.fatherName, v.motherPassportNumber], ["N/A", "N/A", "N/A", "N/A", "N/A", "N/A"]);
         assert.deepEqual([v.fatherSurname, v.fatherBirthDate, v.child2Name, v.child3Name], [null, null, null, null], "not applicable: allowed to stay empty");
+        assert.equal(v.child1Name, null, "Single: no children are stored");
         assert.equal(v.shoeSize, "9", "the UK shoe size is stored as before");
     });
 
     test("FORM-REQ-009 a manipulated submission that leaves out or blanks any always-required answer is refused, field by field", () => {
         const always = ANSWER_FIELDS
             .map(([group, key]) => `${group}.${key}`)
-            .filter((path) => !path.startsWith("family.spouse.") && !["qualifications.jobCategoryOther", "family.child2", "family.child3", "family.father.surname", "family.father.passportNumber", "family.father.birthDate"].includes(path));
-        assert.equal(always.length, 46); // 56 answers less the 4 spouse, Other Job Category, Child 2 / 3 and the 3 conditional father answers
+            .filter((path) => !path.startsWith("family.spouse.") && !["qualifications.jobCategoryOther", "family.child1", "family.child2", "family.child3", "family.father.surname", "family.father.passportNumber", "family.father.birthDate"].includes(path));
+        assert.equal(always.length, 45); // 56 answers less the 4 spouse, Other Job Category, Child 1 / 2 / 3 (none when Single) and the 3 conditional father answers
         for (const path of always) {
             for (const blank of ["", "   ", null, undefined]) {
                 const answers = ANSWERS();
@@ -73,8 +74,9 @@ describe("server: every answer is required (parseSubmission)", () => {
             }
         }
         // No answers at all: every always-required answer is reported, plus the father's three
-        // (with no "N/A" name he applies): 39, the same total the form shows for an empty form.
-        assert.equal(fields(parse({})).length, always.length + 3);
+        // (with no "N/A" name he applies) and Child 1 (no Civil Status is not Single).
+        assert.equal(fields(parse({})).length, always.length + 4);
+        assert.ok(fields(parse({})).includes("family.child1:required"));
     });
 
     test("FORM-REQ-009b N/A is refused on the server wherever the form refuses it, and never reaches a format check", () => {
@@ -106,6 +108,7 @@ describe("server: every answer is required (parseSubmission)", () => {
         assert.deepEqual(fields(parse(father)), []);
 
         const children = ANSWERS();
+        children.basic.civilStatus = "DIVORCED"; // children are asked only when not Single
         children.family.child1 = "nimal";
         assert.deepEqual(fields(parse(children)), ["family.child2:required"]);
         children.family.child2 = "kasun";
@@ -127,6 +130,33 @@ describe("server: every answer is required (parseSubmission)", () => {
         const result = parse(answers);
         assert.equal(result.errors, undefined, JSON.stringify(result.errors));
         assert.deepEqual([result.values.spouseName, result.values.spousePassportNumber, result.values.spouseBirthDate, result.values.jobCategoryOther], [null, null, null, null]);
+    });
+
+    test("FORM-REQ-011 (server) Single has no children: null children are accepted, sent names are dropped; every other status still needs Child 1", () => {
+        const none = ANSWERS();
+        Object.assign(none.family, { child1: null, child2: null, child3: null });
+        const accepted = parse(none);
+        assert.equal(accepted.errors, undefined, JSON.stringify(accepted.errors));
+        assert.deepEqual([accepted.values.child1Name, accepted.values.child2Name, accepted.values.child3Name], [null, null, null]);
+
+        const sent = ANSWERS();
+        Object.assign(sent.family, { child1: "nimal", child2: "", child3: "x".repeat(500) });
+        const dropped = parse(sent);
+        assert.equal(dropped.errors, undefined, "no Child 2 needed, no length error: the children are hidden");
+        assert.deepEqual([dropped.values.child1Name, dropped.values.child2Name, dropped.values.child3Name], [null, null, null]);
+
+        for (const status of ["MARRIED", "DIVORCED", "WIDOWED"]) {
+            const other = ANSWERS();
+            other.basic.civilStatus = status;
+            other.family.spouse = { name: "nadeesha", surname: "silva", passportNumber: "N/A", birthDate: "1992-07-08" };
+            for (const blank of [null, "", undefined]) {
+                if (blank === undefined) delete other.family.child1;
+                else other.family.child1 = blank;
+                assert.deepEqual(fields(parse(other)), ["family.child1:required"], `${status} child1=${JSON.stringify(blank)}`);
+            }
+            other.family.child1 = "n/a";
+            assert.equal(parse(other).values.child1Name, "N/A", status);
+        }
     });
 
     test("N/A is never offered to staff as a value for the candidate's record", () => {
@@ -238,8 +268,34 @@ describe("server: required answers over the real API", () => {
         const r = await submit(token);
         assert.equal(r.status, 200, JSON.stringify(r.body));
         const saved = await prisma.candidateFormResponse.findUnique({ where: { passportId: A.passportId } });
-        assert.deepEqual([saved.alternativePhone, saved.otherNames, saved.fatherName, saved.child1Name, saved.shoeSize], ["N/A", "N/A", "N/A", "N/A", "9"]);
+        assert.deepEqual([saved.alternativePhone, saved.otherNames, saved.fatherName, saved.child1Name, saved.shoeSize], ["N/A", "N/A", "N/A", null, "9"]);
         assert.equal(await accessOf(A), "SUBMITTED");
+    });
+
+    test("FORM-REQ-011 (API) Single submits with null children (stored null, even when names are sent); Married or Divorced without Child 1 is 400", async () => {
+        const single = ANSWERS();
+        Object.assign(single.family, { child1: null, child2: null, child3: null });
+        assert.equal((await submit(await session(await singleLink(A), A), single)).status, 200);
+        const withNames = ANSWERS();
+        Object.assign(withNames.family, { child1: "nimal", child2: "kasun", child3: "" });
+        assert.equal((await submit(await session(await singleLink(B), B), withNames, "key-required-000006")).status, 200);
+        for (const c of [A, B]) {
+            const saved = await prisma.candidateFormResponse.findUnique({ where: { passportId: c.passportId } });
+            assert.deepEqual([saved.child1Name, saved.child2Name, saved.child3Name], [null, null, null], c.passportId);
+        }
+
+        const token = await session(await singleLink(D), D);
+        for (const [i, status] of ["MARRIED", "DIVORCED"].entries()) {
+            const other = ANSWERS();
+            other.basic.civilStatus = status;
+            other.family.spouse = { name: "nadeesha", surname: "silva", passportNumber: "N/A", birthDate: "1992-07-08" };
+            other.family.child1 = null;
+            const r = await submit(token, other, `key-required-00001${i}`);
+            assert.equal(r.status, 400, status);
+            assert.deepEqual(r.body.errors.map((e) => `${e.field}:${e.code}`), ["family.child1:required"], status);
+        }
+        assert.equal(await stored(D), 0);
+        assert.equal(await accessOf(D), "UNLOCKED");
     });
 });
 

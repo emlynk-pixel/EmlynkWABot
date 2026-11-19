@@ -1,5 +1,5 @@
 import type { MessageKey, MessageParams } from "../i18n/translations";
-import { NOT_APPLICABLE_FIELDS, isNotApplicable, isNotApplicableFor, showsOtherJobCategory, showsSpouse, type CandidateFormData, type FormGroup } from "./model";
+import { NOT_APPLICABLE_FIELDS, isNotApplicable, isNotApplicableFor, showsChildren, showsOtherJobCategory, showsSpouse, type CandidateFormData, type FormGroup } from "./model";
 import { parseHeight, parseWeight } from "./measurements";
 import { BLOOD_GROUPS, CIVIL_STATUS_OPTIONS, ENGLISH_LEVELS, JOB_CATEGORIES, SEX_OPTIONS, SHIRT_SIZES, YES_NO, jobCategoryChoices } from "./options";
 import { CITY_PATTERN, MAX_CITY_LENGTH } from "./romania";
@@ -146,7 +146,8 @@ export function validateForm(data: CandidateFormData, today = todayInSriLanka(),
         passportNumber(`family.${who}.passportNumber`, person.passportNumber);
         date(`family.${who}.birthDate`, person.birthDate, true);
     }
-    for (const child of ["child1", "child2", "child3"] as const) length(`family.${child}`, data.family[child], MAX_LENGTH.text);
+    // (children only when not Single)
+    if (showsChildren(data)) for (const child of ["child1", "child2", "child3"] as const) length(`family.${child}`, data.family[child], MAX_LENGTH.text);
     oneOf("family.fatherAlive", data.family.fatherAlive, YES_NO);
     oneOf("family.motherAlive", data.family.motherAlive, YES_NO);
 
@@ -174,7 +175,8 @@ const PERSON_FIELDS = ["name", "surname", "passportNumber", "birthDate"] as cons
 const CHILDREN = ["child1", "child2", "child3"] as const;
 
 // Every answer the candidate can currently see and edit (hidden ones are not
-// sent: the spouse unless Married, "Other Job Category" unless OTHER).
+// sent: the spouse unless Married, the children when Single, "Other Job Category"
+// unless OTHER).
 export function visiblePaths(data: CandidateFormData): string[] {
     const paths: string[] = [];
     for (const group of ["basic", "contact", "passport", "qualifications", "measurements", "guardian"] as const) {
@@ -187,7 +189,7 @@ export function visiblePaths(data: CandidateFormData): string[] {
         for (const field of PERSON_FIELDS) paths.push(`family.${who}.${field}`);
         if (who !== "spouse") paths.push(`family.${who}Alive`);
     }
-    for (const child of CHILDREN) paths.push(`family.${child}`);
+    if (showsChildren(data)) for (const child of CHILDREN) paths.push(`family.${child}`);
     return paths;
 }
 
@@ -198,7 +200,8 @@ export function visiblePaths(data: CandidateFormData): string[] {
 //     (Father / Mother Alive is still asked: it is Yes or No, never "N/A");
 //   - children: Child 1 always ("N/A" for none); Child 2 only after a real Child 1,
 //     Child 3 only after a real Child 2;
-//   - the spouse (when Married) and "Other Job Category" (with OTHER) only while shown.
+//   - the spouse (when Married), the children (unless Single) and "Other Job Category"
+//     (with OTHER) only while shown.
 export function requiredPaths(data: CandidateFormData): string[] {
     const skip = new Set<string>();
     for (const who of ["father", "mother"] as const) {

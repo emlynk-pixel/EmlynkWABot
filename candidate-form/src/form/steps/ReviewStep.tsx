@@ -2,7 +2,7 @@ import { TRANSLATIONS, type Language, type MessageKey } from "../../i18n/transla
 import { useLanguage } from "../../i18n/useLanguage";
 import type { FormLoadResponse, RomanianCity } from "../../types/api";
 import { formatCm, formatKg, parseHeight, parseWeight } from "../measurements";
-import { isNotApplicableFor, showsOtherJobCategory, showsSpouse, type CandidateFormData } from "../model";
+import { isNotApplicableFor, showsChildren, showsOtherJobCategory, showsSpouse, type CandidateFormData } from "../model";
 import { findCity } from "../romania";
 import { jobCategoryLabel } from "../options";
 import { SECTIONS, type SectionId } from "../steps";
@@ -76,9 +76,11 @@ function rowsFor(section: SectionId, data: CandidateFormData): Row[] {
                 ...person("father"),
                 ...person("mother"),
                 ...(showsSpouse(data) ? person("spouse") : []),
-                { label: "f.child1", path: "family.child1" },
-                { label: "f.child2", path: "family.child2" },
-                { label: "f.child3", path: "family.child3" },
+                ...(showsChildren(data) ? [
+                    { label: "f.child1" as const, path: "family.child1" },
+                    { label: "f.child2" as const, path: "family.child2" },
+                    { label: "f.child3" as const, path: "family.child3" },
+                ] : []),
             ];
         }
         case "guardian":

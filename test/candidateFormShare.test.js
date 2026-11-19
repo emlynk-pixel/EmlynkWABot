@@ -278,8 +278,8 @@ describe("submission (once)", () => {
         assert.equal(saved.fatherPassportNumber, "N7654321");
         assert.equal(saved.guardianNic, "901234567V");
         assert.equal(saved.city, "NEGOMBO");
-        assert.deepEqual([saved.otherSkills1, saved.otherSkills2, saved.motherPassportNumber, saved.child1Name], ["N/A", "N/A", "N/A", "N/A"], "n/a in any case is stored as N/A");
-        assert.deepEqual([saved.child2Name, saved.child3Name], [null, null], "no children (Child 1 = N/A): the later child answers are not needed and stay empty");
+        assert.deepEqual([saved.otherSkills1, saved.otherSkills2, saved.motherPassportNumber], ["N/A", "N/A", "N/A"], "n/a in any case is stored as N/A");
+        assert.deepEqual([saved.child1Name, saved.child2Name, saved.child3Name], [null, null, null], "no children when Single: the child answers are never stored");
         assert.equal(saved.spouseName, null, "hidden spouse answers are never stored (civil status SINGLE)");
         assert.equal(saved.jobCategoryOther, null);
         const after = await rowOf(A.passportId);
