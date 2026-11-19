@@ -23,6 +23,7 @@ import { ROW_STATUS, sourceCells, validateLegacyRow } from "./candidateImportRow
 import { maskIdentifier, normalizePassport, unknownJobRoles } from "./candidateImportNormalizers.js";
 import {
     ROW_ACTION, VISA_OUTCOMES, findAgentsByKeys, findClientsByKeys, findSourceFlags, importActions, loadImportSnapshot, planRows, summarizePlans,
+    tallyUnmatchedOfficers, unmatchedOfficersOf,
 } from "./candidateImportClassifier.js";
 import { describeIssues } from "./candidateImportIssues.js";
 import { applySuffixEdits, buildJobGroupPlan, executeJobGroups, GROUP_STATE, jobGroupView, loadJobGroupContext, noteGroupOutcomes, plannedJobMembers } from "./importJobGroups.js";
@@ -346,6 +347,7 @@ export async function previewImport({ db, actor, fileName, headers, rows, idempo
         importId, chunkSize: IMPORT_CHUNK_SIZE, chunkCount: chunks.length, expiresAt: new Date(new Date(record.createdAt).getTime() + IMPORT_PREVIEW_TTL_MS).toISOString(),
         summary, columns, problems: problems.slice(0, MAX_PROBLEM_ROWS).map(problemOf), problemsTruncated: problems.length > MAX_PROBLEM_ROWS,
         rowIssues: rowIssuesOf(plans), actions: importActions(plans), jobGroups: jobGroups.map(jobGroupView),
+        unmatchedOfficers: unmatchedOfficersOf(plans),
     };
 }
 
@@ -690,12 +692,17 @@ async function executeOrg(tx, plans, { importId, actor, audits, effects, ledger 
 const OUTCOME_BY_ACTION = { [ROW_ACTION.CREATE]: ROW_OUTCOME.CREATED, [ROW_ACTION.FILL]: ROW_OUTCOME.FILLED, [ROW_ACTION.NO_CHANGE]: ROW_OUTCOME.NO_CHANGE, [ROW_ACTION.SKIP_VERIFIED]: ROW_OUTCOME.SKIPPED_VERIFIED };
 const OUTCOME_BY_STATUS = { [ROW_STATUS.INVALID]: ROW_OUTCOME.INVALID, [ROW_STATUS.DUPLICATE]: ROW_OUTCOME.DUPLICATE, [ROW_STATUS.CONFLICT]: ROW_OUTCOME.CONFLICT };
 
-// { r: row number, o: outcome, c: reason codes, w: had a warning, e?: what else was written }
+// { r: row number, o: outcome, c: reason codes, w: had a warning, e?: what else was written, u?: unmatched officer }
 // e: { allocated, testSet, stagesCompleted, departed, outcome, clientCreated, agentCreated } (only the non-zero ones)
+// u: the sheet's OFFICER of an imported row that matched no user (the commit result's unmatchedOfficers).
 function outcomeOf(plan, effect = {}) {
     const outcome = { r: plan.rowNumber, o: OUTCOME_BY_ACTION[plan.action] ?? OUTCOME_BY_STATUS[plan.status] ?? ROW_OUTCOME.FAILED, c: plan.codes, w: plan.status === ROW_STATUS.WARNING };
+    if (plan.unmatchedOfficer && (plan.status === ROW_STATUS.VALID || plan.status === ROW_STATUS.WARNING)) outcome.u = plan.unmatchedOfficer;
     return Object.keys(effect).length ? { ...outcome, e: effect } : outcome;
 }
+
+// The rows' unmatched officers -> [{ name, rows }] (tallyUnmatchedOfficers), in row order.
+const unmatchedOfficersOfRows = (rows) => tallyUnmatchedOfficers(rows.filter((row) => row.u).map((row) => row.u));
 
 // A retry never loses an earlier attempt's write: a row CREATED / FILLED before keeps that outcome.
 function mergeOutcomes(previous, current) {
@@ -881,7 +888,7 @@ function present(chunkIndex, result, canonical, extra = {}) {
     const passportOf = (row) => row.values[PASSPORT_HEADER] ?? "";
     const masked = new Map(canonical.map((row) => [row.rowNumber, maskIdentifier(normalizePassport(passportOf(row)).value ?? passportOf(row))]));
     return {
-        chunkIndex, status: result.status, counts: result.counts, ...extra,
+        chunkIndex, status: result.status, counts: result.counts, unmatchedOfficers: unmatchedOfficersOfRows(result.rows), ...extra,
         failures: result.rows.filter((row) => row.o === ROW_OUTCOME.FAILED).map((row) => ({
             rowNumber: row.r, passport: masked.get(row.r) ?? "***", codes: row.c, errors: describeIssues(row.c.map((code) => ({ code }))).errors,
         })),
@@ -957,8 +964,14 @@ async function closeImport({ db, actor, importId, abort, now = new Date() }) {
     return finishedView(record, { sync });
 }
 
+// unmatchedOfficers: the whole import's, from every committed chunk (in chunk and row order).
 function finishedView(record, extra = {}) {
-    return { importId: record.importId, status: record.status, totalRows: record.totalRows, counts: record.resultCounts ?? {}, syncRunId: record.syncRunId ?? null, ...extra };
+    const results = record.chunkResults ?? {};
+    const rows = Object.keys(results).sort((a, b) => Number(a) - Number(b)).flatMap((index) => results[index]?.rows ?? []);
+    return {
+        importId: record.importId, status: record.status, totalRows: record.totalRows, counts: record.resultCounts ?? {}, syncRunId: record.syncRunId ?? null,
+        unmatchedOfficers: unmatchedOfficersOfRows(rows), ...extra,
+    };
 }
 
 // The import's state (for a page reload): counts and statuses only.

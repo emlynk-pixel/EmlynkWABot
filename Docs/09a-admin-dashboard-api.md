@@ -730,12 +730,12 @@ ADMIN only (an OWNER too; `requireRole`): every other role gets 403. Rules: `Doc
 
 ### `GET /api/admin/work-allocation/candidates?status=&analystId=&search=&page=`
 
-- `status`: `UNALLOCATED` (default) or `ALLOCATED`. `analystId` (with `ALLOCATED`): one Analyst's candidates. `search`: as `GET /candidates`. `page`: 100 a page, newest registered first.
+- `status`: `UNALLOCATED` (default), `ALLOCATED` or `COMPLETED`. `COMPLETED` lists the completed placements (outcome `CANCELLED` or `REJECTED`, or departed), allocated or not; `UNALLOCATED` and `ALLOCATED` leave them out (`Docs/20-candidate-management.md` §4.5). `analystId` (with `ALLOCATED` or `COMPLETED`; ignored on `UNALLOCATED`): one Analyst's candidates. `search`: as `GET /candidates`. `page`: 100 a page, newest registered first.
 - Each item: `passportId, uniqueId, name, nic, jobTypes, whatsappNumber, contactNumber, registeredDate, stagesCompleted, stagesTotal, currentStage, analyst ({ analystId, name, active } or null), assignedDate`, plus `pagination` and `filters`.
 
 ### `GET /api/admin/work-allocation/analysts`
 
-`{ analysts: [{ analystId, name, email, role, assignedCount }], unavailableAnalysts: [{ analystId, name, role, assignedCount }], unallocatedCount }`. `analysts` holds the ACTIVE Analysts and ACTIVE Team Leads (`role` is `ANALYST` or `TEAM_LEAD`), the only valid targets, whoever asks. `unavailableAnalysts` holds users who still have candidates but are no longer active, or no longer an Analyst or Team Lead. The counts come from one grouped query.
+`{ analysts: [{ analystId, name, email, role, assignedCount }], unavailableAnalysts: [{ analystId, name, role, assignedCount }], unallocatedCount, completedCount }`. `unallocatedCount` is the Unallocated view (completed placements excluded); `completedCount` is the Completed view, allocated or not. `assignedCount` is every candidate the user holds, completed ones included. `analysts` holds the ACTIVE Analysts and ACTIVE Team Leads (`role` is `ANALYST` or `TEAM_LEAD`), the only valid targets, whoever asks. `unavailableAnalysts` holds users who still have candidates but are no longer active, or no longer an Analyst or Team Lead. The counts come from one grouped query.
 
 ### `POST /api/admin/work-allocation/assign`
 

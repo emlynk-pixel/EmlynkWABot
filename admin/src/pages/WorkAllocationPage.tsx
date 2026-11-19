@@ -31,7 +31,7 @@ import { Card, EmptyState, ErrorState, LoadingState } from "../components/States
 // assigns the whole selection (all or nothing on the server).
 // Filters (the Candidates list's, components/AdvancedFilters.tsx) are URL
 // parameters sent to the server, which applies them BEFORE paging and always together with the
-// view (Unallocated / Allocated): the count and every page are those of the whole filtered list,
+// view (Unallocated / Allocated / Completed): the count and every page are those of the whole filtered list,
 // never a filter over the rows already loaded.
 
 const th = "h-10 whitespace-nowrap border-b border-border px-3 text-left text-label-md text-ink";
@@ -40,7 +40,7 @@ const countInput = "h-8 w-16 rounded-lg border border-border-strong bg-surface p
 
 // The filters' URL parameters: the API names, except the ones this page used before the advanced
 // filters (kept, so existing links still work). The view is the allocation, so there is no
-// allocation filter; the Analyst ("analyst") is the Officer filter, on Allocated only.
+// allocation filter; the Analyst ("analyst") is the Officer filter, on Allocated and Completed only.
 const LEGACY_PARAMS: Partial<Record<FilterKey, string>> = { registeredFrom: "from", registeredTo: "to", workflowStatus: "wstatus", analystId: "analyst" };
 const FILTER_PARAMS = FILTER_KEYS.filter((key) => key !== "allocation").map((key) => [key, LEGACY_PARAMS[key] ?? key] as const);
 const HIDDEN_UNALLOCATED: FilterKey[] = ["allocation", "analystId"];
@@ -57,7 +57,10 @@ function TeamLeadBadge() {
 const VIEWS: { status: AllocationStatus; label: string }[] = [
     { status: "UNALLOCATED", label: "Unallocated" },
     { status: "ALLOCATED", label: "Allocated" },
+    { status: "COMPLETED", label: "Completed" },
 ];
+const VIEW_PARAM: Record<AllocationStatus, string | null> = { UNALLOCATED: null, ALLOCATED: "allocated", COMPLETED: "completed" };
+const viewFromParam = (value: string | null): AllocationStatus => (value === "allocated" ? "ALLOCATED" : value === "completed" ? "COMPLETED" : "UNALLOCATED");
 
 export function WorkAllocationPage() {
     const { user } = useAuth();
@@ -78,16 +81,18 @@ export function WorkAllocationPage() {
 function WorkAllocationView() {
     const { token, user } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
-    const status: AllocationStatus = searchParams.get("view") === "allocated" ? "ALLOCATED" : "UNALLOCATED";
+    const status = viewFromParam(searchParams.get("view"));
     // Status is the candidate's workflow status; "Assigned to" is the allocation (Unallocated rows say so).
-    // One Analyst (the header's select) or several (Filters), comma-separated.
-    const analystFilter = status === "ALLOCATED" ? searchParams.get("analyst") || undefined : undefined;
+    // One Analyst (the header's select) or several (Filters), comma-separated. Completed filters by the
+    // current holder, like Allocated.
+    const analystView = status !== "UNALLOCATED";
+    const analystFilter = analystView ? searchParams.get("analyst") || undefined : undefined;
     const search = searchParams.get("search") || undefined;
     const pageNumber = Number(searchParams.get("page"));
     const page = Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : 1;
 
     const panelFilters = cleanFilters(Object.fromEntries(FILTER_PARAMS.map(([key, param]) => [key, searchParams.get(param) ?? ""])));
-    if (status !== "ALLOCATED") delete panelFilters.analystId;
+    if (!analystView) delete panelFilters.analystId;
     // The Analyst goes to the server as analystId (as the header's select always sent it).
     const filters: CandidateFilters = { ...panelFilters };
     delete filters.analystId;
@@ -137,7 +142,7 @@ function WorkAllocationView() {
         const clean = cleanFilters(next);
         go(Object.fromEntries(FILTER_PARAMS.map(([key, param]) => [param, clean[key] ?? null])));
     };
-    const filterFields = useFilterFields({ value: panelFilters, options: filterOptions.data, hidden: status === "ALLOCATED" ? HIDDEN_ALLOCATED : HIDDEN_UNALLOCATED, onChange: applyFilters });
+    const filterFields = useFilterFields({ value: panelFilters, options: filterOptions.data, hidden: analystView ? HIDDEN_ALLOCATED : HIDDEN_UNALLOCATED, onChange: applyFilters });
     const clearFilters = () => applyFilters({});
 
     const items = list.status === "error" ? [] : list.data?.items ?? [];
@@ -319,9 +324,13 @@ function WorkAllocationView() {
             ? "There are no candidates on this page."
             : status === "UNALLOCATED"
                 ? "All candidates are currently allocated."
-                : analystFilter
-                    ? "No candidates are allocated to this Analyst."
-                    : "No candidates are allocated yet.";
+                : status === "COMPLETED"
+                    ? analystFilter
+                        ? "No completed candidates are allocated to this Analyst."
+                        : "No candidates are cancelled, rejected or departed yet."
+                    : analystFilter
+                        ? "No candidates are allocated to this Analyst."
+                        : "No candidates are allocated yet.";
     const filterAnalysts = [...activeAnalysts, ...(analysts.data?.unavailableAnalysts ?? [])];
 
     return (
@@ -342,11 +351,12 @@ function WorkAllocationView() {
                             key={view.status}
                             type="button"
                             aria-pressed={status === view.status}
-                            onClick={() => go({ view: view.status === "ALLOCATED" ? "allocated" : null, analyst: null })}
+                            onClick={() => go({ view: VIEW_PARAM[view.status], analyst: null })}
                             className={`h-8 rounded-lg px-3 text-label-md ${status === view.status ? "bg-primary text-on-primary" : "text-ink-soft hover:bg-canvas"}`}
                         >
                             {view.label}
                             {view.status === "UNALLOCATED" && analysts.data && <span className="ml-1.5 tabular-nums opacity-80">{formatNumber(analysts.data.unallocatedCount)}</span>}
+                            {view.status === "COMPLETED" && typeof analysts.data?.completedCount === "number" && <span className="ml-1.5 tabular-nums opacity-80">{formatNumber(analysts.data.completedCount)}</span>}
                         </button>
                     ))}
                 </div>
@@ -386,7 +396,7 @@ function WorkAllocationView() {
                     <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2">
                         <span className="text-label-md text-ink tabular-nums" aria-live="polite">{formatNumber(selectedCount)} selected</span>
                         {selectedCount > 0 && <button type="button" onClick={clearSelection} className="text-label-md text-primary hover:underline">Clear selection</button>}
-                        {status === "ALLOCATED" && (
+                        {analystView && (
                             <label className="ml-auto flex items-center gap-2 text-label-md text-ink-soft">
                                 Analyst
                                 <select

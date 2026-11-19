@@ -212,7 +212,8 @@ describe("saving a step with Next", () => {
         const saves = drafts(calls).map(bodyOf);
         expect(saves.map((save) => save.step)).toEqual(["personal", "work"]);
         expect(Object.keys(saves[1].answers).sort()).toEqual([...WORK].sort());
-        expect(saves[1].answers.family).toMatchObject({ child1: "N/A" });
+        // Single: no children are sent.
+        expect(saves[1].answers.family).toMatchObject({ child1: null, child2: null, child3: null });
     });
 
     test("a step that fails the form's checks is neither saved nor left", async () => {

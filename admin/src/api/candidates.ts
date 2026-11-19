@@ -1,5 +1,6 @@
 import { apiRequest, uploadToSignedUrl } from "./client";
 import type { CandidateJobAssignment } from "./jobs";
+import type { AllocationStatus } from "./workAllocation";
 
 // Admin > Candidates (src/routes/admin.js, /api/admin/candidates/*).
 // Reads for every admin; changes need ANALYST or above (checked on the server).
@@ -283,7 +284,7 @@ export function listCandidates(token: string, params: { page: number; pageSize: 
 // a few candidates, best match first. allocation: Work Allocation's view.
 export type CandidateSuggestion = { passportId: string; name: string | null; nic: string | null };
 export const SUGGESTION_MIN_LENGTH = 2;
-export function getCandidateSuggestions(token: string, q: string, options: { allocation?: "ALLOCATED" | "UNALLOCATED" } = {}, signal?: AbortSignal): Promise<{ items: CandidateSuggestion[] }> {
+export function getCandidateSuggestions(token: string, q: string, options: { allocation?: AllocationStatus } = {}, signal?: AbortSignal): Promise<{ items: CandidateSuggestion[] }> {
     const query = new URLSearchParams({ q });
     if (options.allocation) query.set("allocation", options.allocation);
     return apiRequest<{ items: CandidateSuggestion[] }>(`/api/admin/candidate-suggestions?${query.toString()}`, { token, signal });

@@ -478,5 +478,92 @@ describe("Work Allocation API: lists and workload", () => {
         assert.deepEqual(body.analysts.map((a) => [a.name, a.assignedCount]), [["Ann Analyst", 3], ["Ben Analyst", 2], ["Cal Analyst", 0]]);
         assert.deepEqual(body.unavailableAnalysts.map((a) => [a.name, a.assignedCount]), [["Gus Gone", 1]]);
         assert.equal(body.unallocatedCount, TOTAL - 6);
+        assert.equal(body.completedCount, 0);
+    });
+});
+
+describe("Work Allocation API: Completed placements", () => {
+    // Ann: P1 (Departed), P2, P3. Ben: P4 (Cancelled), P5. Unallocated: P6 (Departed), P20 (Rejected),
+    // P21 (Visa Not Going: not completed), the rest.
+    async function seedFinalStatuses() {
+        await seedAllocations();
+        const at = new Date("2026-02-01T00:00:00Z");
+        for (const i of [1, 6]) await prisma.candidate.update({ where: { passportId: pid(i) }, data: { departedAt: at } });
+        for (const [i, outcome] of [[4, "CANCELLED"], [20, "REJECTED"], [21, "VISA_NOT_GOING"]]) {
+            await prisma.candidate.update({ where: { passportId: pid(i) }, data: { outcome, outcomeAt: at } });
+        }
+    }
+    const view = async (query) => {
+        const { status, body } = await api(USERS.OWNER, "GET", `/work-allocation/candidates?${query}`);
+        assert.equal(status, 200, query);
+        return { ids: body.items.map((item) => item.passportId), total: body.pagination.totalItems, body };
+    };
+
+    test("COMPLETED lists Departed, Cancelled and Rejected candidates, allocated or not; never Visa Not Going", async () => {
+        await seedFinalStatuses();
+        const completed = await view("status=COMPLETED");
+        assert.deepEqual(completed.ids, [pid(20), pid(6), pid(4), pid(1)]);
+        assert.equal(completed.total, 4);
+        assert.equal(completed.body.filters.status, "COMPLETED");
+        assert.deepEqual(completed.body.items.map((item) => item.workflowStatus?.code), ["REJECTED", "DEPARTED", "CANCELLED", "DEPARTED"]);
+        assert.deepEqual(completed.body.items.map((item) => item.analyst?.name ?? null), [null, null, "Ben Analyst", "Ann Analyst"], "the allocation is kept");
+        assert.equal(await prisma.candidateAllocation.count({ where: { passportId: { in: [pid(1), pid(4)] } } }), 2);
+        assert.equal((await api(USERS.OWNER, "GET", "/work-allocation/candidates?status=completed")).status, 400, "the values are upper case, like UNALLOCATED / ALLOCATED");
+    });
+
+    test("UNALLOCATED and ALLOCATED leave out completed placements; Visa Not Going stays in its allocation view", async () => {
+        await seedFinalStatuses();
+        const unallocated = await view("status=UNALLOCATED");
+        assert.equal(unallocated.total, TOTAL - 5 - 2);
+        assert.ok(!unallocated.ids.includes(pid(6)) && !unallocated.ids.includes(pid(20)));
+        assert.ok(unallocated.ids.includes(pid(21)));
+        assert.equal((await view("")).total, TOTAL - 7, "UNALLOCATED is the default");
+        assert.deepEqual((await view("status=ALLOCATED")).ids, [pid(5), pid(3), pid(2)]);
+    });
+
+    test("the Completed view takes the Analyst filter (current holder), the search and the other filters, before paging", async () => {
+        await seedFinalStatuses();
+        assert.deepEqual((await view(`status=COMPLETED&analystId=${USERS.ANN.adminId}`)).ids, [pid(1)]);
+        assert.deepEqual((await view(`status=COMPLETED&analystId=${USERS.ANN.adminId},${USERS.BEN.adminId}`)).ids, [pid(4), pid(1)]);
+        assert.deepEqual((await view(`status=COMPLETED&analystId=${USERS.CAL.adminId}`)).ids, []);
+        assert.deepEqual((await view("status=COMPLETED&search=0710000006")).ids, [pid(6)]);
+        assert.deepEqual((await view("status=COMPLETED&workflowStatus=DEPARTED")).ids, [pid(6), pid(1)]);
+        assert.deepEqual((await view(`status=UNALLOCATED&analystId=${USERS.ANN.adminId}`)).total, TOTAL - 7, "still ignored on Unallocated");
+    });
+
+    test("counts: unallocatedCount leaves out completed placements; completedCount counts them, allocated or not", async () => {
+        await seedFinalStatuses();
+        const { body } = await api(USERS.ADMIN, "GET", "/work-allocation/analysts");
+        assert.equal(body.unallocatedCount, TOTAL - 5 - 2);
+        assert.equal(body.completedCount, 4);
+    });
+
+    test("search suggestions follow the Work Allocation view (COMPLETED too); the Candidates page's allocation filter is unchanged", async () => {
+        await seedFinalStatuses();
+        const suggest = async (query) => {
+            const { status, body } = await api(USERS.OWNER, "GET", `/candidate-suggestions?${query}`);
+            assert.equal(status, 200, query);
+            return body.items.map((item) => item.passportId).sort();
+        };
+        assert.deepEqual(await suggest("q=Given20&allocation=COMPLETED"), [pid(20)]);
+        assert.deepEqual(await suggest("q=Given20&allocation=UNALLOCATED"), []);
+        assert.deepEqual(await suggest("q=Given21&allocation=UNALLOCATED"), [pid(21)]);
+        assert.deepEqual(await suggest("q=Surname&allocation=ALLOCATED"), [pid(2), pid(3), pid(5)]);
+        assert.deepEqual(await suggest("q=Given20"), [pid(20)], "no view: every candidate");
+        assert.equal((await api(USERS.OWNER, "GET", "/candidate-suggestions?q=Given20&allocation=BOTH")).status, 400);
+        // Admin > Candidates: allocation= is the allocation row only, completed placements included.
+        assert.equal((await listIds(USERS.OWNER, "?allocation=UNALLOCATED")).pagination.totalItems, TOTAL - 5);
+        assert.equal((await listIds(USERS.OWNER, "?allocation=ALLOCATED")).pagination.totalItems, 5);
+        assert.equal((await api(USERS.OWNER, "GET", "/candidates?allocation=COMPLETED")).status, 400);
+    });
+
+    test("manual assign, reassign and unassign still work on a completed placement; equal Allocate uses the selected candidates as before", async () => {
+        await seedFinalStatuses();
+        assert.equal((await assign(USERS.ADMIN, [pid(6)], [{ analystId: USERS.CAL.adminId, count: 1 }])).status, 200);
+        assert.equal((await assign(USERS.ADMIN, [pid(1)], [{ analystId: USERS.BEN.adminId, count: 1 }], { reassign: true })).status, 200);
+        assert.deepEqual([(await allocations())[pid(6)], (await allocations())[pid(1)]], [USERS.CAL.adminId, USERS.BEN.adminId]);
+        assert.equal((await api(USERS.ADMIN, "POST", "/work-allocation/unassign", { candidateIds: [pid(4)], confirm: true })).status, 200);
+        assert.equal((await allocations())[pid(4)], undefined);
+        assert.deepEqual((await view("status=COMPLETED")).ids, [pid(20), pid(6), pid(4), pid(1)], "still completed, whatever the allocation");
     });
 });

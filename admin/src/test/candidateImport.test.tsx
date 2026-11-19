@@ -240,6 +240,71 @@ describe("the import flow", () => {
         await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     });
 
+    describe("Officers with no matching user (unmatchedOfficers)", () => {
+        const UNMATCHED = [{ name: "Synth Kamal", rows: 2 }, { name: "Synth Nimal", rows: 1 }];
+        const chunk = (unmatchedOfficers?: { name: string; rows: number }[]) => ({
+            status: 200, body: { chunkIndex: 0, status: "COMMITTED", counts: { rows: 1, created: 1 }, failures: [], ...(unmatchedOfficers ? { unmatchedOfficers } : {}) },
+        });
+        const finish = (extra = {}) => ({ status: 200, body: { importId: PREVIEW.importId, status: "COMPLETED", totalRows: 3, counts: { created: 2 }, syncRunId: null, ...extra } });
+        const openPreview = async (routes: FetchRoutes) => {
+            readWorkbookMock.mockResolvedValue({ headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "OFFICER"], rows: ROWS, missingRequired: [] });
+            asRole("ADMIN", { [`GET ${BASE}/import/source-columns`]: { status: 200, body: { allowed: [...ALLOWED, "OFFICER"], required: REQUIRED } }, ...routes });
+            renderApp("/settings/sheet-sync");
+            const user = userEvent.setup();
+            await user.click(await screen.findByRole("button", { name: "Upload" }, RENDER_STEP));
+            const dialog = await screen.findByRole("dialog", { name: /^Upload: import candidates/ });
+            await user.upload(within(dialog).getByLabelText("Candidate sheet (.xlsx)"), new File(["x"], "legacy.xlsx"));
+            await within(dialog).findByLabelText("Import preview");
+            return { user, dialog: within(dialog) };
+        };
+
+        test("the preview and the result name each officer and its rows, imported Unallocated", async () => {
+            const { user, dialog } = await openPreview({
+                [`POST ${BASE}/import/preview`]: { status: 200, body: { ...PREVIEW, unmatchedOfficers: UNMATCHED } },
+                [`POST ${BASE}/import/${PREVIEW.importId}/chunks/0`]: chunk(),
+                [`POST ${BASE}/import/${PREVIEW.importId}/chunks/1`]: chunk(),
+                [`POST ${BASE}/import/${PREVIEW.importId}/finish`]: finish({ unmatchedOfficers: UNMATCHED }),
+            });
+            const before = within(dialog.getByRole("note", { name: "Officers not found" }));
+            expect(before.getByText(/No matching user was found for these Officers, so their candidates will be imported Unallocated/)).toBeInTheDocument();
+            expect(before.getByText('Officer "Synth Kamal" (2 rows)')).toBeInTheDocument();
+            expect(before.getByText('Officer "Synth Nimal" (1 row)')).toBeInTheDocument();
+
+            await user.click(dialog.getByRole("button", { name: /^Confirm import/ }));
+            expect(await dialog.findByText("Import completed.")).toBeInTheDocument();
+            const after = within(dialog.getByRole("note", { name: "Officers not found" }));
+            expect(after.getByText(/candidates were imported Unallocated/)).toBeInTheDocument();
+            expect(after.getAllByRole("listitem").map((li) => li.textContent)).toEqual(['Officer "Synth Kamal" (2 rows)', 'Officer "Synth Nimal" (1 row)']);
+        });
+
+        test("a finish result without the list falls back to the chunks' lists, added up per officer", async () => {
+            const { user, dialog } = await openPreview({
+                [`POST ${BASE}/import/preview`]: { status: 200, body: { ...PREVIEW, unmatchedOfficers: [{ name: "Synth Kamal", rows: 3 }] } },
+                [`POST ${BASE}/import/${PREVIEW.importId}/chunks/0`]: chunk([{ name: "Synth Kamal", rows: 2 }]),
+                [`POST ${BASE}/import/${PREVIEW.importId}/chunks/1`]: chunk([{ name: "Synth Kamal", rows: 1 }]),
+                [`POST ${BASE}/import/${PREVIEW.importId}/finish`]: finish(),
+            });
+            expect(dialog.getByText(/for this Officer, so its candidates will be imported Unallocated/)).toBeInTheDocument();
+            await user.click(dialog.getByRole("button", { name: /^Confirm import/ }));
+            expect(await dialog.findByText("Import completed.")).toBeInTheDocument();
+            expect(within(dialog.getByRole("note", { name: "Officers not found" })).getByText('Officer "Synth Kamal" (3 rows)')).toBeInTheDocument();
+        });
+
+        test("nothing is shown when the list is empty or absent", async () => {
+            const { user, dialog } = await openPreview({
+                [`POST ${BASE}/import/preview`]: { status: 200, body: { ...PREVIEW, unmatchedOfficers: [] } },
+                [`POST ${BASE}/import/${PREVIEW.importId}/chunks/0`]: chunk([]),
+                [`POST ${BASE}/import/${PREVIEW.importId}/chunks/1`]: chunk(),
+                [`POST ${BASE}/import/${PREVIEW.importId}/finish`]: finish({ unmatchedOfficers: [] }),
+            });
+            expect(dialog.queryByRole("note", { name: "Officers not found" })).toBeNull();
+            await user.click(dialog.getByRole("button", { name: /^Confirm import/ }));
+            expect(await dialog.findByText("Import completed.")).toBeInTheDocument();
+            expect(dialog.queryByRole("note", { name: "Officers not found" })).toBeNull();
+            expect(dialog.queryByText(/imported Unallocated/)).toBeNull();
+        });
+    });
+
     test("Jobs from this upload: grouped by Interview date + Unique number; a NEW Job's last two digits are edited, saved and checked before the import", async () => {
         readWorkbookMock.mockResolvedValue({ headers: ["PASSPORT NUMBER", "SURNAME", "OTHER NAME", "UNIQUE NUMBER"], rows: ROWS, missingRequired: [] });
         const group = (from: number, suffix: string | null, state: "NEW" | "EXISTING" | "ERROR", extra = {}) => ({

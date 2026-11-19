@@ -35,7 +35,7 @@ import { findUsersByWhatsappNumber } from "./userLookupService.js";
 import { openFollowUp } from "./callLogFollowUpService.js";
 import { candidateJobAssignments, displayJob } from "./jobAssignmentReader.js";
 import { deriveCandidateWorkflowStatus } from "./candidateWorkflowStatus.js";
-import { candidateFilterWhere, derivedFilterMatch, needsDerivedFilter, parseCandidateFilters, queryValue } from "./candidateListFilters.js";
+import { candidateFilterWhere, derivedFilterMatch, needsDerivedFilter, parseCandidateFilters, queryValue, WORK_ALLOCATION_VIEWS, workAllocationViewWhere } from "./candidateListFilters.js";
 import { andWhere } from "./candidateAccess.js";
 import { normalizeSearchText, searchTokens } from "../utils/searchText.js";
 import { setAuditActor } from "./auditActor.js";
@@ -638,7 +638,8 @@ export function candidateSearchWhere(search) {
 
 // GET /api/admin/candidate-suggestions?q=&allocation= : a few candidates for the search box while the
 // user types. The same search as the list (candidateSearchWhere: every word somewhere in the names,
-// passport, NIC or phone numbers), AND-ed with the user's scope and, for Work Allocation, its view,
+// passport, NIC or phone numbers), AND-ed with the user's scope and, for Work Allocation, its view
+// (allocation= UNALLOCATED | ALLOCATED | COMPLETED, workAllocationViewWhere),
 // so a suggestion is always a candidate the list itself would show. Shorter than
 // SUGGESTION_MIN_LENGTH: no suggestions (nothing is read).
 export const SUGGESTION_MIN_LENGTH = 2;
@@ -657,8 +658,8 @@ export function parseSuggestionQuery(query = {}, { filterAccess }) {
     const allocation = queryValue(query, "allocation", errors);
     if (allocation !== undefined) {
         if (!filterAccess.allocation) errors.push({ field: "allocation", message: "is not available for your role" });
-        else if (["ALLOCATED", "UNALLOCATED"].includes(allocation)) params.allocation = allocation;
-        else errors.push({ field: "allocation", message: "must be one of: ALLOCATED, UNALLOCATED" });
+        else if (WORK_ALLOCATION_VIEWS.includes(allocation)) params.allocation = allocation;
+        else errors.push({ field: "allocation", message: `must be one of: ${WORK_ALLOCATION_VIEWS.join(", ")}` });
     }
     return errors.length ? { errors } : { params };
 }
@@ -677,7 +678,7 @@ export function suggestionRank(row, q) {
 export async function listCandidateSuggestions({ db, params, scope = {} }) {
     const q = params.q ?? "";
     if (q.length < SUGGESTION_MIN_LENGTH) return { items: [] };
-    const view = params.allocation === "UNALLOCATED" ? { allocation: { is: null } } : params.allocation === "ALLOCATED" ? { allocation: { isNot: null } } : {};
+    const view = params.allocation ? workAllocationViewWhere(params.allocation) : {};
     const where = andWhere(scope, view, candidateSearchWhere(q));
     // The candidates whose name (or passport, NIC) STARTS with the first word are read first, so a
     // strong match is never pushed out by many newer substring matches; then the newest of the rest.

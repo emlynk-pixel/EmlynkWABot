@@ -113,6 +113,7 @@ describe("N/A variations", () => {
     test("N/A, NA, na, n/a, Na and N/a (with spaces around) are accepted where N/A is allowed, and stored as N/A", () => {
         for (const spelling of ["N/A", "n/a", "N/a", "n/A", "NA", "na", "Na", "nA", "  na  ", " N/A "]) {
             const parsed = parse((a) => {
+                a.basic.civilStatus = "DIVORCED"; // children are asked only when not Single
                 a.basic.otherNames = spelling;
                 a.contact.city = spelling;
                 a.contact.alternativePhone = spelling;
@@ -141,7 +142,7 @@ describe("N/A variations", () => {
     });
 
     test("required fields stay required, and a field's own rules still apply around N/A", () => {
-        const missing = parse((a) => { a.basic.otherNames = ""; a.family.child1 = "  "; });
+        const missing = parse((a) => { a.basic.civilStatus = "DIVORCED"; a.basic.otherNames = ""; a.family.child1 = "  "; });
         assert.deepEqual(missing.errors.map((e) => [e.field, e.code]).sort(), [["basic.otherNames", "required"], ["family.child1", "required"]]);
         const badPhone = parse((a) => { a.contact.alternativePhone = "not a phone"; });
         assert.deepEqual(badPhone.errors.map((e) => e.field), ["contact.alternativePhone"]);
@@ -149,9 +150,9 @@ describe("N/A variations", () => {
         const noFather = parse((a) => { a.family.father = { name: "na", surname: "", passportNumber: "", birthDate: "" }; });
         assert.equal(noFather.errors, undefined);
         // Children: Child 2 is needed only after a real Child 1 ("NA" is not a real child).
-        const noChildren = parse((a) => { a.family.child1 = "na"; });
+        const noChildren = parse((a) => { a.basic.civilStatus = "DIVORCED"; a.family.child1 = "na"; });
         assert.equal(noChildren.errors, undefined);
-        const aChild = parse((a) => { a.family.child1 = "nimal"; });
+        const aChild = parse((a) => { a.basic.civilStatus = "DIVORCED"; a.family.child1 = "nimal"; });
         assert.deepEqual(aChild.errors.map((e) => e.field), ["family.child2"]);
     });
 
@@ -224,6 +225,31 @@ describe("saving a step (Next)", () => {
         married.family.spouse = { name: "nadeesha", surname: "silva", passportNumber: "na", birthDate: "1992-07-08" };
         assert.equal((await saveStep(token, "work", married)).status, 200);
         assert.equal((await drafts())[0].answers.family.spouse.passportNumber, "N/A");
+    });
+
+    test("children follow the saved Civil Status: none when Single (null, whatever was sent), Child 1 needed otherwise", async () => {
+        const token = await session(A);
+        await saveStep(token, "personal"); // saved Civil Status: SINGLE
+        const none = ANSWERS();
+        Object.assign(none.family, { child1: null, child2: null, child3: null });
+        const saved = await saveStep(token, "work", none);
+        assert.equal(saved.status, 200, JSON.stringify(saved.body));
+        assert.deepEqual([(await drafts())[0].answers.family.child1, (await drafts())[0].answers.family.child2, (await drafts())[0].answers.family.child3], [null, null, null]);
+        const sent = ANSWERS();
+        Object.assign(sent.family, { child1: "nimal", child2: "", child3: "" });
+        assert.equal((await saveStep(token, "work", sent)).status, 200, "a child sent with Single is not required to be followed by Child 2");
+        assert.equal((await drafts())[0].answers.family.child1, null, "and is not stored");
+
+        for (const status of ["MARRIED", "DIVORCED", "WIDOWED"]) {
+            const other = ANSWERS();
+            other.basic.civilStatus = status;
+            other.family.spouse = { name: "nadeesha", surname: "silva", passportNumber: "na", birthDate: "1992-07-08" };
+            assert.equal((await saveStep(token, "personal", other)).status, 200);
+            Object.assign(other.family, { child1: null, child2: null, child3: null });
+            const missing = await saveStep(token, "work", other);
+            assert.equal(missing.status, 400, status);
+            assert.deepEqual(missing.body.errors.map((e) => `${e.field}:${e.code}`), ["family.child1:required"], status);
+        }
     });
 
     test("saving the same step again (a double click, a retry after a lost response) leaves one row and the same answers", async () => {

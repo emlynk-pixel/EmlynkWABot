@@ -1,6 +1,6 @@
 # Candidate Advanced Filters & Search
 
-**Feature:** Admin > Candidates and Admin > Work Allocation (Unallocated / Allocated): a **Filters** button (choose which filters to use) with each chosen filter as a dropdown under the search bar (many filters combined), improved full-name search and live search suggestions.
+**Feature:** Admin > Candidates and Admin > Work Allocation (Unallocated / Allocated / Completed): a **Filters** button (choose which filters to use) with each chosen filter as a dropdown under the search bar (many filters combined), improved full-name search and live search suggestions.
 **Scope:** candidate lists only. Filtering is done **on the server, before paging**, always inside the user's candidate scope. One additive index migration; no column, RBAC tier or stored data changes.
 
 ---
@@ -177,7 +177,9 @@ Quick search words also match passport ID, unique ID, NIC, WhatsApp and contact 
 
 ## 8. Search suggestions
 
-`GET /api/admin/candidate-suggestions?q=nim[&allocation=ALLOCATED|UNALLOCATED]`
+`GET /api/admin/candidate-suggestions?q=nim[&allocation=ALLOCATED|UNALLOCATED|COMPLETED]`
+
+`allocation` here is the Work Allocation view (`workAllocationViewWhere`): `UNALLOCATED` and `ALLOCATED` leave out the completed placements, `COMPLETED` is those placements allocated or not (`20-candidate-management.md` §4.5). `COMPLETED` is for Work Allocation only; the Candidates list's `allocation` filter (§3) is unchanged.
 
 | Rule | Value |
 |---|---|
@@ -230,7 +232,7 @@ Escape closes a box or dropdown (focus back on its button); so does a click outs
 
 - The Filters button shows the number of filters with a value ("Filters (3 active)").
 - The box lists only what the role may use: Officer / Allocation for ADMIN and TEAM_LEAD, Client / Agent for ADMIN, TEAM_LEAD and JOB_HANDLER.
-- Work Allocation: no Allocation filter (the view is the allocation). The Officer filter appears on **Allocated** only. The header's Analyst select still works and shows "N Analysts (Filters)" when several are chosen.
+- Work Allocation: no Allocation filter (the view is the allocation). The Officer filter appears on **Allocated** and **Completed** only. The header's Analyst select still works and shows "N Analysts (Filters)" when several are chosen.
 
 ### 9.2 States
 

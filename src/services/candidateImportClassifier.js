@@ -362,6 +362,7 @@ function planOrg(values, snapshot, numberConflict) {
 //   extras: { allocation: { analystId } | null, test: planTest() | null, stages: [stage to complete], departed: boolean,
 //             outcome: "VISA_NOT_GOING" | "CANCELLED" | "REJECTED" | null }
 // org (internal): planOrg(), for every row that is not an ERROR row. officer: { sheetName, userName }.
+// unmatchedOfficer: the sheet's OFFICER (trimmed) when it matched no user (OFFICER_NOT_FOUND), else null.
 export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
     const duplicates = new Set(flags.duplicateRows ?? []);
     const nicConflicts = new Set(flags.nicConflictRows ?? []);
@@ -376,19 +377,24 @@ export function planRows(rows, snapshot, flags = EMPTY_FLAGS) {
         };
         const plan = {
             rowNumber: row.rowNumber, maskedPassport: row.maskedPassport, status: row.status, action: ROW_ACTION.NONE, existing: false, codes, issues, differing: 0,
-            write: null, org: null, officer: null, blankResult: Boolean(row.values.testResultDefaulted),
+            write: null, org: null, officer: null, unmatchedOfficer: null, blankResult: Boolean(row.values.testResultDefaulted),
         };
         if (row.status === ROW_STATUS.INVALID) return plan;
-        // OFFICER: an unmatched officer is an ERROR (never assigned to a guess).
+        // OFFICER: never assigned to a guess. An ambiguous or inactive officer is an ERROR; one that matches
+        // no user is a WARNING: the row is imported unallocated (unmatchedOfficer, listed by the preview).
         let officer = null;
         if (row.values.officer) {
             const match = matchOfficer(row.values.officer, snapshot.officers ?? new Map());
-            if (match.error) {
+            if (match.error === "OFFICER_NOT_FOUND") {
+                note(match.error, "officer");
+                plan.unmatchedOfficer = row.values.officer;
+            } else if (match.error) {
                 note(match.error, "officer");
                 return { ...plan, status: ROW_STATUS.INVALID };
+            } else {
+                officer = match.user;
+                plan.officer = { sheetName: row.values.officer, userName: officer.name };
             }
-            officer = match.user;
-            plan.officer = { sheetName: row.values.officer, userName: officer.name };
         }
         if (duplicates.has(row.rowNumber)) {
             note("DUPLICATE_SOURCE_ROW", "passport");
@@ -527,6 +533,23 @@ export function summarizePlans(plans) {
         companyNumbersToFill: new Set(plans.filter((p) => p.org?.companyNumber).map((p) => p.org.company.key)).size,
     };
 }
+
+// The officer names (in row order) that matched no user -> [{ name, rows }]: one entry per name, any
+// letter case and spacing ("john  silva" = "John Silva"), spelled as on its first row.
+export function tallyUnmatchedOfficers(names) {
+    const map = new Map();
+    for (const name of names) {
+        const key = name.replace(/\s+/g, " ").trim().toLowerCase();
+        if (!map.has(key)) map.set(key, { name: name.trim(), rows: 0 });
+        map.get(key).rows += 1;
+    }
+    return [...map.values()];
+}
+
+// The rows that are imported (not an ERROR, a duplicate or a conflict) whose officer matched no user.
+export const unmatchedOfficersOf = (plans) => tallyUnmatchedOfficers(plans
+    .filter((p) => p.unmatchedOfficer && (p.status === ROW_STATUS.VALID || p.status === ROW_STATUS.WARNING))
+    .map((p) => p.unmatchedOfficer));
 
 // The automatic actions the preview shows before anything is confirmed (no candidate data: user,
 // Client and Agent names, and counts). Lists are capped; `rows` is how many rows lead to each.

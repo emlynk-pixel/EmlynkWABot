@@ -4,7 +4,9 @@ import type { CandidateStageKey, WorkflowStatus } from "./candidates";
 // Work Allocation (src/services/workAllocationService.js): which Analyst or Team Lead each
 // candidate is assigned to. ADMIN, OWNER and TEAM_LEAD; the server checks it.
 
-export type AllocationStatus = "UNALLOCATED" | "ALLOCATED";
+// COMPLETED: candidates whose Status is Cancelled, Rejected or Departed, allocated or not (the other
+// two views leave them out).
+export type AllocationStatus = "UNALLOCATED" | "ALLOCATED" | "COMPLETED";
 
 // role: the holder's role ("ANALYST", "TEAM_LEAD", ...; absent from an older server).
 export type AllocationAnalystRef = { analystId: string; name: string; active: boolean; role?: string };
@@ -52,6 +54,8 @@ export type AllocationAnalysts = {
     // No longer active (or no longer an Analyst or Team Lead) but still holding candidates.
     unavailableAnalysts: AllocationAnalyst[];
     unallocatedCount: number;
+    // The Completed view's total (absent from an older server).
+    completedCount?: number;
 };
 
 export type AssignResult = { assigned: number; reassigned: number; unchanged: number; byAnalyst: { analystId: string; name: string; count: number }[] };

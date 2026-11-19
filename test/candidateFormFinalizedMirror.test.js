@@ -376,13 +376,23 @@ describe("Confirm / Reject rules for the newly confirmable fields", () => {
         assert.equal((await details()).bloodGroup, "O+", "a value on record that was never confirmed keeps the record's value");
     });
 
-    test("Single with children on record is refused; a later child needs the earlier one", async () => {
+    test("Single with children on record is refused; a Single submission carries no children", async () => {
         await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, child1Name: "OLD CHILD", child2Name: "OLD SECOND" } });
         await submitForm(withAnswer(withAnswer(withAnswer(withAnswer(ANSWERS(), "basic.civilStatus", "SINGLE"), "family.child1", "kasun"), "family.child2", "ruwan"), "family.child3", "N/A"));
         const single = await confirmField("basic.civilStatus");
         assert.deepEqual([single.status, single.body.code], [409, "FORM_FIELD_PREREQUISITE"]);
         assert.match(single.body.message, /children/);
         assert.equal((await details()).maritalStatus, null);
+        // The children sent with Single are not stored, so there is nothing to confirm for them.
+        const response = await prisma.candidateFormResponse.findUnique({ where: { passportId: A.passportId } });
+        assert.deepEqual([response.child1Name, response.child2Name, response.child3Name], [null, null, null]);
+        for (const field of ["family.child1", "family.child2", "family.child3"]) assert.equal(await pendingFor(field), undefined, field);
+        assert.deepEqual([(await details()).child1Name, (await details()).child2Name], ["OLD CHILD", "OLD SECOND"], "the record's children are untouched");
+    });
+
+    test("a later child needs the earlier one", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, child1Name: "OLD CHILD", child2Name: "OLD SECOND" } });
+        await submitForm(withAnswer(withAnswer(withAnswer(withAnswer(ANSWERS(), "basic.civilStatus", "DIVORCED"), "family.child1", "kasun"), "family.child2", "ruwan"), "family.child3", "N/A"));
         await pg.exec(`UPDATE "candidate_additional_details" SET "child_1_name" = NULL`);
         const second = await confirmField("family.child2");
         assert.deepEqual([second.status, second.body.code], [409, "FORM_FIELD_PREREQUISITE"]);

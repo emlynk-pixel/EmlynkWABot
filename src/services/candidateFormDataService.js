@@ -88,8 +88,9 @@ export const isNotApplicableFor = (path, value) => (NOT_APPLICABLE_FIELDS.has(pa
 // Required: every answer the candidate can see. `required: true` is checked
 // for each field; the conditional ones are checked after all the fields
 // (parseSubmission): a parent's surname, passport and birth date unless the
-// parent's name is "N/A"; the spouse only when Married; Child 2 / Child 3
-// only after a real Child 1 / Child 2; "Other Job Category" only with OTHER.
+// parent's name is "N/A"; the spouse only when Married; Child 1 (marked
+// required) is not asked when Single; Child 2 / Child 3 only after a real
+// Child 1 / Child 2; "Other Job Category" only with OTHER.
 const person = (who) => [
     [`family.${who}`, "name", `${who}Name`, "text", { required: who !== "spouse", max: MAX.text }],
     [`family.${who}`, "surname", `${who}Surname`, "text", { max: MAX.text }],
@@ -424,7 +425,7 @@ export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CA
 // The rules for the answers themselves: { values, errors }. `groups` (null = the whole form)
 // limits the check to those groups of the form (a draft step); the rules that reach across
 // groups are applied only where their groups are included. `civilStatus` is the saved one,
-// for a step that does not carry the Basic group itself (the spouse depends on it).
+// for a step that does not carry the Basic group itself (the spouse and children depend on it).
 function parseAnswerValues(answers, { now, jobCategories, groups = null, civilStatus = null }) {
     const errors = [];
     const has = (group) => !groups || groups.includes(group);
@@ -526,12 +527,17 @@ function parseAnswerValues(answers, { now, jobCategories, groups = null, civilSt
         }
     }
 
-    // Hidden answers are never stored: spouse only when married, the other
-    // category only with OTHER (which then requires it).
-    const married = (has("basic") ? values.civilStatus : civilStatus) === "MARRIED";
+    // Hidden answers are never stored: spouse only when married, no children when
+    // single, the other category only with OTHER (which then requires it).
+    const status = has("basic") ? values.civilStatus : civilStatus;
+    const married = status === "MARRIED";
     if (has("family") && !married) {
         for (const column of ["spouseName", "spouseSurname", "spousePassportNumber", "spouseBirthDate"]) values[column] = null;
         for (let i = errors.length - 1; i >= 0; i--) if (errors[i].field.startsWith("family.spouse.")) errors.splice(i, 1);
+    }
+    if (has("family") && status === "SINGLE") {
+        for (const column of ["child1Name", "child2Name", "child3Name"]) values[column] = null;
+        for (let i = errors.length - 1; i >= 0; i--) if (/^family\.child[123]$/.test(errors[i].field)) errors.splice(i, 1);
     }
     if (has("qualifications")) {
         if (values.jobCategory === OTHER_JOB_CATEGORY) {

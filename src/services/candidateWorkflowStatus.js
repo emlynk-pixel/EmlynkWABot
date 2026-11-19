@@ -66,6 +66,13 @@ export const CANDIDATE_OUTCOME = Object.freeze({
 });
 export const isCandidateOutcome = (value) => Object.hasOwn(CANDIDATE_OUTCOME, value);
 
+// A completed placement (Work Allocation's Completed view): Departed, Cancelled or Rejected. Visa Not
+// Going is NOT completed. Derived from candidate.departed_at / candidate.outcome, as Prisma `where`s.
+export const COMPLETED_OUTCOMES = Object.freeze([CANDIDATE_OUTCOME.CANCELLED, CANDIDATE_OUTCOME.REJECTED]);
+export const completedPlacementWhere = () => ({ OR: [{ outcome: { in: [...COMPLETED_OUTCOMES] } }, { departedAt: { not: null } }] });
+// Written out rather than NOT(completed): outcome is nullable, and NOT (outcome IN (...)) is NULL, not true, for a NULL outcome.
+export const notCompletedPlacementWhere = () => ({ departedAt: null, OR: [{ outcome: null }, { outcome: { notIn: [...COMPLETED_OUTCOMES] } }] });
+
 const status = (code) => ({ code, label: WORKFLOW_STATUS_LABELS[code] });
 
 // signals (plain booleans / the saved test result / the recorded outcome, gathered by candidateService):
