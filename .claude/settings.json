@@ -5,12 +5,13 @@
       "Read",
       "Grep",
       "Glob",
-      "Read(.env.example)"
+      "Read(.env.example)",
+      "Edit",
+      "Write",
+      "Bash"
     ],
     "ask": [
-      "Bash",
-      "Edit",
-      "Write"
+
     ],
     "deny": [
       "Read(.env*)",
