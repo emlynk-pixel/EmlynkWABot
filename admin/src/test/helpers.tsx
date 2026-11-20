@@ -62,7 +62,7 @@ export async function renderAppSignedIn(path: string) {
 // The heading of the home page each role lands on (roles.ts landingPath). A page a role can't open
 // takes it there (App.tsx AllowRoles) instead of showing a warning.
 export const HOME_HEADING: Record<string, string> = {
-    OWNER: "Overview", ADMIN: "Overview", TEAM_LEAD: "Candidates", ANALYST: "Candidates", JOB_HANDLER: "Jobs", REGISTRATION_DESK: "Add candidate",
+    OWNER: "Overview", ADMIN: "Overview", TEAM_LEAD: "Overview", ANALYST: "Overview", JOB_HANDLER: "Jobs", REGISTRATION_DESK: "Add candidate",
 };
 
 // The role was taken to its own home page: no "Access Restricted" warning.
@@ -112,25 +112,21 @@ export const makeDocument = (overrides: Partial<DocumentItem> = {}): DocumentIte
     ...overrides,
 });
 
+// GET /api/admin/overview for an ADMIN (the "system" view).
 export const OVERVIEW: Overview = {
     businessDate: "2026-09-25",
-    kpis: { totalClients: 1428, totalDocuments: 8942, pendingReview: 17, receivedToday: 42 },
-    submissionsByStatus: { VERIFIED: 30, MANUAL_REVIEW: 8, DUPLICATE: 2 },
-    submissionsByType: { PASSPORT: 20, POLICE_REPORT: 12, MEDICAL: 8 },
-    recentDocuments: [
-        makeDocument(),
-        makeDocument({ documentId: "9a1d0000-0000-4000-8000-000000000002", documentType: "MEDICAL", verificationStatus: "REVIEW_REQUIRED", ocrConfidence: 52.25 }),
-    ],
-    reviewQueue: {
-        total: 17,
-        pendingFiles: 14,
-        reviewRequiredDocuments: 3,
-        pendingByStatus: { MANUAL_REVIEW: 9, CONFLICT: 5 },
-        items: [{ temporaryId: "tmp-1", documentType: "POLICE_SLIP", processingStatus: "MANUAL_REVIEW", receivedDate: "2026-09-25T03:00:00.000Z", client: CLIENT_REF }],
+    view: "system",
+    canChooseView: false,
+    overview: {
+        activeAllocated: 1428,
+        jobAllocated: 312,
+        policeReportsYetToReceive: { total: 57, byVariant: { ROMANIA: 21, SL_VERIFIED: 36 } },
+        agreementsYetToReceive: 44,
+        detailsNotCompleted: 91,
+        newlyAllocated: 13,
+        visaSubmissionCompleted: 208,
     },
-    police: { dueSoon: 2, dueToday: 1, overdue: 3, missingSlipDate: 4, notUploaded: 5 },
-    clients: { total: 1428, complete: 1200, incomplete: 228, withMissing: 150, missingDocuments: 190, missingByType: { PASSPORT: 10, POLICE_REPORT: 80, MEDICAL: 100 } },
-    requiredDocumentTypes: ["PASSPORT", "POLICE_REPORT", "MEDICAL"],
+    daily: { formSubmissions: 27, newlyAllocated: 9, callsTaken: 64 },
 };
 
 export function documentList(items: DocumentItem[], { page = 1, pageSize = 25, total = items.length } = {}): DocumentList {

@@ -5,9 +5,11 @@ export const ROLES = {
     // The system owner (one, set in the database only): every ADMIN permission, plus managing Admin accounts.
     OWNER: "OWNER",
     ADMIN: "ADMIN",
-    // Exactly seven areas (not every ADMIN permission): Candidates (all of them), Need Attention, Work
-    // Allocation, Jobs, Agents, Clients and the standard Daily Report. No ADMIN-only action within them.
+    // The Overview (their own view or the full one) and exactly seven areas (not every ADMIN permission):
+    // Candidates (all of them), Need Attention, Work Allocation, Jobs, Agents, Clients and the standard
+    // Daily Report. No ADMIN-only action within them.
     TEAM_LEAD: "TEAM_LEAD",
+    // The Overview (their allocated candidates), Candidates (allocated only) and Need Attention.
     ANALYST: "ANALYST",
     // The candidate registration workflow (Add Candidate) only.
     REGISTRATION_DESK: "REGISTRATION_DESK",
@@ -37,10 +39,13 @@ const RETIRED_ROLE_LABELS: Record<string, string> = {
 // The label for any stored role value: a supported role, a retired one, or the raw value.
 export const roleLabel = (role: string): string => ROLE_LABELS[role as Role] ?? RETIRED_ROLE_LABELS[role] ?? role;
 
-// Overview, Documents, Missing Documents, Review Queue, Police Workflow, Monthly overview
-// (src/routes/admin.js DASHBOARD_READERS): ADMIN. An ANALYST works only on the candidates
-// allocated to them: their workflow and Need Attention, nothing else.
+// Documents, Missing Documents, Review Queue, Police Workflow and the Clients pages
+// (src/routes/admin.js DASHBOARD_READERS): ADMIN.
 export const DASHBOARD_ROLES: readonly Role[] = [ROLES.ADMIN];
+// The Overview tab ("/", GET /api/admin/overview): ADMIN (the whole system), TEAM_LEAD (their own
+// candidates, or the full view) and ANALYST (the candidates allocated to them). Not
+// REGISTRATION_DESK or JOB_HANDLER.
+export const OVERVIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.ANALYST];
 // The Daily Report (src/routes/admin.js REPORT_READERS): ADMIN and TEAM_LEAD.
 export const REPORT_VIEW_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD];
 export const REVIEW_ROLES: readonly Role[] = [ROLES.ADMIN];
@@ -75,8 +80,10 @@ type WithRole = { role: string } | null | undefined;
 export const hasRole = (user: WithRole, roles: readonly Role[]): boolean =>
     Boolean(user && ((roles as readonly string[]).includes(user.role) || (user.role === ROLES.OWNER && roles.includes(ROLES.ADMIN))));
 
-// Overview, documents, review queue, clients, police workflow, reports.
+// Documents, review queue, clients, police workflow.
 export const canViewDashboard = (user: WithRole) => hasRole(user, DASHBOARD_ROLES);
+// The Overview tab (its figures are scoped to the user by the server).
+export const canViewOverview = (user: WithRole) => hasRole(user, OVERVIEW_ROLES);
 // A candidate's page and its changes: details, stages, candidate documents
 // and call logs (not JOB_HANDLER, not REGISTRATION_DESK).
 export const canManageCandidates = (user: WithRole) => hasRole(user, CANDIDATE_ROLES);
@@ -141,9 +148,9 @@ export const FOLLOW_UP_NOTIFICATION_ROLES: readonly Role[] = [ROLES.TEAM_LEAD, R
 export const notificationSource = (user: WithRole): NotificationSource =>
     hasRole(user, REVIEW_ROLES) ? "review" : hasRole(user, FOLLOW_UP_NOTIFICATION_ROLES) ? "follow-ups" : "none";
 // Where a signed-in role lands ("/"), and where a page it can't open sends it: the Overview for
-// the dashboard roles (null), otherwise its own first area.
+// the Overview roles (null: ADMIN, TEAM_LEAD, ANALYST), otherwise its own first area.
 export const landingPath = (user: WithRole): string | null =>
-    canViewDashboard(user) ? null : hasRole(user, [ROLES.JOB_HANDLER]) ? "/jobs" : hasRole(user, REGISTRATION_ENTRY_ROLES) ? "/candidates/new" : "/candidates";
+    canViewOverview(user) ? null : hasRole(user, [ROLES.JOB_HANDLER]) ? "/jobs" : hasRole(user, REGISTRATION_ENTRY_ROLES) ? "/candidates/new" : "/candidates";
 // User management and Settings (an OWNER too).
 export const isAdmin = (user: WithRole) => hasRole(user, ADMIN_ONLY);
 export const isOwner = (user: WithRole) => user?.role === ROLES.OWNER;

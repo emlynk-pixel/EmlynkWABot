@@ -1,5 +1,5 @@
 import type { IconName } from "../components/Icon";
-import { ADMIN_ONLY, CANDIDATE_LIST_ROLES, DASHBOARD_ROLES, FOLLOW_UP_VIEW_ROLES, JOB_VIEW_ROLES, MASTER_DATA_ROLES, REGISTRATION_ENTRY_ROLES, REPORT_VIEW_ROLES, ALLOCATION_ROLES, type Role } from "../auth/roles";
+import { ADMIN_ONLY, CANDIDATE_LIST_ROLES, DASHBOARD_ROLES, FOLLOW_UP_VIEW_ROLES, OVERVIEW_ROLES, JOB_VIEW_ROLES, MASTER_DATA_ROLES, REGISTRATION_ENTRY_ROLES, REPORT_VIEW_ROLES, ALLOCATION_ROLES, type Role } from "../auth/roles";
 
 // Sidebar entries, plus Missing Documents
 // and Daily Report (Phase 10 scope, same design language), Audit Logs
@@ -14,7 +14,8 @@ import { ADMIN_ONLY, CANDIDATE_LIST_ROLES, DASHBOARD_ROLES, FOLLOW_UP_VIEW_ROLES
 export type NavItem = { to: string; label: string; icon: IconName; end?: boolean; roles: readonly Role[]; group?: "Configuration" };
 
 export const NAV_ITEMS: NavItem[] = [
-    { to: "/", label: "Overview", icon: "dashboard", end: true, roles: DASHBOARD_ROLES },
+    // ADMIN, TEAM_LEAD and ANALYST (the server scopes the figures to the user).
+    { to: "/", label: "Overview", icon: "dashboard", end: true, roles: OVERVIEW_ROLES },
     // The Candidates list: ADMIN, TEAM_LEAD, ANALYST (their own candidates) and JOB_HANDLER (read only).
     { to: "/candidates", label: "Candidates", icon: "group", roles: CANDIDATE_LIST_ROLES },
     // The Registration Desk's only page: the registration workflow.

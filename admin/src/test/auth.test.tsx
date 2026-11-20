@@ -192,7 +192,7 @@ describe("session restore (page refresh)", () => {
     test("a refreshed Supabase access token is used for the next API call", async () => {
         const { calls } = signedInBackend({ "GET /api/admin/documents": { status: 200, body: { items: [], pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 }, summary: { total: 0, byVerificationStatus: {} } } } });
         renderApp("/");
-        await screen.findByText("Total clients");
+        await screen.findByText("Active Allocated Candidates");
         const refreshed = newToken();
         act(() => fakeAuth.refreshToken(refreshed));
         await userEvent.setup().click(within(screen.getByRole("navigation", { name: "Main navigation" })).getByRole("link", { name: "Documents" }));
@@ -225,9 +225,9 @@ describe("dashboard shell", () => {
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });
 
-    test("ANALYST: Candidates (their allocated ones) and Need Attention only", async () => {
+    test("ANALYST: Overview, Candidates (their allocated ones) and Need Attention only", async () => {
         await signedIn("/", userWithRole("ANALYST"));
-        expect(navLinks()).toEqual(["Candidates", "Need Attention"]);
+        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention"]);
     });
 
     test("REGISTRATION_DESK: Add Candidate only, and lands on Add Candidate instead of the Overview", async () => {
@@ -243,7 +243,7 @@ describe("dashboard shell", () => {
 
     test("the session is checked before any dashboard data is requested", async () => {
         await signedIn();
-        await screen.findByText("Total clients");
+        await screen.findByText("Active Allocated Candidates");
         const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((c) => String(c[0]));
         expect(calls[0]).toBe("/auth/me");
         expect(calls).toContain("/api/admin/overview");

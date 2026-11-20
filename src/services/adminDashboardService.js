@@ -14,14 +14,12 @@ import { DOCUMENT_TYPES } from "./documentClassificationService.js";
 import { VERIFICATION_STATUS } from "./clientDocumentService.js";
 import { businessDateOf, businessDayRange } from "../utils/businessDay.js";
 import { clientName } from "../utils/clientName.js";
-import { FAILED_SUBMISSION_WHERE, REVIEW_PENDING_WHERE } from "./adminReviewService.js";
-import { countdownFromDocuments, policeDueCounts } from "./adminPoliceService.js";
+import { REVIEW_PENDING_WHERE } from "./adminReviewService.js";
+import { countdownFromDocuments } from "./adminPoliceService.js";
 import { toYmd } from "./policeCountdownService.js";
-import { andWhere, linkedScope, submissionScope, whereOnly } from "./candidateAccess.js";
 import {
     REQUIRED_DOCUMENT_TYPES,
     REQUIREMENT_STATUS,
-    clientCompletenessCounts,
     missingTypesOf,
     requiredDocumentStatus,
 } from "./adminClientService.js";
@@ -33,8 +31,6 @@ export { clientName, REQUIRED_DOCUMENT_TYPES, REQUIREMENT_STATUS, requiredDocume
 // police slip is an intermediate document (it starts the 21-day wait) and is
 // not itself required.
 
-export const RECENT_DOCUMENTS_LIMIT = 8;
-export const REVIEW_QUEUE_PREVIEW_LIMIT = 5;
 const CLIENT_PENDING_ITEMS_LIMIT = 50;
 
 // Submissions waiting for a person: a file in pending/. Same definition as
@@ -83,83 +79,6 @@ function toPendingItem(row) {
         processingStatus: row.processingStatus,
         receivedDate: toIso(row.createdDate),
         client: toClient(row.user),
-    };
-}
-
-// ---------------------------------------------------------------- overview
-
-// scope: the signed-in user's candidates (candidateAccess.js candidateScope),
-// empty for ADMIN and REGISTRATION_DESK. For an Analyst every figure
-// and list counts their own candidates (and the waiting files not yet linked
-// to anyone), so another Analyst's candidates never show up here.
-export async function getOverview({ db, now = new Date(), scope = {} }) {
-    const linked = linkedScope(scope);
-    const submissions = submissionScope(scope);
-    const today = businessDateOf(now);
-    const { start: todayStart } = businessDayRange(today);
-
-    const [
-        totalClients,
-        totalDocuments,
-        receivedToday,
-        pendingFiles,
-        reviewRequiredDocuments,
-        statusGroups,
-        typeGroups,
-        pendingGroups,
-        recentDocuments,
-        pendingPreview,
-        policeDue,
-        clients,
-        failedSubmissions,
-    ] = await Promise.all([
-        db.candidate.count(whereOnly(scope)),
-        db.document.count(whereOnly(linked)),
-        db.temporaryData.count({ where: andWhere({ createdDate: { gte: todayStart } }, submissions) }),
-        db.temporaryData.count({ where: andWhere(PENDING_FILE_WHERE, submissions) }),
-        db.document.count({ where: andWhere({ verificationStatus: VERIFICATION_STATUS.REVIEW_REQUIRED }, linked) }),
-        db.temporaryData.groupBy({ by: ["processingStatus"], ...whereOnly(submissions), _count: { _all: true } }),
-        db.temporaryData.groupBy({ by: ["documentType"], ...whereOnly(submissions), _count: { _all: true } }),
-        db.temporaryData.groupBy({ by: ["processingStatus"], where: andWhere(PENDING_FILE_WHERE, submissions), _count: { _all: true } }),
-        db.document.findMany({ ...whereOnly(linked), select: documentSelect, orderBy: [{ receivedDate: "desc" }, { documentId: "asc" }], take: RECENT_DOCUMENTS_LIMIT }),
-        db.temporaryData.findMany({
-            where: andWhere(PENDING_FILE_WHERE, submissions),
-            select: { temporaryId: true, documentType: true, processingStatus: true, createdDate: true, user: { select: clientSelect } },
-            orderBy: [{ createdDate: "desc" }, { temporaryId: "asc" }],
-            take: REVIEW_QUEUE_PREVIEW_LIMIT,
-        }),
-        // Police Workflow: reports due soon, due today, overdue.
-        policeDueCounts({ db, today, scope }),
-        // Complete / incomplete clients and missing required documents.
-        clientCompletenessCounts({ db, scope }),
-        // H3: submissions whose processing failed (shown on their own).
-        db.temporaryData.count({ where: andWhere(FAILED_SUBMISSION_WHERE, submissions) }),
-    ]);
-
-    return {
-        businessDate: today,
-        kpis: {
-            totalClients,
-            totalDocuments,
-            pendingReview: pendingFiles + reviewRequiredDocuments,
-            receivedToday,
-        },
-        // All received submissions (temporary_data), by pipeline outcome and type.
-        submissionsByStatus: countsBy(statusGroups, "processingStatus"),
-        submissionsByType: countsBy(typeGroups, "documentType"),
-        recentDocuments: recentDocuments.map(toDocumentItem),
-        reviewQueue: {
-            total: pendingFiles + reviewRequiredDocuments,
-            pendingFiles,
-            reviewRequiredDocuments,
-            pendingByStatus: countsBy(pendingGroups, "processingStatus"),
-            items: pendingPreview.map(toPendingItem),
-            // H3: not part of `total` / Pending review; listed with kind=FAILED.
-            failedSubmissions,
-        },
-        police: policeDue,
-        clients,
-        requiredDocumentTypes: [...REQUIRED_DOCUMENT_TYPES],
     };
 }
 

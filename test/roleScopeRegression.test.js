@@ -168,10 +168,17 @@ describe("ANALYST: only the candidates allocated to them", () => {
     });
 
     test("no reports, dashboard, documents, review queue, police workflow or shared selectors (403)", async () => {
-        for (const path of ["/reports/daily/incomplete?stage=CANDIDATE_DETAILS", "/reports/daily/summary", "/reports/monthly", "/overview", "/documents", "/documents/missing", "/clients", `/clients/${C1}`, "/review", "/police", "/work-allocation/candidates", "/job-candidate-options"]) {
+        for (const path of ["/reports/daily/incomplete?stage=CANDIDATE_DETAILS", "/reports/daily/summary", "/overview?view=full", "/documents", "/documents/missing", "/clients", `/clients/${C1}`, "/review", "/police", "/work-allocation/candidates", "/job-candidate-options"]) {
             forbidden(await api(A, "GET", path), path);
         }
         assert.equal(ok(await api(USERS.ADMIN, "GET", "/reports/daily/incomplete?stage=CANDIDATE_DETAILS")).pagination.total, CANDIDATES.length);
+    });
+
+    test("the Overview: their own figures only (mine), never the full view", async () => {
+        const mine = ok(await api(A, "GET", "/overview"));
+        assert.deepEqual([mine.view, mine.canChooseView], ["mine", false]);
+        assert.equal(mine.overview.activeAllocated, 2, "Candidates 1 and 2, not Analyst B's Candidate 3");
+        assert.equal(ok(await api(B, "GET", "/overview")).overview.activeAllocated, 1);
     });
 });
 

@@ -280,9 +280,9 @@ describe("41. every candidate-specific route refuses another Analyst's candidate
         for (const who of [USERS.ADMIN, USERS.OWNER]) assert.equal((await api(who, "GET", `/review/document-${documentId(4)}`)).status, 200, who.name);
     });
 
-    test("Review Queue list, Overview, Daily Report and Monthly overview: 403 for an ANALYST; ADMIN and OWNER reach them", async () => {
+    test("Review Queue list, Daily Report and the Overview's full view: 403 for an ANALYST; ADMIN and OWNER reach them", async () => {
         await seedAllocations();
-        for (const path of ["/review", "/overview", "/reports/daily", "/reports/daily/summary", "/reports/daily/incomplete?stage=VISA_APPROVAL", "/reports/monthly"]) {
+        for (const path of ["/review", "/overview?view=full", "/reports/daily", "/reports/daily/summary", "/reports/daily/incomplete?stage=VISA_APPROVAL"]) {
             assert.equal((await api(USERS.ANN, "GET", path)).status, 403, path);
             for (const who of [USERS.ADMIN, USERS.OWNER]) assert.equal((await api(who, "GET", path)).status, 200, `${who.name} ${path}`);
         }

@@ -273,7 +273,7 @@ describe("restricted areas (JOB-HANDLER-SETTINGS-001, JOB-HANDLER-ADMIN-001)", (
         for (const [method, path, body] of [
             ["GET", "/users"], ["POST", "/users/invite", { name: "A", email: "a@example.invalid", role: "JOB_HANDLER" }], ["PUT", "/users/u-analyst/role", { role: "ADMIN" }],
             ["POST", "/users/u-analyst/deactivate", {}], ["GET", "/audit-logs"], ["GET", "/overview"], ["GET", "/documents"], ["GET", "/documents/missing"],
-            ["GET", "/review"], ["GET", "/police"], ["GET", "/reports/daily"], ["GET", "/reports/monthly"], ["GET", "/clients"],
+            ["GET", "/review"], ["GET", "/police"], ["GET", "/reports/daily"], ["GET", "/clients"],
             ["GET", "/work-allocation/candidates"], ["GET", "/follow-ups"],
         ]) forbidden(await api(JH, method, path, body), `${method} ${path}`);
         assert.equal(authAdmin.calls.length, 0);
@@ -286,6 +286,8 @@ describe("restricted areas (JOB-HANDLER-SETTINGS-001, JOB-HANDLER-ADMIN-001)", (
 const T = {
     // The dashboard, review and reports: ADMIN (an ANALYST works only on their candidates).
     ALL_ACTIVE: ["ADMIN"],
+    // The Overview: each role its own figures (overviewService.js); TEAM_LEAD too, not swept here.
+    OVERVIEW: ["ADMIN", "ANALYST"],
     // The Candidates area: not REGISTRATION_DESK (the registration workflow only).
     CANDIDATE_STAFF: ["ADMIN", "ANALYST"],
     // The routes the Add Candidate form uses: REGISTRATION_DESK too (an empty body is a 400).
@@ -298,9 +300,9 @@ const P = "ZZ0000009"; // no such candidate: an allowed role gets 404 / 400, nev
 const REVIEW = "pending-11111111-1111-4111-8111-111111111111";
 // [method, path, previous tier, JOB_HANDLER allowed?]
 const ROUTES = [
-    ["GET", "/overview", T.ALL_ACTIVE, false], ["GET", "/documents/missing", T.ALL_ACTIVE, false], ["GET", "/documents", T.ALL_ACTIVE, false],
+    ["GET", "/overview", T.OVERVIEW, false], ["GET", "/documents/missing", T.ALL_ACTIVE, false], ["GET", "/documents", T.ALL_ACTIVE, false],
     ["GET", "/clients", T.ALL_ACTIVE, false], ["GET", "/reports/daily", T.ALL_ACTIVE, false], ["GET", "/reports/daily/summary", T.ALL_ACTIVE, false],
-    ["GET", "/reports/daily/incomplete", T.ALL_ACTIVE, false], ["GET", "/reports/daily/roles", T.ADMINS_ONLY, false], ["GET", "/reports/monthly", T.ALL_ACTIVE, false],
+    ["GET", "/reports/daily/incomplete", T.ALL_ACTIVE, false], ["GET", "/reports/daily/roles", T.ADMINS_ONLY, false],
     ["GET", `/clients/${P}`, T.ALL_ACTIVE, false], ["GET", "/review", T.ALL_ACTIVE, false], ["GET", "/police", T.ALL_ACTIVE, false],
     ["GET", `/review/${REVIEW}`, T.ALL_ACTIVE, false], ["GET", `/review/${REVIEW}/file`, T.ALL_ACTIVE, false],
     ["POST", `/review/${REVIEW}/approve`, T.ANALYSTS_UP, false], ["POST", `/review/${REVIEW}/keep-pending`, T.ANALYSTS_UP, false],

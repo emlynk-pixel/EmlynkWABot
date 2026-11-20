@@ -1,359 +1,129 @@
 import { useState } from "react";
-import { Link } from "react-router";
-import { getMonthlyOverview, getOverview, type Overview } from "../api/admin";
+import { getOverview, type Overview } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
 import { useAuth } from "../auth/AuthProvider";
+import { ROLES, hasRole } from "../auth/roles";
 import { useSync } from "../sync/SyncProvider";
-import { DocumentsTable } from "../components/DocumentsTable";
-import { documentTypeLabel, formatDate, formatDateTime, formatNumber } from "../components/format";
+import { formatDate, formatNumber } from "../components/format";
 import { Icon, type IconName } from "../components/Icon";
-import { Card, EmptyState, ErrorState, LoadingState, SectionHeading } from "../components/States";
-import { StatusBadge, statusLabel, statusTone, toneDotClass } from "../components/StatusBadge";
-import { tableCell, tableHead } from "../components/ui";
+import { Card, ErrorState, LoadingState, SectionHeading } from "../components/States";
 
-function KpiCard({ label, value, hint, icon }: { label: string; value: number; hint: string; icon: IconName }) {
+// The Overview tab (GET /api/admin/overview). The same cards for every role; the server scopes the
+// figures to the signed-in user: ADMIN the whole system, ANALYST their allocated candidates, TEAM_LEAD
+// their own ("My Overview") or everyone's ("Full Overview").
+
+type ChosenView = "mine" | "full";
+
+function KpiCard({ label, value, hint, icon }: { label: string; value: number; hint?: string; icon?: IconName }) {
     return (
         <Card className="flex flex-col justify-between p-5">
-            <div className="flex items-start justify-between">
+            <div className="flex items-start justify-between gap-2">
                 <div>
                     <p className="text-label-sm text-ink-muted">{label}</p>
-                    <p className="mt-1 text-headline-xl tabular-nums text-ink">{formatNumber(value)}</p>
+                    <p className="mt-1 text-headline-xl tabular-nums text-ink">{formatNumber(value ?? 0)}</p>
                 </div>
-                <span className="flex size-9 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                    <Icon name={icon} className="size-5" />
-                </span>
+                {icon && (
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
+                        <Icon name={icon} className="size-5" />
+                    </span>
+                )}
             </div>
-            <p className="mt-4 border-t border-border pt-1 text-body-sm text-ink-muted">{hint}</p>
+            {hint && <p className="mt-4 border-t border-border pt-1 text-body-sm text-ink-muted">{hint}</p>}
         </Card>
     );
 }
 
-// Horizontal bars with count and share (Document Processing Statuses).
-function Breakdown({ counts, label, dotClass }: { counts: Record<string, number>; label: (key: string) => string; dotClass: (key: string) => string }) {
-    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    const total = entries.reduce((sum, [, n]) => sum + n, 0);
-    if (total === 0) return <EmptyState title="No submissions yet" description="Documents received on WhatsApp will be counted here." />;
-
+// Team Lead only: whose candidates the figures cover.
+function ViewChooser({ view, onChange }: { view: ChosenView; onChange: (view: ChosenView) => void }) {
+    const options: { value: ChosenView; label: string }[] = [
+        { value: "mine", label: "My Overview" },
+        { value: "full", label: "Full Overview" },
+    ];
     return (
-        <ul className="space-y-3">
-            {entries.map(([key, count]) => {
-                const share = (count / total) * 100;
+        <div role="group" aria-label="Overview view" className="inline-flex rounded-lg border border-border-strong bg-surface p-0.5 shadow-surface">
+            {options.map((option) => {
+                const selected = option.value === view;
                 return (
-                    <li key={key} className="space-y-1">
-                        <div className="flex items-center justify-between text-body-sm">
-                            <span className="flex items-center gap-2 font-medium text-ink">
-                                <span className={`size-2.5 rounded-full ${dotClass(key)}`} aria-hidden="true" />
-                                {label(key)}
-                            </span>
-                            <span>
-                                <span className="font-semibold tabular-nums text-ink">{formatNumber(count)}</span>
-                                <span className="ml-1 text-label-caps tabular-nums text-ink-subtle">({share.toFixed(1)}%)</span>
-                            </span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-canvas-muted">
-                            <div className={`h-full rounded-full ${dotClass(key)}`} style={{ width: `${share}%` }} />
-                        </div>
-                    </li>
+                    <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => onChange(option.value)}
+                        className={`h-7 rounded-md px-3 text-label-md ${selected ? "bg-primary-soft text-primary" : "text-ink-soft hover:bg-canvas"}`}
+                    >
+                        {option.label}
+                    </button>
                 );
             })}
-        </ul>
-    );
-}
-
-// Final police reports by 21-day status; each links to the filtered Police Workflow.
-function PoliceDue({ police }: { police: Overview["police"] }) {
-    const items = [
-        { label: "Overdue", value: police.overdue, status: "OVERDUE", critical: true },
-        { label: "Due today", value: police.dueToday, status: "DUE_TODAY", critical: true },
-        { label: "Due soon (1–7 days)", value: police.dueSoon, status: "DUE_SOON", critical: false },
-        { label: "Missing slip date", value: police.missingSlipDate, status: "DATE_MISSING", critical: true },
-        { label: "Not uploaded", value: police.notUploaded, status: "NOT_UPLOADED", critical: true },
-    ];
-    return (
-        <Card className="space-y-3 p-5">
-            <SectionHeading
-                title="Police reports"
-                description="Final police reports due 21 days after the police slip was submitted"
-                action={<Link to="/police" className="text-label-md text-primary hover:underline">Open Police Workflow</Link>}
-            />
-            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Police reports by status">
-                {items.map((item) => (
-                    <li key={item.status}>
-                        <Link to={`/police?status=${item.status}`} className="flex items-center justify-between rounded-xl bg-canvas px-3 py-2 hover:bg-canvas-muted">
-                            <span className="text-body-sm text-ink">{item.label}</span>
-                            <span className={`text-headline-md tabular-nums ${item.critical && item.value > 0 ? "text-critical" : "text-ink"}`}>{formatNumber(item.value)}</span>
-                        </Link>
-                    </li>
-                ))}
-            </ul>
-        </Card>
-    );
-}
-
-// Required-document completeness of every client, now (same rule as the
-// Clients page and the Missing Documents view).
-function ClientCompleteness({ clients, requiredTypes }: { clients: Overview["clients"]; requiredTypes: string[] }) {
-    const items = [
-        { label: "Completed clients", value: clients.complete, to: "/clients?completion=COMPLETE", critical: false },
-        { label: "Incomplete clients", value: clients.incomplete, to: "/clients?completion=INCOMPLETE", critical: false },
-        { label: "Missing documents", value: clients.missingDocuments, to: "/missing-documents", critical: true },
-    ];
-    return (
-        <Card className="space-y-3 p-5">
-            <SectionHeading
-                title="Client documents"
-                description={`A client is complete when every required document (${requiredTypes.map(documentTypeLabel).join(", ")}) is verified`}
-                action={<Link to="/missing-documents" className="text-label-md text-primary hover:underline">Open Missing Documents</Link>}
-            />
-            <ul className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Clients by completeness">
-                {items.map((item) => (
-                    <li key={item.label}>
-                        <Link to={item.to} className="flex items-center justify-between rounded-xl bg-canvas px-3 py-2 hover:bg-canvas-muted">
-                            <span className="text-body-sm text-ink">{item.label}</span>
-                            <span className={`text-headline-md tabular-nums ${item.critical && item.value > 0 ? "text-critical" : "text-ink"}`}>{formatNumber(item.value)}</span>
-                        </Link>
-                    </li>
-                ))}
-            </ul>
-            {clients.missingDocuments > 0 && (
-                <p className="text-label-sm text-ink-muted">
-                    Missing: {requiredTypes.filter((type) => clients.missingByType[type]).map((type) => `${documentTypeLabel(type)} ${formatNumber(clients.missingByType[type])}`).join(" · ")}
-                </p>
-            )}
-        </Card>
-    );
-}
-
-// Monthly overview: shown or hidden with the header toggle, remembered per
-// browser (off when storage is unavailable).
-export const MONTHLY_OVERVIEW_KEY = "emlynk.admin.monthlyOverview";
-
-function readMonthlyPreference(): boolean {
-    try {
-        return window.localStorage.getItem(MONTHLY_OVERVIEW_KEY) === "on";
-    } catch {
-        return false;
-    }
-}
-
-function saveMonthlyPreference(on: boolean) {
-    try {
-        window.localStorage.setItem(MONTHLY_OVERVIEW_KEY, on ? "on" : "off");
-    } catch {
-        // kept for this page only
-    }
-}
-
-function monthLabel(month: string): string {
-    return new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`));
-}
-
-// "YYYY-MM" `delta` months from `month` (negative = earlier); crosses years.
-export function shiftMonth(month: string, delta: number): string {
-    const [year, monthNumber] = month.split("-").map(Number);
-    const date = new Date(Date.UTC(year, monthNumber - 1 + delta, 1));
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-// Previous / next month around the shown one. Next stops at the server's
-// current business month (`thisMonth`, Sri Lanka time): the report refuses
-// future months, so they can't be reached from here.
-function MonthNavigation({ month, thisMonth, onChange }: { month: string; thisMonth: string; onChange: (month: string) => void }) {
-    const atCurrentMonth = month >= thisMonth;
-    const arrow = "flex size-8 items-center justify-center rounded-lg text-ink-muted transition-colors hover:bg-canvas-muted hover:text-ink focus-visible:shadow-focus focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-muted";
-    return (
-        <div role="group" aria-label="Month" className="flex items-center gap-1">
-            <button type="button" className={arrow} aria-label="Previous month" onClick={() => onChange(shiftMonth(month, -1))}>
-                <Icon name="chevron_left" />
-            </button>
-            <span aria-live="polite" data-testid="selected-month" className="min-w-32 text-center text-label-md tabular-nums text-ink">{monthLabel(month)}</span>
-            <button type="button" className={arrow} aria-label="Next month" disabled={atCurrentMonth} onClick={() => !atCurrentMonth && onChange(shiftMonth(month, 1))}>
-                <Icon name="chevron_right" />
-            </button>
         </div>
     );
 }
 
-function MonthlyOverview() {
-    const [month, setMonth] = useState<string | undefined>(undefined);
-    const report = useAdminResource(`monthly:${month ?? ""}`, (token, signal) => getMonthlyOverview(token, month, signal));
-    const data = report.data;
-    // The requested month shows at once; the figures below follow when loaded.
-    const shownMonth = month ?? data?.month;
-    const items = data
-        ? [
-              { label: "Candidates registered", value: data.candidatesRegistered, tone: "text-ink" },
-              { label: "Documents submitted", value: data.documentsSubmitted, tone: "text-ink" },
-              { label: "Processed", value: data.successfullyProcessed, tone: "text-verified" },
-              { label: "Pending", value: data.pending, tone: "text-review" },
-              { label: "Rejected", value: data.rejected, tone: "text-critical" },
-              { label: "Manual review", value: data.manualReview, tone: "text-review" },
-          ]
-        : [];
-
-    return (
-        <Card className="space-y-3 p-5">
-            <SectionHeading
-                title="Monthly overview"
-                action={data && shownMonth && <MonthNavigation month={shownMonth} thisMonth={data.thisMonth} onChange={setMonth} />}
-            />
-            {report.status === "error" && !data && <ErrorState message={report.error.message} onRetry={report.reload} />}
-            {report.status === "loading" && !data && <LoadingState label="Loading monthly overview…" />}
-            {data && (
-                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label={`Monthly overview for ${monthLabel(data.month)}`} aria-busy={report.status === "loading"}>
-                    {items.map((item) => (
-                        <li key={item.label} className="flex items-center justify-between rounded-xl bg-canvas px-3 py-2">
-                            <span className="text-body-sm text-ink">{item.label}</span>
-                            <span className={`text-headline-md tabular-nums ${item.value > 0 ? item.tone : "text-ink"}`}>{formatNumber(item.value)}</span>
-                        </li>
-                    ))}
-                </ul>
-            )}
-        </Card>
-    );
-}
-
 function OverviewContent({ data }: { data: Overview }) {
-    const { kpis, reviewQueue } = data;
+    const o = data.overview;
+    const police = o.policeReportsYetToReceive;
+    const d = data.daily;
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <KpiCard label="Total clients" value={kpis.totalClients} hint="Client profiles on record" icon="group" />
-                <KpiCard label="Total documents" value={kpis.totalDocuments} hint="Stored in client folders" icon="description" />
-                <KpiCard label="Pending review" value={kpis.pendingReview} hint="Waiting files + stored files to review" icon="fact_check" />
-                <KpiCard label="Received today" value={kpis.receivedToday} hint={`WhatsApp submissions on ${formatDate(`${data.businessDate}T12:00:00+05:30`)}`} icon="mail" />
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <ClientCompleteness clients={data.clients} requiredTypes={data.requiredDocumentTypes} />
-                <PoliceDue police={data.police} />
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-                <Card className="space-y-4 p-5 lg:col-span-7">
-                    <SectionHeading title="Document processing statuses" description="Outcome of every document received on WhatsApp" />
-                    <Breakdown counts={data.submissionsByStatus} label={statusLabel} dotClass={(key) => toneDotClass(statusTone(key))} />
-                </Card>
-                <Card className="space-y-4 p-5 lg:col-span-5">
-                    <SectionHeading title="Documents by type" description="Received documents by detected type" />
-                    <Breakdown counts={data.submissionsByType} label={documentTypeLabel} dotClass={() => "bg-primary"} />
-                </Card>
-            </div>
-
-            <Card>
-                <div className="p-4">
-                    <SectionHeading
-                        title="Recent documents"
-                        description="Latest files stored in client folders"
-                        action={<Link to="/documents" className="text-label-md text-primary hover:underline">View all</Link>}
-                    />
+            <section aria-labelledby="overview-current" className="space-y-3">
+                <div id="overview-current">
+                    <SectionHeading title="Overview" />
                 </div>
-                {data.recentDocuments.length ? (
-                    <DocumentsTable documents={data.recentDocuments} caption="Recent documents" />
-                ) : (
-                    <EmptyState title="No documents stored yet" />
-                )}
-            </Card>
-
-            <Card>
-                <div className="space-y-3 p-4">
-                    <SectionHeading
-                        title={`Review queue — ${formatNumber(reviewQueue.total)} ${reviewQueue.total === 1 ? "item" : "items"}`}
-                        description={`${formatNumber(reviewQueue.pendingFiles)} files waiting in pending storage · ${formatNumber(reviewQueue.reviewRequiredDocuments)} stored files marked Review required`}
-                        action={
-                            <Link to="/review" className="text-label-md text-primary hover:underline">
-                                Open Review Queue
-                            </Link>
-                        }
-                    />
-                    {Boolean(reviewQueue.failedSubmissions) && (
-                        <p className="text-body-sm">
-                            <Link to="/review?kind=FAILED" className="font-medium text-critical hover:underline">
-                                {formatNumber(reviewQueue.failedSubmissions!)} {reviewQueue.failedSubmissions === 1 ? "submission" : "submissions"} failed processing
-                            </Link>
-                            <span className="text-ink-muted"> — not counted as pending review; nothing was stored for the client.</span>
-                        </p>
-                    )}
-                    {Object.keys(reviewQueue.pendingByStatus).length > 0 && (
-                        <ul className="flex flex-wrap gap-2" aria-label="Waiting files by reason">
-                            {Object.entries(reviewQueue.pendingByStatus).map(([status, count]) => (
-                                <li key={status} className="flex items-center gap-1.5">
-                                    <StatusBadge status={status} />
-                                    <span className="text-label-sm tabular-nums text-ink-muted">{formatNumber(count)}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <KpiCard label="Active Allocated Candidates" value={o.activeAllocated} hint="Allocated and still in progress" icon="assignment_ind" />
+                    <KpiCard label="Job Allocated Candidates" value={o.jobAllocated} hint="Currently assigned to a job" icon="work" />
                 </div>
-                {reviewQueue.items.length ? (
-                    <div className="overflow-x-auto">
-                        <table className="w-full border-separate border-spacing-0">
-                            <caption className="sr-only">Latest files waiting for review</caption>
-                            <thead>
-                                <tr>
-                                    {["Type", "Reason", "Client", "Received"].map((heading) => (
-                                        <th key={heading} scope="col" className={tableHead}>{heading}</th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {reviewQueue.items.map((item) => (
-                                    <tr key={item.temporaryId} className="hover:bg-canvas">
-                                        <td className={tableCell}>
-                                            <Link to={`/review/pending-${encodeURIComponent(item.temporaryId)}`} className="text-primary hover:underline">{documentTypeLabel(item.documentType)}</Link>
-                                        </td>
-                                        <td className={tableCell}><StatusBadge status={item.processingStatus} /></td>
-                                        <td className={tableCell}>
-                                            {item.client ? (
-                                                <Link to={`/clients/${encodeURIComponent(item.client.passportId)}`} className="text-primary hover:underline">
-                                                    {item.client.name ?? item.client.passportId}
-                                                </Link>
-                                            ) : (
-                                                <span className="text-ink-subtle">Not identified</span>
-                                            )}
-                                        </td>
-                                        <td className={`${tableCell} text-label-sm text-ink-muted`}>{formatDateTime(item.receivedDate)}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                ) : (
-                    <EmptyState title="Nothing waiting for review" />
-                )}
-            </Card>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                    <KpiCard
+                        label="Police reports"
+                        value={police?.total ?? 0}
+                        hint={`Yet to receive · Romania ${formatNumber(police?.byVariant?.ROMANIA ?? 0)} · SL ${formatNumber(police?.byVariant?.SL_VERIFIED ?? 0)}`}
+                    />
+                    <KpiCard label="Agreements" value={o.agreementsYetToReceive} hint="Yet to receive (job allocated only)" />
+                    <KpiCard label="Candidate details" value={o.detailsNotCompleted} hint="Candidate / additional details not completed" />
+                    <KpiCard label="Newly allocated" value={o.newlyAllocated} hint="No action taken yet" />
+                    <KpiCard label="Visa submission completed" value={o.visaSubmissionCompleted} hint="Visa Submission stage completed" />
+                </div>
+            </section>
+
+            <section aria-labelledby="overview-daily" className="space-y-3">
+                <div id="overview-daily">
+                    <SectionHeading title="Daily Overview" description={`Today's updates · ${formatDate(data.businessDate)}`} />
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <KpiCard label="Form submissions" value={d.formSubmissions} icon="edit_note" />
+                    <KpiCard label="New allocated candidates" value={d.newlyAllocated} icon="person_add" />
+                    <KpiCard label="Calls taken" value={d.callsTaken} icon="call" />
+                </div>
+            </section>
         </div>
     );
 }
 
 export function OverviewPage() {
     const { user } = useAuth();
-    const overview = useAdminResource("overview", (token, signal) => getOverview(token, signal));
+    // Only a Team Lead may choose (default "My Overview"); every other role sends no view (an Analyst
+    // asking for "full" gets 403). The server decides the served view and says whether to show the choice.
+    const [chosen, setChosen] = useState<ChosenView>("mine");
+    const requested = hasRole(user, [ROLES.TEAM_LEAD]) ? chosen : undefined;
+    const overview = useAdminResource(`overview:${requested ?? ""}`, (token, signal) => getOverview(token, requested, signal));
     const { syncing } = useSync();
-    const [showMonthly, setShowMonthly] = useState(readMonthlyPreference);
-    const toggleMonthly = () => {
-        setShowMonthly((on) => {
-            saveMonthlyPreference(!on);
-            return !on;
-        });
-    };
+    const showChooser = Boolean(overview.data?.canChooseView);
+    // useAdminResource keeps the previous data while a new key loads and after it fails. A Team Lead's
+    // figures are shown only when they are the selected view's, so switching My <-> Full never shows
+    // the other view's figures under the new label (loading or error instead).
+    // (A successful response is always the current request's, whatever view the server served.)
+    const data = overview.status === "success" || (overview.data && (requested === undefined || overview.data.view === requested)) ? overview.data : null;
 
     return (
         <section aria-labelledby="page-title" className="space-y-6">
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h1 id="page-title" className="text-headline-lg text-ink">Overview</h1>
-                    <p className="mt-1 text-body-sm text-ink-muted">Welcome{user ? `, ${user.name}` : ""}. Current figures; Sri Lanka time. For one day's figures see the <Link to="/reports/daily" className="text-primary hover:underline">Daily Report</Link>.</p>
+                    <p className="mt-1 text-body-sm text-ink-muted">Welcome{user ? `, ${user.name}` : ""}. Current figures; Sri Lanka time.</p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={toggleMonthly}
-                        aria-pressed={showMonthly}
-                        className={`h-8 rounded-lg border px-3 text-label-md shadow-surface ${showMonthly ? "border-primary bg-primary-soft text-primary" : "border-border-strong bg-surface text-ink-soft hover:border-border-focus hover:bg-canvas"}`}
-                    >
-                        Monthly overview
-                    </button>
+                <div className="flex flex-wrap items-center gap-2">
+                    {showChooser && <ViewChooser view={chosen} onChange={setChosen} />}
                     <button
                         type="button"
                         onClick={overview.reload}
@@ -365,11 +135,9 @@ export function OverviewPage() {
                 </div>
             </div>
 
-            {showMonthly && <MonthlyOverview />}
-
-            {overview.status === "error" && !overview.data && <Card><ErrorState message={overview.error.message} onRetry={overview.reload} /></Card>}
-            {overview.status === "loading" && !overview.data && <Card><LoadingState label="Loading overview…" /></Card>}
-            {overview.data && <OverviewContent data={overview.data} />}
+            {overview.status === "error" && !data && <Card><ErrorState message={overview.error.message} onRetry={overview.reload} /></Card>}
+            {overview.status === "loading" && !data && <Card><LoadingState label="Loading overview…" /></Card>}
+            {data && <OverviewContent data={data} />}
         </section>
     );
 }

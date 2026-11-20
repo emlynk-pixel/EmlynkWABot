@@ -5,12 +5,12 @@ import { createRequireActiveUser } from "../middleware/requireActiveUser.js";
 import { hasRole, requireRole, ROLES } from "../middleware/requireRole.js";
 import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
 import {
-    getOverview,
     listDocuments,
     getClientDetails,
     parseDocumentListQuery,
     isValidPassportIdParam,
 } from "../services/adminDashboardService.js";
+import { getOverview, parseOverviewQuery, resolveOverviewView } from "../services/overviewService.js";
 import {
     listReviewQueue,
     getReviewFile,
@@ -46,7 +46,7 @@ import {
     setDocumentType,
     setPoliceSubmittedDate,
 } from "../services/adminCorrectionService.js";
-import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
+import { getDailyReport, parseDailyReportQuery } from "../services/adminReportService.js";
 import { getDailyRoleSummary, getDailySummary, getIncompleteCandidates, parseIncompleteQuery, parseRoleQuery } from "../services/dailyReportService.js";
 import { listAuditLogs, parseAuditLogQuery } from "../services/auditLogService.js";
 import { getAdditionalDetails, parseAdditionalDetailsBody, saveAdditionalDetails } from "../services/candidateAdditionalDetailsService.js";
@@ -172,8 +172,8 @@ function contentDisposition(fileName) {
 
 // Phase 12 RBAC: role shorthand constants for this router.
 // ANALYST: only the candidates allocated to them: their workflow (the candidate's page and its
-// changes) and Need Attention. No dashboard, documents, review queue, police workflow, reports
-// or jobs.
+// changes), Need Attention and their own Overview figures. No dashboard, documents, review queue,
+// police workflow, reports or jobs.
 // ADMIN: full access, including user management, Settings, Work Allocation,
 // verification, police-date corrections and confirming Candidate Form values
 // (an OWNER holds every ADMIN permission: requireRole.js hasRole).
@@ -192,7 +192,8 @@ function contentDisposition(fileName) {
 // area for every candidate (the CANDIDATE_STAFF / CANDIDATE_READERS /
 // REGISTRATION_STAFF routes), Need Attention (list, flag, complete), Work
 // Allocation, Jobs (JOB_READERS / JOB_MANAGERS), Agents and Clients
-// (MASTER_DATA_STAFF) and the standard Daily Report (REPORT_READERS). It is in no
+// (MASTER_DATA_STAFF) and the standard Daily Report (REPORT_READERS); plus the
+// role-scoped Overview (OVERVIEW_READERS, as an ANALYST also has). It is in no
 // ADMINS_ONLY route: verification, follow-up
 // delete, the job-group form link, Summary by Roles, Job Types, police-date
 // corrections, Settings, users and Audit Logs stay ADMIN only; and it is not in the
@@ -200,7 +201,9 @@ function contentDisposition(fileName) {
 // TEAM_LEAD, ANALYST), each within its candidate scope.
 const { ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
 // The set of roles allowed for each endpoint tier.
-const DASHBOARD_READERS = [ADMIN];                                      // overview, documents, review, police, monthly
+const DASHBOARD_READERS = [ADMIN];                                      // documents, review, police
+// The Overview: each role sees its own figures (overviewService.js decides the view from req.user).
+const OVERVIEW_READERS = [ADMIN, TEAM_LEAD, ANALYST];
 const REPORT_READERS = [ADMIN, TEAM_LEAD];                              // the Daily Report
 const CANDIDATE_STAFF = [ADMIN, TEAM_LEAD, ANALYST];                    // the Candidates area and Need Attention
 const REVIEWERS = [ADMIN];                                              // review actions
@@ -256,9 +259,19 @@ export function createAdminRouter({
 
     // ---------------------------------------------------------------- read-only (VIEWER and above)
 
-    router.get("/overview", requireRole(DASHBOARD_READERS), async (req, res) => {
+    // ?view=mine|full. The view served is decided from req.user, never from the request:
+    // ADMIN / OWNER always the whole system, TEAM_LEAD mine (default) or full, ANALYST mine only.
+    router.get("/overview", requireRole(OVERVIEW_READERS), async (req, res) => {
+        const parsed = parseOverviewQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const resolved = resolveOverviewView(req.user, parsed.params.view);
+        if (resolved.forbidden) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
         const client = await resolveDb(db);
-        res.json(await getOverview({ db: client, scope: candidateScope(req.user) }));
+        return res.json(await getOverview({ db: client, ...resolved, adminId: req.user.adminId ?? null }));
     });
 
     // Incomplete clients and their missing required documents. Registered
@@ -330,16 +343,6 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return res.json(await getDailyRoleSummary({ db: client, date: date.params.date, role: role.params.role }));
-    });
-
-    // Monthly overview for one business month (Sri Lanka), default this month.
-    router.get("/reports/monthly", requireRole(DASHBOARD_READERS), async (req, res) => {
-        const parsed = parseMonthlyOverviewQuery(req.query);
-        if (parsed.errors) {
-            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
-        }
-        const client = await resolveDb(db);
-        return res.json(await getMonthlyOverview({ db: client, month: parsed.params.month, scope: candidateScope(req.user) }));
     });
 
     router.get("/clients/:passportId", requireRole(DASHBOARD_READERS), async (req, res) => {

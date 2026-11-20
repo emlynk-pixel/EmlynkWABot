@@ -137,23 +137,52 @@ Every route is read-only except the review actions (§4c) and the corrections (�
 
 Responses never contain storage paths, checksums or the sender numbers of submissions. BigInt file sizes and Decimal confidences are returned as numbers, dates as ISO strings.
 
-### `GET /api/admin/overview`
+### `GET /api/admin/overview?view=mine|full`
 
-| Field | Meaning |
+Role-scoped work counts (`src/services/overviewService.js`). Allowed: ADMIN (and OWNER), TEAM_LEAD, ANALYST; REGISTRATION_DESK and JOB_HANDLER get 403. `view` is optional; any value other than `mine` or `full`, or `view` given twice, is 400 `{ message: "Invalid query parameters", errors: [{ field: "view", … }] }`.
+
+The view served is decided on the server from `req.user` (read from the database on every request), never from the client:
+
+| Role | `view` served | `canChooseView` |
+|---|---|---|
+| ADMIN, OWNER | always `system` (the parameter is ignored) | `false` |
+| TEAM_LEAD | `mine` (default) or `full` | `true` |
+| ANALYST | always `mine`; `view=full` is 403 `{ "message": "Forbidden" }` | `false` |
+
+```json
+{
+  "businessDate": "YYYY-MM-DD",
+  "view": "mine | full | system",
+  "canChooseView": false,
+  "overview": {
+    "activeAllocated": 0,
+    "jobAllocated": 0,
+    "policeReportsYetToReceive": { "total": 0, "byVariant": { "ROMANIA": 0, "SL_VERIFIED": 0 } },
+    "agreementsYetToReceive": 0,
+    "detailsNotCompleted": 0,
+    "newlyAllocated": 0,
+    "visaSubmissionCompleted": 0
+  },
+  "daily": { "formSubmissions": 0, "newlyAllocated": 0, "callsTaken": 0 }
+}
+```
+
+Base set B: `system` every candidate; `full` every candidate with an allocation (`candidate_allocation`, to anyone); `mine` the candidates allocated to the signed-in user (`analyst_id = adminId`; no `adminId`: every figure is 0). This is the Overview's own scope: `candidateScope()` (which leaves a TEAM_LEAD unrestricted) is not used. **Active** = B and not a completed placement (`notCompletedPlacementWhere()`: not Departed, Cancelled or Rejected).
+
+| Field | Definition |
 |---|---|
-| `businessDate` | Today in Sri Lanka (`YYYY-MM-DD`) |
-| `kpis.totalClients` | `candidate` count |
-| `kpis.totalDocuments` | `documents` count (stored files) |
-| `kpis.pendingReview` | files waiting in `pending/` + stored documents marked `REVIEW_REQUIRED` |
-| `kpis.receivedToday` | submissions (`temporary_data`) since midnight Sri Lanka time |
-| `submissionsByStatus` / `submissionsByType` | submission counts by pipeline outcome / detected type |
-| `recentDocuments` | latest 8 stored documents with client name and passport ID |
-| `reviewQueue` | `total`, `pendingFiles`, `reviewRequiredDocuments`, `pendingByStatus`, latest 5 waiting files |
-| `police` | `dueSoon`, `dueToday`, `overdue`: clients by Police Workflow status (§4d) |
-| `clients` | `total`, `complete`, `incomplete`, `withMissing`, `missingDocuments`, `missingByType`: required-document completeness of every client, now (§4e) |
-| `requiredDocumentTypes` | the configured required types |
+| `activeAllocated` | Active and allocated |
+| `jobAllocated` | B with a current job (an active `job_candidate` row) |
+| `policeReportsYetToReceive.byVariant.ROMANIA` / `.SL_VERIFIED` | Active without an on-record (`verification_status` ≠ `SUPERSEDED`) `POLICE_REPORT` of that variant; `total` is the sum |
+| `agreementsYetToReceive` | Active, with a current job, without an on-record `SCAN` (the Agreement is in the SCAN, which can only be uploaded once the candidate has a job) |
+| `detailsNotCompleted` | Active and either the Candidate Details stage is incomplete (the `automaticStageMissing` rule as a database filter: surname, other names, NIC, passport issue / expiry date, job type, job experience or WhatsApp number blank (`NULL` or empty), or no on-record `PASSPORT`) or no `candidate_additional_details` row |
+| `newlyAllocated` | Active, allocated, and no manual action yet: no call log, no Additional Details, no verification row, and no `TEST_DETAILS` / `JOB_DETAILS` / `VISA_SUBMISSION` / `VISA_APPROVAL` stage row that is completed or has a note, test agent, Test ID, test result, test date or job details date |
+| `visaSubmissionCompleted` | B with a completed `VISA_SUBMISSION` stage (completed placements included) |
+| `daily.formSubmissions` | B with a Candidate Form response submitted (`candidate_form_response.submitted_at`) today |
+| `daily.newlyAllocated` | B with an allocation made (`assigned_date`) today (`system`: every allocation made today) |
+| `daily.callsTaken` | `mine`: call logs taken today by the signed-in user (`candidate_call_logs.admin_id`), on any candidate; `full` and `system`: every call log today |
 
-Sixteen queries run in parallel (three for the police counts, three for client completeness); the client is joined in the same query (no per-row lookups). Every Overview figure is current / all-time except `receivedToday`; one day's figures are in the Daily Report (§4i).
+"Today" is the business day in Sri Lanka (`Asia/Colombo`, `businessDayRange`). Eleven count queries run in parallel; no candidate list is loaded.
 
 ### `GET /api/admin/documents`
 
@@ -750,13 +779,13 @@ Body `{ candidateIds: [passportId…], confirm: true }`. Responds `{ unassigned,
 
 ### Analyst scoping of the other endpoints
 
-An `ANALYST` reaches only the Candidates area and Need Attention (every dashboard, document, review, police, report and job route is 403), limited to the candidates allocated to them: `GET /candidates` (search and totals included), every `/candidates/:passportId/...` route (404 *Candidate not found* otherwise), `GET /clients/:passportId` (404), `GET /follow-ups`, `POST /follow-ups/:id/complete` (404), `GET /clients`, `GET /documents`, `GET /documents/missing`, `GET /police`, and `POST /review/:id/assign-client` (409 `CLIENT_NOT_FOUND` for any other candidate). `POST /candidates` (registration) is ADMIN, TEAM_LEAD and REGISTRATION_DESK only. The review queue (an item linked to another candidate is 404; files not yet linked to any candidate stay open to every Analyst), the overview, the daily and monthly reports and the jobs (`GET /jobs`, `GET /jobs/:jobId`: only jobs holding their candidates, and only those candidates on them) are scoped the same way. The scope is applied in the database before search, filters, paging and totals (`test/roleScopeRegression.test.js`).
+An `ANALYST` reaches only the Candidates area, Need Attention and their own Overview figures (`GET /overview`, `mine` only; every other dashboard, document, review, police, report and job route is 403), limited to the candidates allocated to them: `GET /candidates` (search and totals included), every `/candidates/:passportId/...` route (404 *Candidate not found* otherwise), `GET /clients/:passportId` (404), `GET /follow-ups`, `POST /follow-ups/:id/complete` (404), `GET /clients`, `GET /documents`, `GET /documents/missing`, `GET /police`, and `POST /review/:id/assign-client` (409 `CLIENT_NOT_FOUND` for any other candidate). `POST /candidates` (registration) is ADMIN, TEAM_LEAD and REGISTRATION_DESK only. The review queue (an item linked to another candidate is 404; files not yet linked to any candidate stay open to every Analyst), the daily report and the jobs (`GET /jobs`, `GET /jobs/:jobId`: only jobs holding their candidates, and only those candidates on them) are scoped the same way. The scope is applied in the database before search, filters, paging and totals (`test/roleScopeRegression.test.js`).
 
 ## 5. Pages and data
 
 | Page | API | Shows |
 |---|---|---|
-| Overview | `GET /overview` | 4 KPI cards, client documents (completed / incomplete clients and missing documents, linked to the Clients and Missing Documents views), police reports overdue / due today / due soon (each links to the filtered Police Workflow), processing-status and type breakdowns (count + share), recent documents table, review-queue summary with the latest waiting files; Refresh |
+| Overview | `GET /overview?view=mine\|full` | the role-scoped work counts and today's figures (§4, `GET /api/admin/overview`); a Team Lead can switch between `mine` and `full` |
 | Documents | `GET /documents` | search, type, date range, sort, verification chips with counts, table (ID, client, type, status, confidence, received, "View client"), pagination; filters are kept in the URL |
 | Client details | `GET /clients/:passportId`, `POST /documents/:id/police-date` | profile card with Complete / Incomplete badge, required-document checklist with missing summary, police slip/report panel with the 21-day follow-up (status, slip submitted, report due, days left or overdue, or why no countdown runs), stored documents table, files waiting for review; **Set date** / **Correct date** for the latest police slip and the list of date changes |
 | Clients | `GET /clients` | summary cards (clients, complete, incomplete — click to filter; missing documents → Missing Documents), search (passport ID, unique ID, name, WhatsApp), completion and missing-type selects, table (client, WhatsApp, status, required documents with badges, missing, "View client"), pagination; all in the URL |
@@ -811,7 +840,8 @@ Serving rules (`src/adminFrontend.js`): hashed files under `/admin/assets/` are 
 | Frontend, Checkpoint 3 (Vitest) | `npm run admin:test` (`review.test.tsx`) | queue rendering, loading, error + retry, empty, filters and pagination, link to detail; detail rendering (reason, identity notes, sender, processing, client link, preview via token + blob URL), item without saved data, preview error, not found; protected routes |
 | Backend, Checkpoint 4 (`node:test`) | `npm test` (`test/adminReviewActions.test.js`, fake database in `test/helpers/fakeReviewDb.js`) | migration additive, RLS/revoke, trigger, schema match; request-body rules; approve of a waiting file (storage move, VERIFIED document, submission resolved, audit fields), next version name, existing verified document blocks it, rollback + copy removal when any of the three writes fails, storage copy failure, unreadable file, checksum mismatch, duplicate file, unlinked file and `UNKNOWN` type, FAILED without pending copy → 404, approved twice, two approvals at once, two items of one type at once; approve of a stored `REVIEW_REQUIRED` document and its conflict; keep pending (file stays, still in queue, audit), stored document, reason required (6 cases), repeated and concurrent identical submits, keep pending then approve; detail history order and admin names, `actions`; 401 (no/bad token, inactive, deleted admin), 400/404, invalid JSON, 500 without details, admin taken from the token, no reject route, audit entries can't be changed through the API, the router's only write routes |
 | Frontend, Checkpoint 4 (Vitest) | `npm run admin:test` (`review.test.tsx`, "Review actions") | only Approve and Keep Pending, no Reject; Approve confirmation and Cancel; successful approval (message, verified status, audit entry, queue reloads without the item); buttons disabled during the request, one request only; 409 and 502 messages shown; Keep Pending requires a reason; successful Keep Pending (trimmed reason sent, item reloaded with the entry); Keep Pending error; audit entries (action, admin, reason, time); Approve disabled with its reason |
-| Backend (`node:test`) | `npm test` (`test/adminFrontend.test.js`, `test/adminApi.test.js`) | `/admin` serving (Checkpoint 1); `/api/admin` auth: no/invalid/expired token, deleted and inactive admin, ACTIVE admin, no-store, DB failure → 500; overview structure, safe serialization, Sri Lanka "today", fixed query count; documents pagination, filters, search, date range, sorting, 14 invalid-parameter cases, unknown parameters; client details, required-document rules, 404, invalid ID; business-day helpers |
+| Backend (`node:test`) | `npm test` (`test/adminFrontend.test.js`, `test/adminApi.test.js`) | `/admin` serving (Checkpoint 1); `/api/admin` auth: no/invalid/expired token, deleted and inactive admin, ACTIVE admin, no-store, DB failure → 500; overview shape, Sri Lanka "today", fixed number of count queries; documents pagination, filters, search, date range, sorting, 14 invalid-parameter cases, unknown parameters; client details, required-document rules, 404, invalid ID; business-day helpers |
+| Backend, role-scoped Overview (`node:test`, PGlite) | `npm test` (`test/overviewRoles.test.js`) | every figure for two Analysts, a Team Lead (`mine` and `full`) and ADMIN / OWNER (`system`, whatever `view`) on synthetic data (job vs no job, missing police report variants and SCAN, newly allocated with and without an action, Visa submission, today vs yesterday, a completed placement); Analyst `view=full` 403; Registration Desk / Job Handler 403; invalid or repeated `view` 400; count queries only |
 
 Checked manually for Checkpoint 2 (not in the automated suite): the service queries against the live database (read-only, shapes and counts only), and the production build in headless Chrome with the admin API reading the live database read-only and a fake admin for sign-in: login redirect, Documents total and review-required filter match the database, "View client", required-document list, Overview totals, unknown client, no CSP violations or console errors.
 
@@ -918,7 +948,7 @@ The role is `public."user".role`, read from the database on every request (never
 
 - **`OWNER`**: the single system owner. Inherits every ADMIN permission (a tier that admits ADMIN admits OWNER: `hasRole()` in `src/middleware/requireRole.js` and `admin/src/auth/roles.ts`), plus managing ADMIN accounts. Set in the database only; see section 13 and [`OWNER_ROLE.md`](OWNER_ROLE.md).
 - **`ADMIN`**: everything, including Settings, Work Allocation, verification, police slip date corrections and user management of the roles below ADMIN (`/api/admin/users`); never another ADMIN's or the OWNER's account.
-- **`TEAM_LEAD`**: exactly seven areas: the Candidates area for every candidate (`CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_STAFF`), Need Attention (list, flag, complete), Work Allocation, Jobs (`JOB_READERS`, `JOB_MANAGERS`), Agents and Clients, and the standard Daily Report. Every ADMIN-only action stays ADMIN only (verification, Candidate Form confirm / reject, follow-up delete, the job-group form link, Summary by Roles, Job Types); no dashboards, review, police, monthly overview, Settings, Audit Logs or user management.
+- **`TEAM_LEAD`**: exactly seven areas: the Candidates area for every candidate (`CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_STAFF`), Need Attention (list, flag, complete), Work Allocation, Jobs (`JOB_READERS`, `JOB_MANAGERS`), Agents and Clients, and the standard Daily Report. Also the Overview, with its own figures or the full team's (`GET /overview?view=mine|full`). Every ADMIN-only action stays ADMIN only (verification, Candidate Form confirm / reject, follow-up delete, the job-group form link, Summary by Roles, Job Types); no other dashboards, review, police, Settings, Audit Logs or user management.
 - **`ANALYST`**: dashboard reads, review actions, corrections and candidate work; cannot correct police slip dates.
 - **`REGISTRATION_DESK`**: the registration workflow only (`REGISTRATION_WORKFLOW`): the passport-ID lookup (`GET /candidates/:passportId`), `POST /candidates`, `PUT /candidates/:passportId`, the `CANDIDATE_DETAILS` stage (its note) and uploads of `PASSPORT`, `NIC` and `SKILL_VIDEO`, each answered with the registration view of the candidate only (`registrationView`); every other candidate route, other stage or document type, and Need Attention (`GET /follow-ups` included): 403.
 - **`JOB_HANDLER`**: Jobs, Agents and Clients; reads Candidates (list, the candidate's page and what it reads: `CANDIDATE_READERS`) and changes no candidate record; no dashboards, reports, review, Need Attention, Settings, Audit Logs or user management (`JOB_MANAGEMENT_IMPLEMENTATION.md`, `AGENT_CLIENT_MANAGEMENT.md`).
@@ -932,7 +962,8 @@ Endpoint tiers (`src/routes/admin.js`):
 
 | Tier | Roles | Routes |
 |---|---|---|
-| Dashboard reads (`ALL_ACTIVE`) | ADMIN, ANALYST | overview, documents, clients, police, monthly overview, review (read) |
+| Overview (`OVERVIEW_READERS`) | ADMIN, TEAM_LEAD, ANALYST | `GET /overview`: the view is decided from the role (ADMIN system, TEAM_LEAD mine or full, ANALYST mine only) |
+| Dashboard reads (`DASHBOARD_READERS`) | ADMIN | documents, clients, police, review (read) |
 | Daily Report (`REPORT_READERS`) | ADMIN, TEAM_LEAD, ANALYST | `GET /reports/daily`, `/reports/daily/summary`, `/reports/daily/incomplete` |
 | Summary by Roles | ADMIN | `GET /reports/daily/roles` |
 | Candidates (`CANDIDATE_STAFF`) | ADMIN, TEAM_LEAD, ANALYST | the Candidates area's changes: stages, candidate documents (remove), call logs, additional details, form links; Priority Follow-Ups: flag and complete (`POST /follow-ups/:id/complete`); the list (`GET /follow-ups`) too (not REGISTRATION_DESK) |
