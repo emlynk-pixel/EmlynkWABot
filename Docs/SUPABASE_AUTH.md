@@ -39,12 +39,19 @@ the user's next request.
 3. The backend calls `supabase.auth.getUser(token)` (server-side, service-role
    client): this checks signature and expiry **and that the session still
    exists**, so a signed-out or revoked session is refused immediately.
+   The session must also be at most **30 days** old (`MAX_SESSION_AGE_MS`), counted
+   from its sign-in: the latest `amr` timestamp of a sign-in method in the token
+   (second factors such as `totp`, `phone`, `webauthn`, `mfa/...` and `token_refresh`
+   are ignored), which survives token refreshes (a re-authentication such as a password recovery starts a new 30 days).
+   A token with no timestamped sign-in method is refused. Supabase owns the session, so this
+   cap is the server-side lifetime behind the *Remember me* option and applies to
+   every session.
 4. `public."user"` is loaded by `auth_user_id`; it must exist, be `ACTIVE` and hold a supported role.
 5. `req.user` = that row; `requireRole()` checks `req.user.role`.
 
 | Situation | Response |
 |---|---|
-| no / malformed / expired / signed-out token | 401 |
+| no / malformed / expired / signed-out token, or a session older than 30 days | 401 |
 | valid session, no `public."user"` row, or not `ACTIVE` | 403 `ACCOUNT_NOT_ACTIVE` |
 | `ACTIVE`, but the role is not supported (the retired `MANAGER`) | 403 `ROLE_NOT_SUPPORTED` |
 | role not allowed for the route | 403 `Insufficient permissions` |
@@ -123,8 +130,13 @@ exists is refused and nothing changes. Server-only credentials.
   (`csrf-csrf`) protected the old httpOnly auth cookie; with no auth cookie it
   had nothing to protect. If cookie-based auth is ever reintroduced, CSRF
   protection must come back with it.
-- **Token storage**: Supabase keeps the session in `sessionStorage` (per tab,
-  cleared when the tab closes), as the previous token was. As with any
+- **Token storage**: Supabase keeps the session in `localStorage`
+  (`emlynk.auth`), one copy shared by every tab. "Remember me" on the login
+  page decides how long it lasts: unchecked, it ends when the browser is closed
+  (a session cookie `emlynk.auth.alive` marks the browser session; no token is
+  in it); checked, it survives restarts. Either way the backend refuses a
+  session more than 30 days after its sign-in (`supabaseIdentity.js`
+  `MAX_SESSION_AGE_MS`). No password is ever stored. As with any
   browser-held bearer token, XSS is the main threat; the strict CSP
   (`script-src 'self'`) is the mitigation.
 - **No role from the client**: invitation metadata, request bodies and token

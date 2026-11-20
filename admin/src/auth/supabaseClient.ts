@@ -11,6 +11,15 @@
 // and refreshed tokens (BroadcastChannel on the storage key); a separate copy
 // per tab would reuse a rotated refresh token and trip reuse detection.
 // Sign-out in one tab signs out the others.
+//
+// "Remember me": localStorage outlives the browser, so on its own every
+// session would survive a restart. Unless the user asked to be remembered
+// (REMEMBER_KEY, "1"), a session found on startup without the browser-session
+// marker cookie (ALIVE_COOKIE) belongs to a browser that has been closed since,
+// and is signed out (endSessionIfBrowserWasClosed). A cookie without
+// Expires/Max-Age is the only per-browser-session store: sessionStorage is per
+// tab, so it would sign out every new tab. The cookie holds no token. A
+// remembered session lasts at most 30 days: the backend answers 401 after that.
 // Invitation and recovery links carry the session in the URL; it is picked up
 // on load (detectSessionInUrl) and the URL fragment is cleared.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -26,6 +35,8 @@ export class SupabaseConfigError extends Error {
 }
 
 export const AUTH_STORAGE_KEY = "emlynk.auth";
+export const REMEMBER_KEY = "emlynk.auth.remember";
+export const ALIVE_COOKIE = "emlynk.auth.alive";
 
 // A secret key must never reach a browser: sb_secret_… keys, and legacy JWT
 // keys whose role claim is service_role.
@@ -74,6 +85,9 @@ export const sessionStore = {
         try {
             window.localStorage.removeItem(key);
             window.sessionStorage.removeItem(key);
+            // Signed out (here, in another tab, or the session ended): the
+            // next sign-in asks again.
+            if (key === AUTH_STORAGE_KEY) clearRememberChoice();
         } catch {
             // nothing stored
         }
@@ -91,6 +105,73 @@ export function signOutWhenClearedElsewhere(auth: Pick<AuthClient, "signOut">): 
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
+}
+
+// The login page's "Remember me" choice, kept beside the session (never the
+// password: Supabase stores only its own session tokens).
+export function setRememberChoice(remember: boolean): void {
+    try {
+        window.localStorage.setItem(REMEMBER_KEY, remember ? "1" : "0");
+    } catch {
+        // storage unavailable: no session survives the page either
+    }
+}
+
+export function clearRememberChoice(): void {
+    try {
+        window.localStorage.removeItem(REMEMBER_KEY);
+    } catch {
+        // nothing stored
+    }
+}
+
+function browserSessionMarked(): boolean {
+    return document.cookie.split(";").some((part) => part.trim() === `${ALIVE_COOKIE}=1`);
+}
+
+// No Expires / Max-Age: the browser drops it when it closes.
+function markBrowserSession(): void {
+    const secure = window.location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `${ALIVE_COOKIE}=1; path=/; SameSite=Strict${secure}`;
+}
+
+// Run on startup, before the stored session is read. A session that was not
+// to be remembered, stored before this browser session began, is ended: local
+// sign-out also revokes it on Supabase. If that fails the stored copy is
+// removed anyway. A session from an invite / recovery link is stored after
+// this check, and the remember flag is cleared for it, so it lasts until the
+// browser closes. Call it right after the
+// client is created, in the same task: everything up to the sign-out is
+// synchronous, so it runs before Supabase reads the stored session or the URL.
+export async function endSessionIfBrowserWasClosed(auth: Pick<AuthClient, "signOut">): Promise<void> {
+    const browserWasOpen = browserSessionMarked();
+    markBrowserSession();
+    // An invite / recovery link carries its own session: it lasts until the
+    // browser closes, whatever an earlier sign-in chose.
+    const linkSession = new URLSearchParams(window.location.hash.replace(/^#/, "")).has("access_token");
+    if (linkSession) clearRememberChoice();
+    if (browserWasOpen || sessionStore.getItem(AUTH_STORAGE_KEY) === null) return;
+    let remembered = false;
+    try {
+        remembered = window.localStorage.getItem(REMEMBER_KEY) === "1";
+    } catch {
+        // unreadable: not remembered
+    }
+    if (remembered) return;
+    // An invite / recovery link is being opened: Supabase stores its session
+    // once it has read the URL, and a sign-out (which waits for that) would
+    // end the new session instead. Drop the old copy now, before then.
+    if (linkSession) {
+        sessionStore.removeItem(AUTH_STORAGE_KEY);
+        return;
+    }
+    try {
+        await auth.signOut({ scope: "local" });
+    } catch {
+        // removed below
+    }
+    // Supabase removes the session through sessionStore; make sure it is gone.
+    if (sessionStore.getItem(AUTH_STORAGE_KEY) !== null) sessionStore.removeItem(AUTH_STORAGE_KEY);
 }
 
 let client: SupabaseClient | null = null;

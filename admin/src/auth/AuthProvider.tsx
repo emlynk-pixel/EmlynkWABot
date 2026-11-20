@@ -3,7 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import { fetchCurrentUser, type AppUser } from "../api/auth";
 import { ApiError, setApiAccessToken } from "../api/client";
 import { clearRememberedFilters } from "../hooks/rememberedFiltersStorage";
-import { getAuthClient, SupabaseConfigError } from "./supabaseClient";
+import { clearRememberChoice, endSessionIfBrowserWasClosed, getAuthClient, setRememberChoice, SupabaseConfigError } from "./supabaseClient";
 
 export { canCorrectPoliceDates, canConfirmSubmittedChanges, canFilterOwnAllocations, canShareJobGroupForm, canAssignJobFromCandidatePage, canCreateJobTypes, canInviteUsers, canManageAllocations, canManageCandidates, canManageJobs, canManageMasterData, canVerifyCandidate, canViewCandidates, canViewJobs, canRegisterCandidates, canReview, canViewDashboard, invitableRoles, isAdmin, canImportCandidates } from "./roles";
 
@@ -17,7 +17,9 @@ type AuthState =
     | { status: "anonymous"; user: null; token: null; notice: string | null };
 
 type AuthContextValue = AuthState & {
-    signIn: (email: string, password: string) => Promise<void>;
+    // remember: keep the session after the browser closes (up to 30 days,
+    // enforced by the backend); otherwise it ends when the browser closes.
+    signIn: (email: string, password: string, remember?: boolean) => Promise<void>;
     signOut: () => Promise<void>;
     // Re-reads the application profile for the current session (after
     // completing an invitation, or a role change).
@@ -87,7 +89,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     // Restore the session on load (also one set up from an invite or recovery
-    // link), and follow Supabase's session events afterwards.
+    // link), and follow Supabase's session events afterwards. A session not
+    // to be remembered is ended first if the browser was closed since.
     useEffect(() => {
         let auth;
         try {
@@ -97,7 +100,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return;
         }
         const controller = new AbortController();
-        auth.getSession()
+        endSessionIfBrowserWasClosed(auth)
+            .then(() => auth.getSession())
             .then(({ data }) => loadUser(data.session, controller.signal))
             .then((next) => { if (!controller.signal.aborted) apply(next); })
             .catch((error: unknown) => { if ((error as Error)?.name !== "AbortError") apply(anonymous(FALLBACK_MESSAGE)); });
@@ -119,8 +123,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
     }, [apply, loadUser]);
 
-    const signIn = useCallback(async (email: string, password: string) => {
+    const signIn = useCallback(async (email: string, password: string, remember = false) => {
         const auth = getAuthClient();
+        // The choice is recorded only for a successful sign-in (it is read on
+        // the next start-up): a failed attempt must not leave "remember" behind
+        // for a session that arrives later (an invite or recovery link).
+        clearRememberChoice();
         const { data, error } = await auth.signInWithPassword({ email, password });
         if (error || !data.session) throw signInError(error ?? {});
         const next = await loadUser(data.session);
@@ -128,14 +136,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // Valid credentials but no usable application account: sign the
             // Supabase session out again and say why.
             await auth.signOut({ scope: "local" }).catch(() => {});
+            clearRememberChoice();
             apply(anonymous());
             throw new ApiError(403, next.notice ?? ACCOUNT_NOT_ACTIVE_MESSAGE);
         }
+        setRememberChoice(remember);
         apply(next);
     }, [apply, loadUser]);
 
     // Ends the Supabase session everywhere (refresh tokens revoked); the
-    // local session is always cleared, even if Supabase can't be reached.
+    // local session is always cleared, even if Supabase can't be reached,
+    // and so is the "Remember me" choice (sessionStore.removeItem).
     const signOut = useCallback(async () => {
         try {
             const auth = getAuthClient();
@@ -144,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch {
             // best-effort: the local state is cleared below regardless
         }
+        clearRememberChoice();
         apply(anonymous());
     }, [apply]);
 
