@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { listClients, type ClientListParams, type Completion } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { ClientTable, Pager } from "../components/ClientTable";
 import { documentTypeLabel, formatNumber } from "../components/format";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
@@ -22,6 +23,9 @@ function paramsFrom(search: URLSearchParams): ClientListParams {
     };
 }
 
+// The filters remembered for the next visit (hooks/useRememberedSearchParams.ts).
+const REMEMBERED_KEYS = ["search", "completion", "missingType"];
+
 function SummaryButton({ label, value, active, onClick }: { label: string; value: number | undefined; active: boolean; onClick: () => void }) {
     return (
         <button
@@ -39,10 +43,11 @@ function SummaryButton({ label, value, active, onClick }: { label: string; value
 // Clients directory: every client with the status of the required
 // documents. Search, filters and page live in the URL.
 export function ClientsPage() {
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("clients", REMEMBERED_KEYS);
     const params = paramsFrom(searchParams);
     const key = searchParams.toString();
     const list = useAdminResource(`clients?${key}`, (token, signal) => listClients(token, params, signal));
+    useDiscardRestoredOnBadRequest(list, remembered);
     const [searchText, setSearchText] = useState(params.search ?? "");
     useEffect(() => setSearchText(params.search ?? ""), [params.search]);
 

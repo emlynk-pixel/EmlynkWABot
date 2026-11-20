@@ -101,7 +101,59 @@ export function cleanFilters(filters: CandidateFilters): CandidateFilters {
     return clean;
 }
 
-export const filterCount = (filters: CandidateFilters) => filterChips(filters, null).length;
+// What the server would accept of filter values from elsewhere (a value saved by an older version, edited
+// storage): each value is checked like candidateListFilters.js does, and an invalid one (or item of a
+// list) is dropped instead of being sent and refused with 400. Job types, officers, clients and agents
+// change over time; only their format can be checked here.
+const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LIST_CHECKS: Record<ListFilterKey, (value: string) => boolean> = {
+    jobType: (value) => value.length <= 120,
+    workflowStatus: (value) => WORKFLOW_STATUS_CHOICES.some((choice) => choice.value === value),
+    stage: (value) => STAGE_CHOICES.some((choice) => choice.value === value),
+    sex: (value) => SEX_CHOICES.some((choice) => choice.value === value),
+    analystId: (value) => ID_PATTERN.test(value),
+    clientId: (value) => UUID_PATTERN.test(value),
+    agentId: (value) => UUID_PATTERN.test(value),
+};
+const isYmd = (value: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [y, m, d] = value.split("-").map(Number);
+    const date = new Date(Date.UTC(y, m - 1, d));
+    return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+};
+
+export function validFilters(values: Record<string, unknown>): CandidateFilters {
+    const text = (key: string) => (typeof values[key] === "string" ? (values[key] as string).trim() : "");
+    const valid: CandidateFilters = {};
+    for (const field of TEXT_FILTERS) {
+        const value = text(field.key);
+        if (!value || value.length > 100) continue;
+        valid[field.key] = value;
+        const match = text(`${field.key}Match`);
+        if ((field.matches as readonly string[]).includes(match)) valid[`${field.key}Match`] = match;
+    }
+    for (const key of LIST_FILTER_KEYS) {
+        const items = [...new Set(listOf(text(key)).map((item) => item.trim()).filter(Boolean))].filter(LIST_CHECKS[key]);
+        if (items.length && items.length <= 50) valid[key] = items.join(",");
+    }
+    const allocation = text("allocation");
+    if (ALLOCATION_CHOICES.some((choice) => choice.value === allocation)) valid.allocation = allocation;
+    for (const range of DATE_FILTERS) {
+        const from = text(range.from);
+        const to = text(range.to);
+        if (isYmd(from)) valid[range.from] = from;
+        if (isYmd(to)) valid[range.to] = to;
+        // A range ending before it starts is refused whole.
+        if (valid[range.from] && valid[range.to] && valid[range.from]! > valid[range.to]!) {
+            delete valid[range.from];
+            delete valid[range.to];
+        }
+    }
+    return cleanFilters(valid);
+}
+
+export const filterCount =(filters: CandidateFilters) => filterChips(filters, null).length;
 
 export const appendFilters = (query: URLSearchParams, filters: CandidateFilters | undefined) => {
     for (const [key, value] of Object.entries(cleanFilters(filters ?? {}))) query.set(key, value);

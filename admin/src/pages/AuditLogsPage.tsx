@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { listAuditLogs, type AuditCategory, type AuditChange, type AuditLogItem, type AuditLogParams } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { stageLabel } from "../api/candidates";
 import { isAdmin, useAuth } from "../auth/AuthProvider";
 import { roleLabel as labelOfRole } from "../auth/roles";
@@ -177,6 +178,9 @@ function paramsFrom(search: URLSearchParams): AuditLogParams {
 
 const FILTER_NAMES = ["adminId", "passportId", "candidate", "action", "category", "startDate", "endDate", "search"] as const;
 
+// The filters remembered for the next visit (hooks/useRememberedSearchParams.ts).
+const REMEMBERED_KEYS = FILTER_NAMES;
+
 export function AuditLogsPage() {
     const { user } = useAuth();
     if (!isAdmin(user)) {
@@ -196,10 +200,11 @@ export function AuditLogsPage() {
 }
 
 function AuditLogsView() {
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("audit-logs", REMEMBERED_KEYS);
     const params = paramsFrom(searchParams);
     const key = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString();
     const list = useAdminResource(`audit-logs?${key}`, (token, signal) => listAuditLogs(token, params, signal));
+    useDiscardRestoredOnBadRequest(list, remembered);
     const data = list.data;
 
     const update = (changes: Record<string, string | undefined>, { keepPage = false } = {}) => {

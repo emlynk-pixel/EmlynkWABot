@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Session } from "@supabase/supabase-js";
 import { fetchCurrentUser, type AppUser } from "../api/auth";
 import { ApiError, setApiAccessToken } from "../api/client";
+import { clearRememberedFilters } from "../hooks/rememberedFiltersStorage";
 import { getAuthClient, SupabaseConfigError } from "./supabaseClient";
 
 export { canCorrectPoliceDates, canConfirmSubmittedChanges, canFilterOwnAllocations, canShareJobGroupForm, canAssignJobFromCandidatePage, canCreateJobTypes, canInviteUsers, canManageAllocations, canManageCandidates, canManageJobs, canManageMasterData, canVerifyCandidate, canViewCandidates, canViewJobs, canRegisterCandidates, canReview, canViewDashboard, invitableRoles, isAdmin, canImportCandidates } from "./roles";
@@ -51,6 +52,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     stateRef.current = state;
 
     const apply = useCallback((next: AuthState) => {
+        // The signed-in user's session ended (sign-out here or in another tab, or expiry): their saved
+        // list filters go with it.
+        const previous = stateRef.current;
+        if (previous.status === "authenticated" && (next.status !== "authenticated" || next.user.userId !== previous.user.userId)) {
+            clearRememberedFilters(previous.user.userId);
+        }
         setApiAccessToken(next.token);
         setState(next);
     }, []);

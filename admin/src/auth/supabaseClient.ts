@@ -5,8 +5,12 @@
 // The service-role / secret key is server-only and is refused here even if
 // someone puts it in the build configuration by mistake.
 //
-// Session storage: sessionStorage (kept across reloads of this tab, gone
-// when the tab closes, never shared with other tabs), as before the cutover.
+// Session storage: localStorage, shared by every tab of this browser, so a
+// new tab opens signed in. One shared copy matters: Supabase serialises token
+// refresh across tabs (navigator.locks) and tells other tabs about sign-out
+// and refreshed tokens (BroadcastChannel on the storage key); a separate copy
+// per tab would reuse a rotated refresh token and trip reuse detection.
+// Sign-out in one tab signs out the others.
 // Invitation and recovery links carry the session in the URL; it is picked up
 // on load (detectSessionInUrl) and the URL fragment is cleared.
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -37,29 +41,57 @@ export function isSecretKey(key: string): boolean {
     }
 }
 
-const sessionStore = {
+// Before this change the session was in sessionStorage: a tab signed in then
+// moves it to localStorage on first read instead of being signed out.
+function migrateFromSessionStorage(key: string): string | null {
+    try {
+        const old = window.sessionStorage.getItem(key);
+        if (old === null) return null;
+        window.localStorage.setItem(key, old);
+        window.sessionStorage.removeItem(key);
+        return old;
+    } catch {
+        return null;
+    }
+}
+
+export const sessionStore = {
     getItem: (key: string) => {
         try {
-            return window.sessionStorage.getItem(key);
+            return window.localStorage.getItem(key) ?? migrateFromSessionStorage(key);
         } catch {
             return null;
         }
     },
     setItem: (key: string, value: string) => {
         try {
-            window.sessionStorage.setItem(key, value);
+            window.localStorage.setItem(key, value);
         } catch {
             // storage unavailable: the session lasts for this page only
         }
     },
     removeItem: (key: string) => {
         try {
+            window.localStorage.removeItem(key);
             window.sessionStorage.removeItem(key);
         } catch {
             // nothing stored
         }
     },
 };
+
+// Supabase announces sign-out to other tabs over BroadcastChannel; where that
+// is unavailable, the session being removed from localStorage by another tab
+// (a storage event) signs this tab out too. Returns the unsubscribe function.
+export function signOutWhenClearedElsewhere(auth: Pick<AuthClient, "signOut">): () => void {
+    const onStorage = (event: StorageEvent) => {
+        if (event.key !== AUTH_STORAGE_KEY && event.key !== null) return;
+        if (event.newValue !== null || event.storageArea !== window.localStorage) return;
+        void auth.signOut({ scope: "local" }).catch(() => {});
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+}
 
 let client: SupabaseClient | null = null;
 
@@ -79,6 +111,7 @@ export function getAuthClient(): AuthClient {
                 flowType: "implicit",
             },
         });
+        signOutWhenClearedElsewhere(client.auth);
     }
     return client.auth;
 }

@@ -1,4 +1,4 @@
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
 import { canRegisterCandidates, notificationSource } from "../auth/roles";
 import { Breadcrumbs } from "../components/Breadcrumbs";
@@ -18,6 +18,14 @@ export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: {
     const { user } = useAuth();
     const { syncing, result, sync } = useSync();
     const { theme, toggle } = useTheme();
+    const navigate = useNavigate();
+    const location = useLocation();
+    // Back steps one entry back in this app's history; off on the first entry
+    // (key "default"). BrowserRouter keeps the entry's index in history.state
+    // (idx), which also catches a first entry that was replaced (a redirect);
+    // MemoryRouter (tests) keeps none there.
+    const historyIndex = (window.history.state as { idx?: unknown } | null)?.idx;
+    const canGoBack = location.key !== "default" && (typeof historyIndex !== "number" || historyIndex > 0);
     // Quick access to the registration form (the existing /candidates/new
     // route) on every page, for the roles that can register candidates.
     const showRegister = canRegisterCandidates(user);
@@ -49,6 +57,16 @@ export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: {
             >
                 <Icon name="panel_left" />
                 <span className="sr-only">Toggle sidebar</span>
+            </button>
+            <button
+                type="button"
+                onClick={() => navigate(-1)}
+                disabled={!canGoBack}
+                className={`${trigger} disabled:cursor-not-allowed disabled:opacity-50`}
+                title="Go back to the previous page"
+            >
+                <Icon name="arrow_back" />
+                <span className="sr-only">Back</span>
             </button>
             <span aria-hidden="true" className="mr-1 hidden h-4 w-px bg-border sm:block" />
 
