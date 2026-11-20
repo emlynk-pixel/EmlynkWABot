@@ -15,6 +15,7 @@ import {
     WORKFLOW_STATUS_SELECT,
 } from "./candidateService.js";
 import { andWhere } from "./candidateAccess.js";
+import { notCompletedPlacementWhere } from "./candidateWorkflowStatus.js";
 import { candidateFilterWhere, parseCandidateFilters, queryValue, STAGE_FILTERS, workAllocationViewWhere } from "./candidateListFilters.js";
 
 export { MAX_DERIVED_FILTER_CANDIDATES } from "./candidateService.js";
@@ -38,8 +39,6 @@ export { MAX_DERIVED_FILTER_CANDIDATES } from "./candidateService.js";
 // a Team Lead sees every candidate (candidateAccess.js); the allocation is their "My allocated" list.
 const ADMIN_TARGET_ROLES = Object.freeze([ROLES.ANALYST, ROLES.TEAM_LEAD]);
 export const allocationTargetRoles = () => ADMIN_TARGET_ROLES;
-// A holder shown as a current (assignable) one: ACTIVE, and an Analyst or a Team Lead.
-const isActiveAssignee = (user) => user?.status === USER_STATUS.ACTIVE && ADMIN_TARGET_ROLES.includes(user.role);
 
 export const ALLOCATION_AUDIT_ACTION = Object.freeze({
     ASSIGN: "ASSIGN_CANDIDATE",
@@ -118,7 +117,9 @@ function allocationWhere(params, filters, scope) {
     return andWhere(scope, workAllocationViewWhere(params.status), params.search ? candidateSearchWhere(params.search) : {}, candidateFilterWhere(filters));
 }
 
-const analystView = (user) => (user ? { analystId: user.adminId, name: user.name, role: user.role, active: isActiveAssignee(user) } : null);
+// active: the ACCOUNT's status only (the page shows "(inactive)"). A role change (a promoted Analyst)
+// keeps the holder active; who may receive candidates is checked when allocating (lockTargets).
+const analystView = (user) => (user ? { analystId: user.adminId, name: user.name, role: user.role, active: user.status === USER_STATUS.ACTIVE } : null);
 
 // What a row needs: the Candidates list's Status signals (WORKFLOW_STATUS_SELECT, so Status and
 // the stages are computed exactly as there) plus this page's own columns.
@@ -475,6 +476,38 @@ export async function unassignCandidates({ db, actor, candidateIds }) {
         })));
         return { unassigned: allocated.length, alreadyUnallocated: rows.length - allocated.length };
     });
+}
+
+// Roles that hold no candidates: a user given one of them has their candidates returned to
+// Unallocated (unallocateForRoleChange). Only the NEW role decides; any other change (a promotion,
+// Team Lead -> Analyst) keeps every allocation.
+export const UNALLOCATING_ROLES = Object.freeze([ROLES.REGISTRATION_DESK, ROLES.JOB_HANDLER]);
+
+// A role change (userAccountService.js, retiredRoleService.js), inside the caller's transaction, so
+// the role and the allocations change together or not at all. The holder's active candidates go
+// to Unallocated, one UNASSIGN_CANDIDATE audit row each; completed placements (Departed, Cancelled,
+// Rejected) keep their holder. Returns how many were unallocated.
+export async function unallocateForRoleChange(tx, { actor, holder, newRole }) {
+    if (!UNALLOCATING_ROLES.includes(newRole)) return 0;
+    // The holder's allocation rows, locked: a concurrent reassignment or unassignment of one of them
+    // runs before or after this one, and the read below sees its result. (Test fakes skip the lock.)
+    if (typeof tx.$queryRaw === "function") {
+        await tx.$queryRaw`SELECT "passport_id" FROM "candidate_allocation" WHERE "analyst_id" = ${holder.adminId} ORDER BY "passport_id" FOR UPDATE`;
+    }
+    const rows = await tx.candidateAllocation.findMany({
+        where: { analystId: holder.adminId, candidate: { is: notCompletedPlacementWhere() } },
+        select: { passportId: true },
+        orderBy: { passportId: "asc" },
+    });
+    if (!rows.length) return 0;
+    const passportIds = rows.map((row) => row.passportId);
+    await tx.candidateAllocation.deleteMany({ where: { passportId: { in: passportIds }, analystId: holder.adminId } });
+    const from = { adminId: holder.adminId, name: holder.name };
+    await audit(tx, passportIds.map((passportId) => ({
+        ...auditRow({ actor, action: ALLOCATION_AUDIT_ACTION.UNASSIGN, passportId, from, to: null }),
+        reason: `Unassigned from ${holder.name}: role changed to ${newRole}`,
+    })));
+    return passportIds.length;
 }
 
 // Automatically distributes eligible unallocated candidates equally among

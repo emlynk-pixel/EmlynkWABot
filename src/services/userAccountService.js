@@ -40,6 +40,7 @@ import crypto from "node:crypto";
 import { ALL_ROLES, ROLES, USER_MANAGER_ROLES, canAssignRole, canManageAccount, isValidRole } from "../middleware/requireRole.js";
 import { USER_STATUS } from "../middleware/requireActiveUser.js";
 import { AuthAdminError } from "../auth/supabaseAuthAdmin.js";
+import { unallocateForRoleChange } from "./workAllocationService.js";
 
 export const MAX_NAME_LENGTH = 100;
 export const MAX_EMAIL_LENGTH = 254;
@@ -234,6 +235,8 @@ async function upsertInvitedUser(db, { email, name, role, authUserId, status, ac
                     reason: status === USER_STATUS.ACTIVE ? `Reactivated as ${role}` : via === "invitation" ? `Invited as ${role}` : `Invited as ${role} (password-setup email: the address was already confirmed)`,
                     newValue: email,
                 });
+                // A re-invite can give an existing (INVITED / INACTIVE) account a new role.
+                if (current.target) await unallocateForRoleChange(tx, { actor: current.actor, holder: current.target, newRole: role });
                 return user;
             });
         } catch (error) {
@@ -307,6 +310,7 @@ export async function updateUserRole({ db, actor, userId, role }) {
         assertCanChange(current, target, role);
         const updated = await tx.user.update({ where: { adminId: userId }, data: { role } });
         await audit(tx, { actor: current, action: "UPDATE_USER_ROLE", previousStatus: target.role, newStatus: role, reason: `Role changed for user ${userId}`, previousValue: target.role, newValue: role });
+        await unallocateForRoleChange(tx, { actor: current, holder: target, newRole: role });
         return toUserSummary(updated);
     });
 }

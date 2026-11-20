@@ -16,6 +16,7 @@ import crypto from "node:crypto";
 
 import { RETIRED_ROLES, ROLES, isValidRole } from "../middleware/requireRole.js";
 import { USER_STATUS } from "../middleware/requireActiveUser.js";
+import { unallocateForRoleChange } from "./workAllocationService.js";
 
 export const DEFAULT_REPLACEMENT_ROLE = Object.freeze({ [RETIRED_ROLES.MANAGER]: ROLES.ADMIN });
 
@@ -51,7 +52,7 @@ export async function convertRetiredRole({ db, retiredRole, replacementRole, act
         if (typeof tx.$queryRaw === "function") {
             await tx.$queryRaw`SELECT "admin_id" FROM "user" WHERE "role" = ${retiredRole} ORDER BY "admin_id" FOR UPDATE`;
         }
-        const accounts = await tx.user.findMany({ where: { role: retiredRole }, select: { adminId: true, status: true }, orderBy: { adminId: "asc" } });
+        const accounts = await tx.user.findMany({ where: { role: retiredRole }, select: { adminId: true, name: true, status: true }, orderBy: { adminId: "asc" } });
         for (const account of accounts) {
             await tx.user.update({ where: { adminId: account.adminId }, data: { role: replacementRole } });
             await tx.auditLog.create({
@@ -66,7 +67,8 @@ export async function convertRetiredRole({ db, retiredRole, replacementRole, act
                     newValue: replacementRole,
                 },
             });
+            await unallocateForRoleChange(tx, { actor, holder: account, newRole: replacementRole });
         }
-        return accounts;
+        return accounts.map(({ adminId, status }) => ({ adminId, status }));
     });
 }

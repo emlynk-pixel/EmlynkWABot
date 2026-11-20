@@ -209,7 +209,7 @@ describe("OFFICER -> automatic allocation", () => {
     test("Work Allocation lists a candidate held by a non-Analyst officer and can unassign it", async () => {
         await importRows(renumber([row(1, { OFFICER: "Mary" })]));
         const list = await listAllocationCandidates({ db: prisma, params: { page: 1, pageSize: 100, status: "ALLOCATED" } });
-        assert.deepEqual(list.items.map((item) => [item.passportId, item.analyst.name, item.analyst.active]), [[passportOf(1), "Mary Perera", false]]);
+        assert.deepEqual(list.items.map((item) => [item.passportId, item.analyst.name, item.analyst.active]), [[passportOf(1), "Mary Perera", true]], "an ACTIVE Admin holder is not shown as inactive");
         const analysts = await listAllocationAnalysts({ db: prisma });
         assert.deepEqual(analysts.unavailableAnalysts.map((a) => [a.name, a.assignedCount]), [["Mary Perera", 1]]);
         await unassignCandidates({ db: prisma, actor: ADMIN, candidateIds: [passportOf(1)] });
