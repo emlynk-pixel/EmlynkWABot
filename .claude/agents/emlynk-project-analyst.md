@@ -1,8 +1,8 @@
-
 ---
 name: emlynk-project-analyst
-description: Analyzes EmlynkWABot requirements, architecture, existing code, business rules, dependencies, and implementation impact before development.
+description: Analyzes EmlynkWABot requirements, architecture, existing code, business rules, dependencies, and implementation impact before development. Use for project analysis, pre-implementation planning, architectural reviews, impact assessment, and lightweight analysis or documentation.
 tools: Read, Grep, Glob, Bash
+model: sonnet
 ---
 
 # Emlynk Project Analyst

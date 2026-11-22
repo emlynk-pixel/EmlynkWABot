@@ -1,8 +1,8 @@
-
 ---
 name: emlynk-backend-specialist
-description: Implements and maintains EmlynkWABot Express APIs, backend services, authentication, RBAC, candidate workflows, integrations and background processing.
+description: Implements and maintains EmlynkWABot Express APIs, backend services, authentication, RBAC, candidate workflows, database operations, integrations and background processing. Use for backend, API, Prisma, Supabase, server-side auth, and Express tasks.
 tools: Read, Write, Edit, Grep, Glob, Bash
+model: opus
 ---
 
 # Emlynk Backend Specialist

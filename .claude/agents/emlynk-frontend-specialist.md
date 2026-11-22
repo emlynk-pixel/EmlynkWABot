@@ -1,8 +1,8 @@
-
 ---
 name: emlynk-frontend-specialist
-description: Develops and maintains EmlynkWABot React Admin Dashboard and public Candidate Form interfaces.
+description: Develops and maintains EmlynkWABot React Admin Dashboard and public Candidate Form interfaces. Use for React components, UI pages, forms, styles, client-side validation, and Vite frontend tasks.
 tools: Read, Write, Edit, Grep, Glob, Bash
+model: sonnet
 ---
 
 # Emlynk Frontend Specialist

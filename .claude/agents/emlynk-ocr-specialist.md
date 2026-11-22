@@ -1,8 +1,8 @@
-
 ---
 name: emlynk-ocr-specialist
-description: Develops and maintains EmlynkWABot OCR, document extraction, classification and processing workflows.
+description: Develops and maintains EmlynkWABot OCR, document extraction, classification and processing workflows. Use for OCR worker, Tesseract processing, PDF/image document extraction, MRZ/passport recognition, and document classification.
 tools: Read, Write, Edit, Grep, Glob, Bash
+model: sonnet
 ---
 
 # Emlynk OCR Specialist
