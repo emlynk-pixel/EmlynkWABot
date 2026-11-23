@@ -74,6 +74,8 @@ const MATRIX = [
     ["PUT", "/users/someone/role", { role: "ANALYST" }, ["ADMIN"]],
     ["POST", "/users/someone/deactivate", {}, ["ADMIN"]],
     ["GET", "/audit-logs", undefined, ["ADMIN"]],
+    // The export: no format, so ADMIN gets 400 before anything is read.
+    ["POST", "/audit-logs/export", {}, ["ADMIN"]],
     // Google Sheet Sync and Upload (the bulk import): ADMIN only, like every Settings tab.
     ["GET", "/settings/sheet-sync/status", undefined, ["ADMIN"]],
     ["POST", "/settings/sheet-sync/run", {}, ["ADMIN"]],

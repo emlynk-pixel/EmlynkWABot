@@ -48,7 +48,19 @@ import {
 } from "../services/adminCorrectionService.js";
 import { getDailyReport, parseDailyReportQuery } from "../services/adminReportService.js";
 import { getDailyRoleSummary, getDailySummary, getIncompleteCandidates, parseIncompleteQuery, parseRoleQuery } from "../services/dailyReportService.js";
-import { listAuditLogs, parseAuditLogQuery } from "../services/auditLogService.js";
+import {
+    MAX_AUDIT_EXPORT_ROWS,
+    NO_AUDIT_EXPORT_MATCHES_MESSAGE,
+    auditExportTooLargeMessage,
+    auditLogExportItems,
+    listAuditLogs,
+    parseAuditLogExportBody,
+    parseAuditLogQuery,
+    prepareAuditLogExport,
+} from "../services/auditLogService.js";
+import { AUDIT_EXPORT_CONTENT_TYPES, loadAuditLogExportWriter } from "../services/auditLogExportWriters.js";
+import { businessDateOf } from "../utils/businessDay.js";
+import { safeErrorInfo } from "../utils/safeLog.js";
 import { getAdditionalDetails, parseAdditionalDetailsBody, saveAdditionalDetails } from "../services/candidateAdditionalDetailsService.js";
 import {
     completeFollowUp,
@@ -245,6 +257,8 @@ export function createAdminRouter({
     // Where Candidate Form share links point (the public form's own origin;
     // never taken from a request header). Unset: no link can be created.
     candidateFormOrigin = process.env.CANDIDATE_FORM_ORIGIN,
+    // The audit log export file writers (tests replace it).
+    loadExportWriter = loadAuditLogExportWriter,
 } = {}) {
     const router = express.Router();
     const formOrigin = parseCandidateFormOrigin(candidateFormOrigin);
@@ -1229,6 +1243,43 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return res.json(await listAuditLogs({ db: client, params: parsed.params }));
+    });
+
+    // Every entry matching the list filters (JSON body, no pagination) as an
+    // Excel workbook or a PDF, streamed. 400 invalid filters, 404 none match,
+    // 413 more than MAX_AUDIT_EXPORT_ROWS match; each with a user-facing
+    // `message` that never repeats a submitted value.
+    router.post("/audit-logs/export", requireRole(ADMINS_ONLY), async (req, res) => {
+        const parsed = parseAuditLogExportBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ error: "INVALID_EXPORT_REQUEST", message: parsed.message, errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        const asOf = new Date();
+        const { where, total } = await prepareAuditLogExport({ db: client, params: parsed.params, asOf });
+        if (total === 0) {
+            return res.status(404).json({ error: "NO_MATCHING_RECORDS", message: NO_AUDIT_EXPORT_MATCHES_MESSAGE });
+        }
+        if (total > MAX_AUDIT_EXPORT_ROWS) {
+            return res.status(413).json({ error: "EXPORT_TOO_LARGE", message: auditExportTooLargeMessage(total), total, limit: MAX_AUDIT_EXPORT_ROWS });
+        }
+        const write = await loadExportWriter(parsed.format);
+        res.status(200);
+        res.setHeader("Content-Type", AUDIT_EXPORT_CONTENT_TYPES[parsed.format]);
+        res.setHeader("Content-Disposition", `attachment; filename="audit-log-${businessDateOf(asOf)}.${parsed.format}"`);
+        res.setHeader("Cache-Control", "no-store");
+        try {
+            await write({ items: auditLogExportItems({ db: client, where }), out: res, total, generatedAt: asOf });
+        } catch (error) {
+            if (!res.headersSent) {
+                for (const name of ["Content-Type", "Content-Disposition"]) res.removeHeader(name);
+                throw error;
+            }
+            // The file has started: it can only be cut off (the download fails).
+            console.error("Audit log export failed while streaming:", { format: parsed.format, ...safeErrorInfo(error) });
+            res.destroy();
+        }
+        return undefined;
     });
 
     // ---------------------------------------------------------------- users (ADMIN only)

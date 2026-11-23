@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { AuditLogItem, AuditLogList } from "../api/admin";
 import { ADMIN, OVERVIEW, RENDER_STEP, SESSION_TOKEN, fakeAuth, renderApp, stubBackend, type FetchRoutes, expectRedirectedHome } from "./helpers";
 
@@ -273,5 +273,92 @@ describe("Audit Logs page", () => {
         expect(await screen.findByText("Page 1 of 1")).toBeInTheDocument();
         expect(lastQuery(calls).get("pageSize")).toBe("100");
         expect(lastQuery(calls).get("page")).toBe("1");
+    });
+});
+
+describe("Audit Logs report download", () => {
+    const EXPORT = `POST ${PATH}/export`;
+    const exportCalls = (calls: { method: string; url: URL; body: unknown; headers: Record<string, string> }[]) => calls.filter((c) => c.method === "POST" && c.url.pathname === `${PATH}/export`);
+    let clicked: string[];
+    beforeEach(() => {
+        clicked = [];
+        vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:report"), revokeObjectURL: vi.fn() }));
+        vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this.download); });
+    });
+    const list = { [`GET ${PATH}`]: { status: 200, body: page([ENTRY]) } };
+
+    test("sends the applied filters in the POST body (none in the URL), uses the server file name", async () => {
+        const { calls } = asRole("ADMIN", { ...list, [EXPORT]: { status: 200, body: "x", headers: { "Content-Disposition": 'attachment; filename="audit-log-2026-10-08.pdf"' } } });
+        renderApp("/audit-logs?adminId=user-analyst&passportId=N1023757&candidate=Anusha&action=UPDATE_STAGE&category=STAGE&startDate=2026-10-01&endDate=2026-10-08&search=notes&page=2&pageSize=50");
+        await screen.findAllByTestId("audit-row", {}, RENDER_STEP);
+        await userEvent.setup().click(screen.getByRole("button", { name: "PDF" }));
+        await waitFor(() => expect(clicked).toEqual(["audit-log-2026-10-08.pdf"]));
+        const [call] = exportCalls(calls);
+        expect(call.url.search).toBe("");
+        expect(call.body).toEqual({
+            format: "pdf", adminId: "user-analyst", passportId: "N1023757", candidate: "Anusha", action: "UPDATE_STAGE",
+            category: "STAGE", startDate: "2026-10-01", endDate: "2026-10-08", search: "notes",
+        });
+        expect(call.headers.Authorization).toBe(`Bearer ${SESSION_TOKEN}`);
+    });
+
+    test("Excel: empty filters are omitted and a fallback file name is used", async () => {
+        const { calls } = asRole("ADMIN", { ...list, [EXPORT]: { status: 200, body: "x" } });
+        renderApp("/audit-logs");
+        await screen.findAllByTestId("audit-row", {}, RENDER_STEP);
+        await userEvent.setup().click(screen.getByRole("button", { name: "Excel (.xlsx)" }));
+        await waitFor(() => expect(clicked).toHaveLength(1));
+        expect(exportCalls(calls)[0].body).toEqual({ format: "xlsx" });
+        expect(clicked[0]).toMatch(/^audit-log-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    });
+
+    test("buttons are disabled while downloading, so a second click does nothing", async () => {
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const { calls } = asRole("ADMIN", { ...list, [EXPORT]: async () => { await held; return { status: 200, body: "x" }; } });
+        renderApp("/audit-logs");
+        await screen.findAllByTestId("audit-row", {}, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("button", { name: "PDF" }));
+        expect(await screen.findByRole("button", { name: "Preparing…" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "Excel (.xlsx)" })).toBeDisabled();
+        await user.click(screen.getByRole("button", { name: "Preparing…" }));
+        release();
+        await waitFor(() => expect(clicked).toHaveLength(1));
+        expect(exportCalls(calls)).toHaveLength(1);
+        expect(screen.getByRole("button", { name: "PDF" })).toBeEnabled();
+    });
+
+    for (const [status, message] of [
+        [400, "Start date must not be after end date"],
+        [404, "No audit log records match the selected filters"],
+        [422, "No audit log records match the selected filters"],
+        [413, "Too many records to export. Narrow the filters."],
+    ] as const) {
+        test(`shows the server message for ${status}`, async () => {
+            asRole("ADMIN", { ...list, [EXPORT]: { status, body: { message } } });
+            renderApp("/audit-logs");
+            await screen.findAllByTestId("audit-row", {}, RENDER_STEP);
+            await userEvent.setup().click(screen.getByRole("button", { name: "Excel (.xlsx)" }));
+            expect(await screen.findByRole("alert")).toHaveTextContent(message);
+            expect(clicked).toHaveLength(0);
+            expect(screen.getByRole("button", { name: "Excel (.xlsx)" })).toBeEnabled();
+        });
+    }
+
+    test("a start date after the end date is rejected before any request", async () => {
+        const { calls } = asRole("ADMIN", list);
+        renderApp("/audit-logs?startDate=2026-10-09&endDate=2026-10-01");
+        await screen.findAllByTestId("audit-row", {}, RENDER_STEP);
+        await userEvent.setup().click(screen.getByRole("button", { name: "PDF" }));
+        expect(await screen.findByRole("alert")).toHaveTextContent("The start date must be on or before the end date.");
+        expect(exportCalls(calls)).toHaveLength(0);
+    });
+
+    test("no download control for a role without access", async () => {
+        asRole("ANALYST");
+        renderApp("/audit-logs");
+        await screen.findByTestId("admin-name");
+        expect(screen.queryByRole("button", { name: "PDF" })).toBeNull();
     });
 });

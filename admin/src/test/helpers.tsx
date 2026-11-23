@@ -20,7 +20,7 @@ export const newToken = () => `eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJuZXcifQ.t${++toke
 // The profile a role would get from GET /auth/me.
 export const userWithRole = (role: string) => ({ ...ADMIN, role });
 
-type Route = { status: number; body?: unknown };
+type Route = { status: number; body?: unknown; headers?: Record<string, string> };
 type RouteHandler = Route | ((url: URL) => Route | Promise<Route>);
 // Keys are "METHOD /path" (the path without the query string).
 export type FetchRoutes = Record<string, RouteHandler>;
@@ -33,8 +33,8 @@ export function stubBackend(routes: FetchRoutes) {
         const method = init.method ?? "GET";
         calls.push({ method, path: url.pathname + url.search, url, headers: (init.headers ?? {}) as Record<string, string>, body: typeof init.body === "string" ? JSON.parse(init.body) : init.body ?? undefined });
         const route = routes[`${method} ${url.pathname}`];
-        const { status, body } = typeof route === "function" ? await route(url) : route ?? { status: 404, body: { message: "Not found" } };
-        return new Response(JSON.stringify(body ?? {}), { status, headers: { "Content-Type": "application/json" } });
+        const { status, body, headers } = typeof route === "function" ? await route(url) : route ?? { status: 404, body: { message: "Not found" } };
+        return new Response(JSON.stringify(body ?? {}), { status, headers: { "Content-Type": "application/json", ...headers } });
     });
     vi.stubGlobal("fetch", fetchMock);
     return { calls, fetchMock };

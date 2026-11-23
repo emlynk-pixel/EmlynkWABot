@@ -1,4 +1,4 @@
-import { apiRequest, apiRequestBlob } from "./client";
+import { apiPostForFile, apiRequest, apiRequestBlob } from "./client";
 
 // Admin dashboard API (src/routes/admin.js, /api/admin/*). Reads, plus the
 // review actions and corrections (all audited on the server). Every call
@@ -636,4 +636,16 @@ export type AuditLogList = {
 
 export function listAuditLogs(token: string, params: AuditLogParams, signal?: AbortSignal): Promise<AuditLogList> {
     return apiRequest<AuditLogList>(`/api/admin/audit-logs${queryString(params)}`, { token, signal });
+}
+
+export type AuditLogExportFormat = "xlsx" | "pdf";
+
+// Downloads the report of the entries matching the filters (no page / pageSize).
+// The filters go in the POST body, never the URL (a passport number is personal data).
+export function exportAuditLogs(token: string, format: AuditLogExportFormat, filters: Omit<AuditLogParams, "page" | "pageSize">, signal?: AbortSignal): Promise<{ blob: Blob; filename: string | null }> {
+    const body: Record<string, string> = { format };
+    for (const [name, value] of Object.entries(filters)) {
+        if (value !== undefined && value !== "") body[name] = String(value);
+    }
+    return apiPostForFile("/api/admin/audit-logs/export", body, { token, signal });
 }
