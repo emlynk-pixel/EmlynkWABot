@@ -80,9 +80,17 @@ export type StageState = StageProgress & {
 // candidate data, never edited, never stored. VISA_NOT_GOING, CANCELLED and REJECTED are recorded final
 // outcomes (the import's VISA STATUS, or an Admin's final status) and outrank everything.
 export type WorkflowStatusCode =
-    | "REGISTERED" | "STOPPED_WITH_TEST" | "TEST_PASSED" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED"
+    | "REGISTERED" | "STOPPED_WITH_TEST" | "TEST_PASSED" | "JOB_ASSIGNED" | "CANDIDATE_DETAILS_COLLECTED" | "FORM_SUBMITTED" | "CANDIDATE_DETAILS_VERIFIED" | "ADDITIONAL_DETAILS_COLLECTED"
+    | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED"
     | "VISA_DOCUMENT_READY" | "VISA_SUBMITTED" | "VISA_APPROVED" | "DEPARTED" | "VISA_NOT_GOING" | "CANCELLED" | "REJECTED";
-export type WorkflowStatus = { code: WorkflowStatusCode; label: string };
+// While step 4 is partial, `group` is the main status (Candidate Details Verified) and `subStatus` the part
+// reached; `code` stays the flat code the ?workflowStatus= filter uses.
+export type WorkflowStatus = {
+    code: WorkflowStatusCode;
+    label: string;
+    group?: { code: WorkflowStatusCode; label: string };
+    subStatus?: { code: WorkflowStatusCode; label: string };
+};
 
 // A recorded final status (src/services/candidateFinalStatusService.js): Departed, or an outcome. ADMIN only.
 export const FINAL_STATUS_OPTIONS = [

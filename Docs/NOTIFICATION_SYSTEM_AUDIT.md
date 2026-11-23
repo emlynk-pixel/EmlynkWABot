@@ -19,7 +19,7 @@ Severity: **Critical** (act today), **High** (act soon), **Warning** (act within
 | Area | Where it lives | What can be detected today |
 |---|---|---|
 | Registration, candidate details | `candidateService.js`, `candidate` table | creation, edits, identity fields (passport, NIC, WhatsApp; partial unique WhatsApp index) |
-| Workflow status | `candidateWorkflowStatus.js` (derived, never stored) | REGISTERED → JOB_ASSIGNED → FORM_SUBMITTED → DETAILS_VERIFIED → DOCUMENTS_VERIFIED → VISA_DOCUMENT_READY; STOPPED_WITH_TEST override |
+| Workflow status | `candidateWorkflowStatus.js` (derived, never stored) | REGISTERED → TEST_PASSED → JOB_ASSIGNED → CANDIDATE_DETAILS_VERIFIED (CANDIDATE_DETAILS_COLLECTED → FORM_SUBMITTED → ADDITIONAL_DETAILS_COLLECTED) → DOCUMENTS_VERIFIED → VISA_DOCUMENT_READY, strictly gated; STOPPED_WITH_TEST override (see 20-candidate-management.md §4.0) |
 | Stages | `candidate_stages` | 8 stages (TEST_DETAILS … FINALIZING_JOB), `completed`, `completed_at`, test result PASS/FAIL |
 | Verification | `candidateVerificationService.js`, `candidate_verification` | details/documents verified (ADMIN and OWNER); **automatic reset by DB trigger** when covered data changes (`DETAILS_VERIFICATION_RESET`, `DOCUMENTS_VERIFICATION_RESET`) |
 | Candidate Form | `candidateForm*Service.js`, `candidate_form_*` tables | link created/revoked/expired (3 days), failed-attempt lock (`locked_until`), access LOCKED/UNLOCKED/SUBMITTED, prefill snapshot vs response, per-field review (CONFIRMED/REJECTED; pending = no row; confirm = ADMIN, MANAGER) |

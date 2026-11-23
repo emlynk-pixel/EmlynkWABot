@@ -8,7 +8,10 @@ const TONES: Record<WorkflowStatus["code"], Tone> = {
     STOPPED_WITH_TEST: "critical",
     TEST_PASSED: "review",
     JOB_ASSIGNED: "review",
+    CANDIDATE_DETAILS_COLLECTED: "review",
     FORM_SUBMITTED: "review",
+    CANDIDATE_DETAILS_VERIFIED: "verified",
+    ADDITIONAL_DETAILS_COLLECTED: "verified",
     DETAILS_VERIFIED: "verified",
     DOCUMENTS_VERIFIED: "verified",
     VISA_DOCUMENT_READY: "verified",
@@ -22,5 +25,14 @@ const TONES: Record<WorkflowStatus["code"], Tone> = {
 };
 
 export function WorkflowStatusBadge({ status }: { status: WorkflowStatus }) {
+    const { group, subStatus } = status;
+    if (group && subStatus) {
+        return (
+            <ToneBadge tone={TONES[group.code] ?? "pending"}>
+                {group.label}
+                <span className="ml-1 opacity-75">· {subStatus.label}</span>
+            </ToneBadge>
+        );
+    }
     return <ToneBadge tone={TONES[status.code] ?? "pending"}>{status.label}</ToneBadge>;
 }

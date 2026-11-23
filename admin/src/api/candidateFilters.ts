@@ -51,8 +51,9 @@ export const WORKFLOW_STATUS_CHOICES: { value: WorkflowStatus["code"]; label: st
     { value: "STOPPED_WITH_TEST", label: "Stopped with Test" },
     { value: "TEST_PASSED", label: "Test Passed" },
     { value: "JOB_ASSIGNED", label: "Job Assigned" },
+    { value: "CANDIDATE_DETAILS_COLLECTED", label: "Candidate Details Collected" },
     { value: "FORM_SUBMITTED", label: "Form Submitted" },
-    { value: "DETAILS_VERIFIED", label: "Details Verified" },
+    { value: "CANDIDATE_DETAILS_VERIFIED", label: "Candidate Details Verified" },
     { value: "DOCUMENTS_VERIFIED", label: "Documents Verified" },
     { value: "VISA_DOCUMENT_READY", label: "Visa Document Ready" },
     { value: "VISA_SUBMITTED", label: "Visa Submitted" },
@@ -62,6 +63,8 @@ export const WORKFLOW_STATUS_CHOICES: { value: WorkflowStatus["code"]; label: st
     { value: "CANCELLED", label: "Cancelled" },
     { value: "REJECTED", label: "Rejected" },
 ];
+// No longer a choice (nobody has it), but still accepted from a filter saved by an older version.
+const LEGACY_WORKFLOW_STATUSES = ["DETAILS_VERIFIED"];
 export const STAGE_CHOICES: Choice[] = [
     ...CANDIDATE_STAGES.map((stage) => ({ value: stage, label: STAGE_LABELS[stage] })),
     { value: "COMPLETE", label: "All stages completed" },
@@ -109,7 +112,7 @@ const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIST_CHECKS: Record<ListFilterKey, (value: string) => boolean> = {
     jobType: (value) => value.length <= 120,
-    workflowStatus: (value) => WORKFLOW_STATUS_CHOICES.some((choice) => choice.value === value),
+    workflowStatus: (value) => LEGACY_WORKFLOW_STATUSES.includes(value) || WORKFLOW_STATUS_CHOICES.some((choice) => choice.value === value),
     stage: (value) => STAGE_CHOICES.some((choice) => choice.value === value),
     sex: (value) => SEX_CHOICES.some((choice) => choice.value === value),
     analystId: (value) => ID_PATTERN.test(value),
