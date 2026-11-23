@@ -326,6 +326,32 @@ export async function getDailySummary({ db, date, now = new Date(), scope = {} }
     };
 }
 
+// The Summary's figures (getDailySummary().summary) for every candidate, without its lists or the
+// current snapshot: six COUNTs. For the scheduled "Daily Report Updated" notification
+// (notificationScanService.js D2). The same conditions as getDailySummary with scope {}:
+// documentsSubmitted = WhatsApp files received (temporary_data) + staff uploads (UPLOAD_DOCUMENT).
+export const DAILY_SUMMARY_LABELS = Object.freeze({
+    candidatesRegistered: "Candidates registered",
+    candidatesCompleted: "Candidates completed",
+    visaCompleted: "Visa completed",
+    callsTaken: "Calls taken",
+    documentsSubmitted: "Documents submitted",
+});
+
+export async function getDailySummaryCounts({ db, date }) {
+    const { start, end } = businessDayRange(date);
+    const inDay = { gte: start, lt: end };
+    const [candidatesRegistered, candidatesCompleted, visaCompleted, callsTaken, whatsapp, manual] = await Promise.all([
+        db.candidate.count({ where: { createdDate: inDay } }),
+        db.candidate.count({ where: { departedAt: inDay } }),
+        db.candidateStage.count({ where: { stage: "VISA_APPROVAL", completed: true, completedAt: inDay } }),
+        db.candidateCallLog.count({ where: { createdDate: inDay } }),
+        db.temporaryData.count({ where: { createdDate: inDay } }),
+        db.auditLog.count({ where: { action: UPLOAD_ACTION, createdDate: inDay } }),
+    ]);
+    return { candidatesRegistered, candidatesCompleted, visaCompleted, callsTaken, documentsSubmitted: whatsapp + manual };
+}
+
 // ------------------------------------------------------------------ summary by roles
 
 // GET /api/admin/reports/daily/roles?date=YYYY-MM-DD&role=ROLE (ADMIN only).

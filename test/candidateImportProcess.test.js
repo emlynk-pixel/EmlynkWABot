@@ -12,7 +12,7 @@ import { createTestDatabase } from "./helpers/pgliteDatabase.js";
 import { authIdFor, fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { createRequireActiveUser } from "../src/middleware/requireActiveUser.js";
-import { chunkRows, commitChunk, finishImport, previewImport } from "../src/services/candidateImportService.js";
+import { abortImport, chunkRows, commitChunk, finishImport, previewImport } from "../src/services/candidateImportService.js";
 import { ISSUE_CATALOG, describeIssues } from "../src/services/candidateImportIssues.js";
 import { normalizeTestResult, normalizeVisaStatus } from "../src/services/candidateImportNormalizers.js";
 import { formatTestId } from "../src/services/testId.js";
@@ -602,5 +602,79 @@ describe("API: the validation data has the Upload's own roles", () => {
             assert.ok(result.body.actions);
             assert.equal((await call("GET", `/import/${result.body.importId}/validation-sheet`, actor)).status, 404);
         }
+    });
+});
+
+// ---------------------------------------------------------------- in-app notifications (notificationEvents.js)
+
+describe("notifications sent by a committed import", () => {
+    beforeEach(() => pg.exec(`DELETE FROM "notification"`));
+    const inbox = async () => {
+        const rows = await prisma.notification.findMany({ orderBy: [{ recipientId: "asc" }, { type: "asc" }] });
+        const by = {};
+        for (const r of rows) (by[r.recipientId] ??= []).push(r.type);
+        return { by, rows };
+    };
+
+    test("A1 once per Analyst officer (not the Team Lead / Admin officers), C2 for the new Agent, E1 for the Cancelled candidate", async () => {
+        await importRows(renumber([
+            row(301, { OFFICER: "John" }),
+            row(302, { OFFICER: "John", COMPANY: "Synth Company", AGENT: "Synth Agency" }),
+            row(303, { OFFICER: "Tara" }),
+            row(304, { OFFICER: "Nobody", "VISA STATUS": "Cancelled" }),
+        ]));
+        const { by, rows } = await inbox();
+        assert.deepEqual(by["u-john"], ["A1_NEW_CANDIDATES_ALLOCATED"]);
+        assert.equal(rows.find((r) => r.recipientId === "u-john").message, "You have received 2 new candidates.");
+        assert.deepEqual(by["admin-JOB_HANDLER"], ["C2_MISSING_COUNTRY_INFORMATION"]);
+        assert.equal(rows.find((r) => r.type === "C2_MISSING_COUNTRY_INFORMATION").message, "Country information is missing for Synth Agency. Please update the details.");
+        // E1: the Admin tier (ADMIN, OWNER) and Team Leads; Tara is a Team Lead officer: E1 only, never A1.
+        // The importing Admin marked it Cancelled: not sent to them; the other Admin still gets it.
+        for (const id of ["admin-OWNER", "u-mary", "u-tara", "u-nimal2", "admin-TEAM_LEAD"]) assert.deepEqual(by[id], ["E1_CANDIDATE_CANCELLED"], id);
+        for (const id of ["admin-ADMIN", "admin-ANALYST", "admin-REGISTRATION_DESK", "u-nimal1", "u-kamal"]) assert.equal(by[id], undefined, id);
+        const e1 = rows.find((r) => r.type === "E1_CANDIDATE_CANCELLED");
+        assert.match(e1.message, /^ADMIN marked .*SYNTH.* as Cancelled\.$/);
+        assert.doesNotMatch(e1.message, new RegExp(passportOf(304)), "never the passport number");
+
+        // The same sheet again writes nothing new: nothing is notified again.
+        await importRows(renumber([row(301, { OFFICER: "John" })]));
+        assert.equal((await inbox()).rows.length, rows.length);
+    });
+
+    test("A1 once per Analyst for the whole import (every chunk together), sent when it is finished; a resumed chunk or a repeated finish adds nothing", async () => {
+        // 150 rows: chunk 0 = rows 1-100 (John), chunk 1 = rows 101-120 (John) and 121-150 (Ann).
+        const rows = renumber(Array.from({ length: 150 }, (_, k) => row(1001 + k, { OFFICER: k < 120 ? "John" : "Ann" })));
+        const p = await preview(rows);
+        const chunks = chunkRows(rows, p.chunkSize);
+        assert.equal(chunks.length, 2);
+        const a1 = () => prisma.notification.findMany({ where: { type: "A1_NEW_CANDIDATES_ALLOCATED" }, orderBy: { recipientId: "asc" } });
+        await commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 0, rows: chunks[0], now: TODAY });
+        assert.equal((await a1()).length, 0, "nothing per chunk");
+        // The browser resumes: chunk 0 again (already committed), then chunk 1.
+        assert.equal((await commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 0, rows: chunks[0], now: TODAY })).alreadyCommitted, true);
+        await commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 1, rows: chunks[1], now: TODAY });
+        assert.equal((await a1()).length, 0, "nothing before the import is finished");
+
+        await finishImport({ db: prisma, actor: ADMIN, importId: p.importId });
+        const sent = await a1();
+        assert.deepEqual(sent.map((r) => [r.recipientId, r.message, r.dedupeKey]), [
+            ["admin-ANALYST", "You have received 30 new candidates.", `A1:import:${p.importId}`],
+            ["u-john", "You have received 120 new candidates.", `A1:import:${p.importId}`],
+        ]);
+        // A repeated finish (double click, retried request) sends nothing again.
+        assert.equal((await finishImport({ db: prisma, actor: ADMIN, importId: p.importId })).alreadyFinished, true);
+        assert.equal((await a1()).length, 2);
+    });
+
+    test("A1 for an aborted import: the rows it kept are notified once; an import closed with nothing allocated sends nothing", async () => {
+        const rows = renumber([row(1201, { OFFICER: "John" }), row(1202, { OFFICER: "John" })]);
+        const p = await preview(rows);
+        await commitChunk({ db: prisma, actor: ADMIN, importId: p.importId, chunkIndex: 0, rows: chunkRows(rows, p.chunkSize)[0], now: TODAY });
+        await abortImport({ db: prisma, actor: ADMIN, importId: p.importId });
+        const sent = await prisma.notification.findMany({ where: { type: "A1_NEW_CANDIDATES_ALLOCATED" } });
+        assert.deepEqual(sent.map((r) => [r.recipientId, r.message]), [["u-john", "You have received 2 new candidates."]]);
+
+        await importRows(renumber([row(1203, { OFFICER: "" })]));
+        assert.equal(await prisma.notification.count({ where: { type: "A1_NEW_CANDIDATES_ALLOCATED" } }), 1);
     });
 });

@@ -17,6 +17,7 @@ import crypto from "node:crypto";
 import { RETIRED_ROLES, ROLES, isValidRole } from "../middleware/requireRole.js";
 import { USER_STATUS } from "../middleware/requireActiveUser.js";
 import { unallocateForRoleChange } from "./workAllocationService.js";
+import { notifyRoleUpdated } from "./notificationEvents.js";
 
 export const DEFAULT_REPLACEMENT_ROLE = Object.freeze({ [RETIRED_ROLES.MANAGER]: ROLES.ADMIN });
 
@@ -44,7 +45,7 @@ export async function convertRetiredRole({ db, retiredRole, replacementRole, act
     if (!isValidRole(replacementRole) || replacementRole === ROLES.OWNER) {
         throw new RetiredRoleError("INVALID_ROLE", "The replacement must be a supported role other than OWNER");
     }
-    return db.$transaction(async (tx) => {
+    const converted = await db.$transaction(async (tx) => {
         const actor = await tx.user.findUnique({ where: { adminId: String(actorId ?? "") } });
         if (actor?.role !== ROLES.OWNER || actor.status !== USER_STATUS.ACTIVE) {
             throw new RetiredRoleError("OWNER_REQUIRED", "The conversion runs as the ACTIVE OWNER account (--owner <admin_id>)");
@@ -71,4 +72,7 @@ export async function convertRetiredRole({ db, retiredRole, replacementRole, act
         }
         return accounts.map(({ adminId, status }) => ({ adminId, status }));
     });
+    // After the commit, best-effort (B2: only a conversion to Registration Desk concerns it).
+    for (const account of converted) await notifyRoleUpdated(db, { userId: account.adminId, previousRole: retiredRole, newRole: replacementRole });
+    return converted;
 }

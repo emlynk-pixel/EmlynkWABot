@@ -284,7 +284,9 @@ async function createGroupJob(tx, group, { actor, importId, audits }) {
 
 // The chunk's rows put on their group's Job. storedGroups: the import's plan (candidate_import.job_groups).
 // Adds codes to the plans it can't place, and effects { jobCreated, jobAssigned }. Batched per group.
-export async function executeJobGroups(tx, plans, storedGroups, { actor, importId, audits, effects, ledger = null }) {
+// notices (optional): receives { jobId, jobCode } of each Job created, for the C1 notification
+// once the transaction has committed.
+export async function executeJobGroups(tx, plans, storedGroups, { actor, importId, audits, effects, ledger = null, notices = null }) {
     const byKey = new Map((storedGroups ?? []).map((g) => [g.key, g]));
     const members = new Map();
     for (const plan of plans) {
@@ -317,6 +319,7 @@ export async function executeJobGroups(tx, plans, storedGroups, { actor, importI
             if (!created.job) { rows.forEach((p) => note(p, created.code)); continue; }
             job = created.job;
             jobCreatedByImport = true;
+            notices?.jobs.push({ jobId: job.id, jobCode: job.jobCode });
             effects.get(rows[0].rowNumber).jobCreated = 1;
             ledger?.add({
                 entityType: LEDGER_ENTITY.JOB, entityKey: job.id, op: LEDGER_OP.CREATE, rowNumber: rows[0].rowNumber, relatedJobId: job.id, jobCreatedByImport: true,

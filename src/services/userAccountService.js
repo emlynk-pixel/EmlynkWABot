@@ -41,6 +41,7 @@ import { ALL_ROLES, ROLES, USER_MANAGER_ROLES, canAssignRole, canManageAccount, 
 import { USER_STATUS } from "../middleware/requireActiveUser.js";
 import { AuthAdminError } from "../auth/supabaseAuthAdmin.js";
 import { unallocateForRoleChange } from "./workAllocationService.js";
+import { notifyRoleUpdated } from "./notificationEvents.js";
 
 export const MAX_NAME_LENGTH = 100;
 export const MAX_EMAIL_LENGTH = 254;
@@ -198,7 +199,9 @@ export async function inviteUser({ db, authAdmin, actor, values, redirectTo }) {
     }
     assertSameIdentity(authUserId);
 
-    const user = await upsertInvitedUser(db, { email, name, role, authUserId, status, actor, via });
+    const { user, previousRole } = await upsertInvitedUser(db, { email, name, role, authUserId, status, actor, via });
+    // A re-invite that reactivated an existing account with another role (B2; ACTIVE accounts only).
+    if (previousRole && status === USER_STATUS.ACTIVE) await notifyRoleUpdated(db, { userId: user.adminId, previousRole, newRole: role });
     return { user: toUserSummary(user), outcome: status === USER_STATUS.ACTIVE ? "REACTIVATED" : "INVITED" };
 }
 
@@ -237,7 +240,7 @@ async function upsertInvitedUser(db, { email, name, role, authUserId, status, ac
                 });
                 // A re-invite can give an existing (INVITED / INACTIVE) account a new role.
                 if (current.target) await unallocateForRoleChange(tx, { actor: current.actor, holder: current.target, newRole: role });
-                return user;
+                return { user, previousRole: current.target?.role ?? null };
             });
         } catch (error) {
             if (!isUniqueViolation(error)) throw error;
@@ -306,13 +309,18 @@ async function changeUser(db, actor, userId, change) {
 export async function updateUserRole({ db, actor, userId, role }) {
     assertUserManager(actor);
     if (!isValidRole(role)) throw new UserAccountError(400, "INVALID_ROLE", `Role must be one of: ${ALL_ROLES.join(", ")}`);
-    return changeUser(db, actor, userId, async (tx, current, target) => {
+    let previousRole = null;
+    const summary = await changeUser(db, actor, userId, async (tx, current, target) => {
         assertCanChange(current, target, role);
+        previousRole = target.role;
         const updated = await tx.user.update({ where: { adminId: userId }, data: { role } });
         await audit(tx, { actor: current, action: "UPDATE_USER_ROLE", previousStatus: target.role, newStatus: role, reason: `Role changed for user ${userId}`, previousValue: target.role, newValue: role });
         await unallocateForRoleChange(tx, { actor: current, holder: target, newRole: role });
         return toUserSummary(updated);
     });
+    // After the commit, best-effort (B2: a change to or from Registration Desk; ACTIVE accounts only).
+    await notifyRoleUpdated(db, { userId, previousRole, newRole: role });
+    return summary;
 }
 
 // Deactivation also revokes a pending invitation: an INACTIVE row can't use

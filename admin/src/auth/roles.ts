@@ -138,15 +138,6 @@ export const MASTER_DATA_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD,
 export const canManageMasterData = (user: WithRole) => hasRole(user, MASTER_DATA_ROLES);
 // Registering a new candidate.
 export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRATION_ROLES);
-// What the header's notification bell reads. Every role has the bell. The review queue's role (ADMIN):
-// the review queue (GET /review). TEAM_LEAD and ANALYST: their open Need Attention follow-ups (GET
-// /follow-ups; an Analyst's are their own candidates'), never the review queue, which they can't
-// open. Every other role (REGISTRATION_DESK, JOB_HANDLER): "none", an empty bell that requests
-// nothing, until that role has a feed of its own.
-export type NotificationSource = "review" | "follow-ups" | "none";
-export const FOLLOW_UP_NOTIFICATION_ROLES: readonly Role[] = [ROLES.TEAM_LEAD, ROLES.ANALYST];
-export const notificationSource = (user: WithRole): NotificationSource =>
-    hasRole(user, REVIEW_ROLES) ? "review" : hasRole(user, FOLLOW_UP_NOTIFICATION_ROLES) ? "follow-ups" : "none";
 // Where a signed-in role lands ("/"), and where a page it can't open sends it: the Overview for
 // the Overview roles (null: ADMIN, TEAM_LEAD, ANALYST), otherwise its own first area.
 export const landingPath = (user: WithRole): string | null =>

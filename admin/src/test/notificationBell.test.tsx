@@ -1,24 +1,29 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, test, beforeEach, vi, afterEach } from "vitest";
-import { MemoryRouter } from "react-router";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as authProvider from "../auth/AuthProvider";
 import { NotificationBell } from "../components/NotificationBell";
-import * as adminApi from "../api/admin";
+import * as api from "../api/notifications";
 
-vi.mock("../api/admin", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../api/admin")>();
-    return {
-        ...actual,
-        getReviewQueue: vi.fn(),
-    };
-});
+vi.mock("../api/notifications", () => ({
+    listNotifications: vi.fn(),
+    getUnreadCount: vi.fn(),
+    markNotificationRead: vi.fn(),
+}));
 
 const MOCK_USER = { userId: "user-1", email: "test@example.com", name: "Test Admin", role: "ADMIN", status: "ACTIVE" };
 
-function renderBell(user = MOCK_USER) {
+const note = (id: string, readAt: string | null = null) => ({
+    id, type: "GENERIC", title: `Title ${id}`, message: `Message ${id}`, createdAt: "2026-09-25T01:00:00Z", readAt,
+});
+
+const list = vi.mocked(api.listNotifications);
+const count = vi.mocked(api.getUnreadCount);
+const markRead = vi.mocked(api.markNotificationRead);
+
+function renderBell(role = "ADMIN") {
     vi.spyOn(authProvider, "useAuth").mockReturnValue({
-        user: user as any,
+        user: { ...MOCK_USER, role } as any,
         token: "fake-token",
         status: "authenticated",
         notice: null,
@@ -26,212 +31,147 @@ function renderBell(user = MOCK_USER) {
         signOut: vi.fn(),
         refreshUser: vi.fn(),
     });
-
-    return render(
-        <MemoryRouter>
-            <NotificationBell />
-        </MemoryRouter>
-    );
+    return render(<NotificationBell />);
 }
 
 describe("NotificationBell", () => {
-    const getReviewQueueMock = vi.mocked(adminApi.getReviewQueue);
     const user = userEvent.setup();
 
     beforeEach(() => {
-        window.localStorage.clear();
         vi.clearAllMocks();
+        count.mockResolvedValue({ unreadCount: 0 });
+        list.mockResolvedValue({ items: [], unreadCount: 0, nextCursor: null });
     });
 
     afterEach(() => {
+        vi.useRealTimers();
         vi.restoreAllMocks();
     });
 
-    function mockQueueResponse(items: any[], total = items.length) {
-        getReviewQueueMock.mockResolvedValue({
-            summary: { total, pending: total, documents: 0, byReason: {}, byCategory: {}, failed: 0 },
-            items,
-            pagination: { page: 1, pageSize: 100, total, totalPages: 1 },
-            filters: { kind: "ALL" },
-            requiredDocumentTypes: []
-        } as any);
-    }
-
-    test("bell renders and shows zero unread state", async () => {
-        mockQueueResponse([]);
-        renderBell();
-
-        const button = screen.getByRole("button", { name: "Notifications" });
-        expect(button).toBeInTheDocument();
-
-        await waitFor(() => {
-            expect(screen.queryByText("0")).not.toBeInTheDocument(); // Badge doesn't show 0
-        });
-
-        await user.click(button);
-        expect(screen.getByText("You have no notifications.")).toBeInTheDocument();
+    test("no badge at zero unread and empty state shown for every role", async () => {
+        for (const role of ["REGISTRATION_DESK", "JOB_HANDLER"]) {
+            const { unmount } = renderBell(role);
+            const button = screen.getByRole("button", { name: "Notifications" });
+            await waitFor(() => expect(count).toHaveBeenCalled());
+            expect(screen.queryByText("0")).not.toBeInTheDocument();
+            await user.click(button);
+            expect(await screen.findByText("You have no notifications.")).toBeInTheDocument();
+            unmount();
+        }
     });
 
-    test("unread badge count is displayed", async () => {
-        mockQueueResponse([
-            { reviewId: "1", documentType: "PASSPORT", processingStatus: "MANUAL_REVIEW", reviewReason: "IDENTITY_NOT_CONFIRMED", receivedDate: "2026-09-25T01:00:00Z" }
-        ]);
-        renderBell();
+    test("badge shows the unread count with an accessible label, capped at 99+", async () => {
+        count.mockResolvedValue({ unreadCount: 3 });
+        const { unmount } = renderBell();
+        expect(await screen.findByRole("button", { name: "Notifications (3 unread)" })).toBeInTheDocument();
+        expect(screen.getByText("3")).toBeInTheDocument();
+        unmount();
 
-        const badge = await screen.findByText("1");
-        expect(badge).toBeInTheDocument();
+        count.mockResolvedValue({ unreadCount: 150 });
+        renderBell();
+        expect(await screen.findByText("99+")).toBeInTheDocument();
     });
 
-    test("handles API failure without crashing", async () => {
-        getReviewQueueMock.mockRejectedValue(new Error("API Error"));
+    test("unread rows are highlighted and read rows are not; times use Asia/Colombo", async () => {
+        count.mockResolvedValue({ unreadCount: 1 });
+        list.mockResolvedValue({ items: [note("a"), note("b", "2026-09-25T02:00:00Z")], unreadCount: 1, nextCursor: null });
         renderBell();
+        await user.click(await screen.findByRole("button", { name: /Notifications/ }));
 
-        const button = screen.getByRole("button", { name: /Notifications/ });
-        await user.click(button);
+        expect(await screen.findByText("Title a")).toBeInTheDocument();
+        expect(screen.getByText("Title a").closest("li")).toHaveAttribute("data-unread", "true");
+        expect(screen.getByText("Title a").closest("li")).toHaveClass("bg-primary-soft");
+        expect(screen.getByText("Title b").closest("li")).toHaveAttribute("data-unread", "false");
+        expect(screen.getByText("Title b").closest("li")).not.toHaveClass("bg-primary-soft");
+        expect(screen.getAllByText("25 Sept 2026, 06:30").length).toBe(2);
+        expect(screen.getByText("Message a")).toBeInTheDocument();
+    });
 
+    test("clicking a notification marks it read and decrements the count", async () => {
+        count.mockResolvedValue({ unreadCount: 2 });
+        list.mockResolvedValue({ items: [note("a"), note("b")], unreadCount: 2, nextCursor: null });
+        markRead.mockResolvedValue({ id: "a", readAt: "2026-09-25T03:00:00Z", unreadCount: 1 });
+        renderBell();
+        await user.click(await screen.findByRole("button", { name: "Notifications (2 unread)" }));
+
+        await user.click(await screen.findByRole("button", { name: /Title a/ }));
+
+        expect(markRead).toHaveBeenCalledWith("fake-token", "a");
+        await waitFor(() => expect(screen.getByText("Title a").closest("li")).toHaveAttribute("data-unread", "false"));
+        expect(screen.getByRole("button", { name: "Notifications (1 unread)" })).toBeInTheDocument();
+    });
+
+    test("a failed mark-read rolls back", async () => {
+        count.mockResolvedValue({ unreadCount: 1 });
+        list.mockResolvedValue({ items: [note("a")], unreadCount: 1, nextCursor: null });
+        markRead.mockRejectedValue(new Error("nope"));
+        renderBell();
+        await user.click(await screen.findByRole("button", { name: "Notifications (1 unread)" }));
+        await user.click(await screen.findByRole("button", { name: /Title a/ }));
+
+        await waitFor(() => expect(screen.getByText("Title a").closest("li")).toHaveAttribute("data-unread", "true"));
+        expect(screen.getByRole("button", { name: "Notifications (1 unread)" })).toBeInTheDocument();
+    });
+
+    test("Load more appends the next page using nextCursor", async () => {
+        count.mockResolvedValue({ unreadCount: 2 });
+        list.mockResolvedValueOnce({ items: [note("a")], unreadCount: 2, nextCursor: "c1" });
+        list.mockResolvedValueOnce({ items: [note("b")], unreadCount: 2, nextCursor: null });
+        renderBell();
+        await user.click(await screen.findByRole("button", { name: /Notifications/ }));
+        await user.click(await screen.findByRole("button", { name: "Load more" }));
+
+        expect(await screen.findByText("Title b")).toBeInTheDocument();
+        expect(list).toHaveBeenLastCalledWith("fake-token", { limit: 30, cursor: "c1" });
+        expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    });
+
+    test("shows an error state when the list fails", async () => {
+        list.mockRejectedValue(new Error("API Error"));
+        renderBell();
+        await user.click(screen.getByRole("button", { name: /Notifications/ }));
         expect(await screen.findByText("Could not load notifications. Please try again.")).toBeInTheDocument();
     });
 
-    test("displays manual-review item notification", async () => {
-        mockQueueResponse([
-            { reviewId: "1", documentType: "PASSPORT", processingStatus: "MANUAL_REVIEW", reviewReason: null, receivedDate: "2026-09-25T01:00:00Z" }
-        ]);
+    test("polls the unread count every 30s, not while hidden, and refetches on visibility return", async () => {
+        vi.useFakeTimers();
+        count.mockResolvedValue({ unreadCount: 0 });
         renderBell();
-        await user.click(screen.getByRole("button"));
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(count).toHaveBeenCalledTimes(1);
 
-        expect(await screen.findByText("Document requires review")).toBeInTheDocument();
-        expect(screen.getByText(/Manual review required/)).toBeInTheDocument();
+        count.mockResolvedValue({ unreadCount: 4 });
+        await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+        expect(count).toHaveBeenCalledTimes(2);
+        expect(screen.getByRole("button", { name: "Notifications (4 unread)" })).toBeInTheDocument();
+
+        const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(count).toHaveBeenCalledTimes(2);
+
+        hidden.mockReturnValue(false);
+        count.mockResolvedValue({ unreadCount: 5 });
+        await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+        expect(count).toHaveBeenCalledTimes(3);
+        expect(screen.getByRole("button", { name: "Notifications (5 unread)" })).toBeInTheDocument();
     });
 
-    test("displays identity-not-confirmed notification", async () => {
-        mockQueueResponse([
-            { reviewId: "2", documentType: "PASSPORT", processingStatus: "MANUAL_REVIEW", reviewReason: "IDENTITY_NOT_CONFIRMED", receivedDate: "2026-09-25T01:00:00Z", confidence: 33 }
-        ]);
+    test("when the count rises while the panel is open, the list refreshes", async () => {
+        vi.useFakeTimers();
+        count.mockResolvedValue({ unreadCount: 1 });
+        list.mockResolvedValue({ items: [note("a")], unreadCount: 1, nextCursor: null });
         renderBell();
-        await user.click(screen.getByRole("button"));
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
-        expect(await screen.findByText("Document requires review")).toBeInTheDocument();
-        expect(screen.getByText("Identity not confirmed · 33% confidence · 25 Sept, 06:30")).toBeInTheDocument(); // 06:30 depends on timezone, match loose or exactly if TZ is fixed. Wait, date is converted to local time, so just check reason
-        expect(screen.getByText(/Identity not confirmed/)).toBeInTheDocument();
-        expect(screen.getByText(/33% confidence/)).toBeInTheDocument();
-    });
+        await act(async () => { screen.getByRole("button", { name: /Notifications/ }).click(); await vi.advanceTimersByTimeAsync(0); });
+        expect(screen.getByText("Title a")).toBeInTheDocument();
+        const listCalls = list.mock.calls.length;
 
-    test("displays document-type-unclear notification", async () => {
-        mockQueueResponse([
-            { reviewId: "3", documentType: "UNKNOWN", processingStatus: "UNDEFINED", reviewReason: "DOCUMENT_TYPE_UNCLEAR", receivedDate: "2026-09-25T01:00:00Z" }
-        ]);
-        renderBell();
-        await user.click(screen.getByRole("button"));
+        count.mockResolvedValue({ unreadCount: 2 });
+        list.mockResolvedValue({ items: [note("new"), note("a")], unreadCount: 2, nextCursor: null });
+        await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
 
-        expect(await screen.findByText("Unrecognized document received")).toBeInTheDocument();
-        expect(screen.getByText("A document could not be identified automatically.")).toBeInTheDocument();
-        expect(screen.getByText(/Document type unclear/)).toBeInTheDocument();
-    });
-
-    test("opening dropdown does not automatically mark items read", async () => {
-        mockQueueResponse([{ reviewId: "1", receivedDate: "2026-09-25T01:00:00Z" }]);
-        renderBell();
-
-        expect(await screen.findByText("1")).toBeInTheDocument();
-        await user.click(screen.getByRole("button"));
-
-        // Count should still be 1 after opening
-        expect(screen.getByText("1")).toBeInTheDocument();
-    });
-
-    test("clicking notification navigates to exact review item and marks read", async () => {
-        mockQueueResponse([{ reviewId: "rev-123", receivedDate: "2026-09-25T01:00:00Z" }]);
-        renderBell();
-
-        expect(await screen.findByText("1")).toBeInTheDocument();
-        await user.click(screen.getByRole("button"));
-
-        const link = screen.getByRole("link", { name: /Review document/i });
-        // Relative to the router's basename (/admin in the app): never /admin/admin/review/...
-        expect(link).toHaveAttribute("href", "/review/rev-123");
-
-        await user.click(link);
-
-        // Badge disappears as it's marked read
-        await waitFor(() => {
-            expect(screen.queryByText("1")).not.toBeInTheDocument();
-        });
-    });
-
-    test("Mark all as read sets all to read", async () => {
-        mockQueueResponse([
-            { reviewId: "1", receivedDate: "2026-09-25T01:00:00Z" },
-            { reviewId: "2", receivedDate: "2026-09-25T01:00:00Z" }
-        ]);
-        renderBell();
-
-        expect(await screen.findByText("2")).toBeInTheDocument();
-        await user.click(screen.getByRole("button"));
-
-        const markAll = screen.getByRole("button", { name: "Mark all as read" });
-        await user.click(markAll);
-
-        await waitFor(() => {
-            expect(screen.queryByText("2")).not.toBeInTheDocument();
-        });
-    });
-
-    test("resolved item disappears after refresh and stale localStorage IDs are pruned", async () => {
-        window.localStorage.setItem("emlynk.admin.readNotifications.user-1", JSON.stringify(["stale-id", "valid-id"]));
-
-        mockQueueResponse([{ reviewId: "valid-id", receivedDate: "2026-09-25T01:00:00Z" }]);
-        renderBell();
-
-        await waitFor(() => {
-            expect(getReviewQueueMock).toHaveBeenCalledTimes(1);
-        });
-
-        // "stale-id" should be removed from localStorage since it's not active anymore
-        const stored = JSON.parse(window.localStorage.getItem("emlynk.admin.readNotifications.user-1")!);
-        expect(stored).toEqual(["valid-id"]);
-    });
-
-    test("localStorage is isolated by admin ID", async () => {
-        window.localStorage.setItem("emlynk.admin.readNotifications.user-2", JSON.stringify(["rev-1"]));
-
-        mockQueueResponse([{ reviewId: "rev-1", receivedDate: "2026-09-25T01:00:00Z" }]);
-        renderBell(MOCK_USER); // user-1
-
-        // user-1 should see it as unread (count 1)
-        expect(await screen.findByText("1")).toBeInTheDocument();
-    });
-
-    test("malformed localStorage does not crash UI", async () => {
-        window.localStorage.setItem("emlynk.admin.readNotifications.user-1", "{invalid json");
-
-        mockQueueResponse([{ reviewId: "rev-1", receivedDate: "2026-09-25T01:00:00Z" }]);
-        expect(() => renderBell()).not.toThrow();
-
-        expect(await screen.findByText("1")).toBeInTheDocument();
-    });
-
-    test("pagination does not cause an incorrect unread count (fetches all pages)", async () => {
-        // Mock multiple pages
-        getReviewQueueMock.mockResolvedValueOnce({
-            summary: { total: 101, pending: 101, documents: 0, byReason: {}, byCategory: {}, failed: 0 },
-            items: Array(100).fill(null).map((_, i) => ({ reviewId: `item-${i}`, receivedDate: "2026-09-25T01:00:00Z" })),
-            pagination: { page: 1, pageSize: 100, total: 101, totalPages: 2 },
-            filters: { kind: "ALL" },
-            requiredDocumentTypes: []
-        } as any);
-
-        getReviewQueueMock.mockResolvedValueOnce({
-            summary: { total: 101, pending: 101, documents: 0, byReason: {}, byCategory: {}, failed: 0 },
-            items: [{ reviewId: `item-100`, receivedDate: "2026-09-25T01:00:00Z" }],
-            pagination: { page: 2, pageSize: 100, total: 101, totalPages: 2 },
-            filters: { kind: "ALL" },
-            requiredDocumentTypes: []
-        } as any);
-
-        renderBell();
-
-        // Count should be 101, so badge shows "99+"
-        expect(await screen.findByText("99+")).toBeInTheDocument();
-        expect(getReviewQueueMock).toHaveBeenCalledTimes(2);
+        expect(list.mock.calls.length).toBe(listCalls + 1);
+        expect(screen.getByText("Title new")).toBeInTheDocument();
     });
 });

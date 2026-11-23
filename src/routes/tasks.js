@@ -4,6 +4,10 @@
 //                           detect and claim abandoned imports, continue their rollbacks within a time budget, confirm
 //                           the Google Sheet reconciliation. Called by Cloud Scheduler about once a minute. Answers 200
 //                           with counts, ids and codes only. Safe to call twice at once (row locks, SKIP LOCKED, leases).
+//   POST /notification-scan the scheduled notifications (notificationScanService.js): what is due by the Asia/Colombo
+//                           clock is sent. Called by Cloud Scheduler every 15 minutes. Answers 200 with rule codes and
+//                           counts only. Safe to repeat or overlap (dedupe keys); disabled (404) unless
+//                           NOTIFICATION_SCAN_SCHEDULER_AUDIENCE and NOTIFICATION_SCAN_SCHEDULER_INVOKER are both set.
 //
 // Authentication: the same OIDC check as the sheet worker's POST /tasks/reconcile (createOidcVerifier: a Google-signed
 // ID token, the expected audience, the verified e-mail of the scheduler's service account). Unlike that private Cloud Run
@@ -16,11 +20,19 @@ import express from "express";
 import { resolveDb } from "../utils/resolveClients.js";
 import { createOidcVerifier } from "../sheetSyncWorkerProcess.js";
 import { readRecoveryConfig, runImportRecovery } from "../services/importRecoveryService.js";
+import { runNotificationScan } from "../services/notificationScanService.js";
 
 // The verifier from the environment, or null (route disabled). google-auth-library is loaded on the first call only.
 export function recoverySchedulerVerifier(env = process.env) {
-    const audience = env.IMPORT_RECOVERY_SCHEDULER_AUDIENCE;
-    const invoker = env.IMPORT_RECOVERY_SCHEDULER_INVOKER;
+    return schedulerVerifier(env.IMPORT_RECOVERY_SCHEDULER_AUDIENCE, env.IMPORT_RECOVERY_SCHEDULER_INVOKER);
+}
+
+// The notification scan's own audience (its URL) and invoker.
+export function notificationScanSchedulerVerifier(env = process.env) {
+    return schedulerVerifier(env.NOTIFICATION_SCAN_SCHEDULER_AUDIENCE, env.NOTIFICATION_SCAN_SCHEDULER_INVOKER);
+}
+
+function schedulerVerifier(audience, invoker) {
     if (!audience || !invoker) return null;
     let verify = null;
     return async (authorization) => {
@@ -32,7 +44,10 @@ export function recoverySchedulerVerifier(env = process.env) {
     };
 }
 
-export function createTaskRouter({ db, verifyScheduler = recoverySchedulerVerifier(), runRecovery = runImportRecovery, env = process.env, log = console } = {}) {
+export function createTaskRouter({
+    db, verifyScheduler = recoverySchedulerVerifier(), runRecovery = runImportRecovery, env = process.env, log = console,
+    verifyNotificationScheduler = notificationScanSchedulerVerifier(env), runScan = runNotificationScan,
+} = {}) {
     const router = express.Router();
     const { config, problems } = readRecoveryConfig(env);
 
@@ -48,6 +63,25 @@ export function createTaskRouter({ db, verifyScheduler = recoverySchedulerVerifi
             log.log(JSON.stringify({
                 event: "candidate_import.recovery_run", claimed: summary.claimed.length, adopted: summary.adopted.length, worked: summary.worked.length,
                 keyAvailable: summary.keyAvailable, budgetExhausted: summary.budgetExhausted,
+            }));
+            return res.status(200).set("cache-control", "no-store").json(summary);
+        } catch (error) {
+            return next(error);
+        }
+    });
+
+    router.post("/notification-scan", async (req, res, next) => {
+        if (!verifyNotificationScheduler) return res.status(404).end();
+        try {
+            if (!(await verifyNotificationScheduler(req.get("authorization")))) {
+                log.warn(JSON.stringify({ event: "notification_scan.trigger_rejected" }));
+                return res.status(401).json({ message: "Unauthorized" });
+            }
+            const summary = await runScan(await resolveDb(db), { log });
+            const ran = (summary.rules ?? []).filter((rule) => rule.status !== "NOT_DUE");
+            log.log(JSON.stringify({
+                event: "notification_scan.run", businessDate: summary.businessDate, databaseReachable: summary.databaseReachable,
+                rules: ran.map((rule) => `${rule.rule}:${rule.status}:${rule.created ?? rule.purged ?? 0}`),
             }));
             return res.status(200).set("cache-control", "no-store").json(summary);
         } catch (error) {
