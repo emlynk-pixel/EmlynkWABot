@@ -8,6 +8,7 @@ import express from "express";
 import { createTestDatabase } from "./helpers/pgliteDatabase.js";
 import { giveTestPassAndJob } from "./helpers/visaPrerequisites.js";
 import { noRateLimit } from "./helpers/fakeAdminDb.js";
+import { completeAdditionalDetailsData } from "./helpers/completeAdditionalDetails.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { WORKFLOW_STATUS, WORKFLOW_STATUS_LABELS, deriveCandidateWorkflowStatus } from "../src/services/candidateWorkflowStatus.js";
@@ -109,6 +110,7 @@ describe("the central derivation (STATUS-013 and the ladder)", () => {
         assert.deepEqual(Object.values(WORKFLOW_STATUS_LABELS), [
             "Registered", "Stopped with Test", "Test Passed", "Job Assigned", "Form Submitted", "Details Verified", "Documents Verified", "Visa Document Ready",
             "Visa Submitted", "Visa Approved", "Departed", "Visa Not Going", "Cancelled", "Rejected",
+            "Candidate Details Collected", "Additional Details Collected", "Candidate Details Verified",
         ]);
         assert.deepEqual(Object.keys(WORKFLOW_STATUS), Object.keys(WORKFLOW_STATUS_LABELS));
     });
@@ -118,7 +120,7 @@ describe("the central derivation (STATUS-013 and the ladder)", () => {
         assert.deepEqual(deriveCandidateWorkflowStatus({ testResult: "PASS" }), { code: "TEST_PASSED", label: "Test Passed" });
         assert.equal(d({ testResult: null }), "REGISTERED");
         assert.equal(d({ testResult: "PASS", hasCurrentJob: true }), "JOB_ASSIGNED");
-        assert.equal(d({ testResult: "PASS", formSubmitted: true }), "FORM_SUBMITTED");
+        assert.equal(d({ testResult: "PASS", formSubmitted: true }), "TEST_PASSED", "a form without a Job and Candidate details does not count");
         assert.equal(d({ testResult: "PASS", departed: true }), "DEPARTED");
         assert.equal(d({ testResult: "PASS", outcome: "CANCELLED" }), "CANCELLED");
     });
@@ -137,26 +139,86 @@ describe("the central derivation (STATUS-013 and the ladder)", () => {
         assert.equal(d({ outcome: "SOMETHING_ELSE" }), "REGISTERED", "only a known outcome counts");
     });
 
-    test("the highest satisfied status wins; FAIL stops everything; a missing signal is false", () => {
+    test("FAIL stops everything; a missing signal is false; the sheet-driven states need no earlier step", () => {
         const d = (signals) => deriveCandidateWorkflowStatus(signals).code;
         assert.equal(d({}), "REGISTERED");
         assert.equal(d(), "REGISTERED");
-        assert.equal(d({ hasCurrentJob: true }), "JOB_ASSIGNED");
-        assert.equal(d({ hasCurrentJob: true, formSubmitted: true }), "FORM_SUBMITTED");
-        assert.equal(d({ hasCurrentJob: true, formSubmitted: true, detailsVerified: true }), "DETAILS_VERIFIED");
-        assert.equal(d({ detailsVerified: true, documentsVerified: true }), "DOCUMENTS_VERIFIED");
-        assert.equal(d({ detailsVerified: true, documentsVerified: true, documentSubmissionCompleted: true }), "VISA_DOCUMENT_READY");
-        assert.equal(d({ documentSubmissionCompleted: true }), "VISA_DOCUMENT_READY", "independent signals: the highest wins");
-        const everything = { hasCurrentJob: true, formSubmitted: true, detailsVerified: true, documentsVerified: true, documentSubmissionCompleted: true };
+        const everything = { testResult: "PASS", hasCurrentJob: true, candidateDetailsCompleted: true, formSubmitted: true, additionalDetailsCompleted: true, documentSubmissionCompleted: true };
         assert.equal(d({ ...everything, testResult: "FAIL" }), "STOPPED_WITH_TEST");
-        for (const testResult of ["PASS", null, undefined]) assert.equal(d({ ...everything, testResult }), "VISA_DOCUMENT_READY");
         assert.deepEqual(deriveCandidateWorkflowStatus({ testResult: "FAIL" }), { code: "STOPPED_WITH_TEST", label: "Stopped with Test" });
-        assert.equal(d({ ...everything, visaSubmitted: true }), "VISA_SUBMITTED");
         assert.equal(d({ ...everything, visaSubmitted: true, departed: true }), "DEPARTED");
         assert.equal(d({ departed: true }), "DEPARTED");
         assert.equal(d({ visaSubmitted: true, departed: true, testResult: "FAIL" }), "STOPPED_WITH_TEST");
+        // Visa submission without steps 1-5 (a sheet-imported "Submit") is Visa Submitted, as before.
+        assert.equal(d({ visaSubmitted: true }), "VISA_SUBMITTED");
+        assert.equal(d({ ...everything, documentSubmissionCompleted: false, visaSubmitted: true }), "VISA_SUBMITTED");
         // The old signal names mean nothing any more.
         assert.equal(d({ visaDocumentReady: true }), "REGISTERED");
+    });
+});
+
+describe("the Candidates tab order: strictly gated, a contiguous prefix of steps (FLOW-001 to 012)", () => {
+    const d = (signals) => deriveCandidateWorkflowStatus(signals);
+    const group = { code: "CANDIDATE_DETAILS_VERIFIED", label: "Candidate Details Verified" };
+    // Steps 1-6 and the three sub-steps of step 4, each added to the previous ones.
+    const STEPS = [
+        [{}, { code: "REGISTERED", label: "Registered" }],
+        [{ testResult: "PASS" }, { code: "TEST_PASSED", label: "Test Passed" }],
+        [{ hasCurrentJob: true }, { code: "JOB_ASSIGNED", label: "Job Assigned" }],
+        [{ candidateDetailsCompleted: true }, { code: "CANDIDATE_DETAILS_COLLECTED", label: "Candidate Details Collected", group, subStatus: { code: "CANDIDATE_DETAILS_COLLECTED", label: "Candidate Details Collected" } }],
+        [{ formSubmitted: true }, { code: "FORM_SUBMITTED", label: "Form Submitted", group, subStatus: { code: "FORM_SUBMITTED", label: "Form Submitted" } }],
+        [{ additionalDetailsCompleted: true }, { code: "CANDIDATE_DETAILS_VERIFIED", label: "Candidate Details Verified" }],
+        [{ documentSubmissionCompleted: true }, { code: "DOCUMENTS_VERIFIED", label: "Documents Verified" }],
+        [{ visaSubmitted: true }, { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" }],
+    ];
+    const prefix = (n) => Object.assign({}, ...STEPS.slice(0, n + 1).map(([signals]) => signals));
+
+    test("FLOW-001 to 009: each step in order, with its server label (step 4's sub-steps carry group and subStatus)", () => {
+        STEPS.forEach(([, expected], n) => assert.deepEqual(d(prefix(n)), expected, expected.code));
+        // Additional Details Collected is the last sub-step: reaching it completes step 4.
+        assert.equal(d(prefix(5)).subStatus, undefined);
+    });
+
+    test("FLOW-010: without a passed test every later signal is ignored: Registered (no result) or Stopped with Test (FAIL)", () => {
+        const all = { ...prefix(STEPS.length - 1), testResult: null };
+        assert.deepEqual(d({ ...all, visaSubmitted: false }), { code: "REGISTERED", label: "Registered" });
+        assert.equal(d({ ...all, visaSubmitted: false, testResult: "FAIL" }).code, "STOPPED_WITH_TEST");
+        // Only the sheet-driven states stand on their own signal.
+        assert.equal(d(all).code, "VISA_SUBMITTED");
+    });
+
+    test("FLOW-011: a gap stops the ladder at the last contiguous step (Form Submitted without Candidate details does not count)", () => {
+        const pass = { testResult: "PASS", hasCurrentJob: true };
+        assert.equal(d({ ...pass, formSubmitted: true }).code, "JOB_ASSIGNED");
+        assert.equal(d({ ...pass, formSubmitted: true, additionalDetailsCompleted: true, documentSubmissionCompleted: true }).code, "JOB_ASSIGNED");
+        assert.equal(d({ ...pass, candidateDetailsCompleted: true, additionalDetailsCompleted: true }).code, "CANDIDATE_DETAILS_COLLECTED");
+        assert.equal(d({ ...pass, candidateDetailsCompleted: true, formSubmitted: true, documentSubmissionCompleted: true }).code, "FORM_SUBMITTED");
+        assert.equal(d({ testResult: "PASS", candidateDetailsCompleted: true, formSubmitted: true, additionalDetailsCompleted: true, documentSubmissionCompleted: true }).code, "TEST_PASSED", "no Job");
+        // Every step removed in turn from the full set falls back to the step before it.
+        for (let n = 1; n < STEPS.length; n += 1) {
+            const [missing] = STEPS[n];
+            const signals = { ...prefix(STEPS.length - 2), ...Object.fromEntries(Object.keys(missing).map((key) => [key, key === "testResult" ? null : false])) };
+            assert.equal(d(signals).code, STEPS[n - 1][1].code, `without ${Object.keys(missing)}`);
+        }
+    });
+
+    test("FLOW-012: idempotent and pure: the same signals give the same Status, and the signals are not changed", () => {
+        for (let n = 0; n < STEPS.length; n += 1) {
+            const signals = Object.freeze(prefix(n));
+            assert.deepEqual(d(signals), d({ ...signals }));
+        }
+        // The manual verifications are accepted and ignored.
+        assert.deepEqual(d({ ...prefix(2), detailsVerified: true, documentsVerified: true }), d(prefix(2)));
+        assert.equal(d({ detailsVerified: true }).code, "REGISTERED");
+    });
+
+    test("the special states are unchanged on top of the full ladder", () => {
+        const all = prefix(STEPS.length - 1);
+        for (const outcome of ["VISA_NOT_GOING", "CANCELLED", "REJECTED"]) assert.equal(d({ ...all, outcome }).code, outcome);
+        assert.equal(d({ ...all, testResult: "FAIL" }).code, "STOPPED_WITH_TEST");
+        assert.equal(d({ ...all, departed: true }).code, "DEPARTED");
+        assert.equal(d({ ...all, visaApproved: true }).code, "VISA_APPROVED");
+        assert.equal(d({ visaApproved: true }).code, "VISA_APPROVED");
     });
 });
 
@@ -218,19 +280,30 @@ describe("registered, stopped with test, job assigned (STATUS-001 to 005, 014, 0
 });
 
 describe("form submitted (STATUS-006, 007)", () => {
-    test("STATUS-006: a submitted Candidate Form is Form Submitted; a locked or unlocked one is not", async () => {
+    test("STATUS-006: a submitted Candidate Form is Form Submitted (after the earlier steps); a locked or unlocked one is not", async () => {
         await pg.exec(`CREATE TABLE "candidate_form_access" ("passport_id" TEXT PRIMARY KEY, "status" TEXT NOT NULL DEFAULT 'LOCKED', "submitted_at" TIMESTAMP(3))`);
         await pg.exec(`INSERT INTO "candidate_form_access" ("passport_id","status") VALUES ('${P}','UNLOCKED'), ('${Q}','LOCKED')`);
-        assert.deepEqual([await code(), await code(Q)], ["REGISTERED", "REGISTERED"]);
+        for (const id of [P, Q]) {
+            await giveTestPassAndJob(prisma, id, USERS.ADMIN.adminId);
+            await completeCandidateDetails(id);
+            await addDocument(id, "PASSPORT");
+        }
+        assert.deepEqual([await code(), await code(Q)], ["CANDIDATE_DETAILS_COLLECTED", "CANDIDATE_DETAILS_COLLECTED"]);
         await submitForm(P);
-        assert.deepEqual(await statusOf(), { code: "FORM_SUBMITTED", label: "Form Submitted" });
-        assert.equal(await code(Q), "REGISTERED");
+        assert.deepEqual(await statusOf(), {
+            code: "FORM_SUBMITTED", label: "Form Submitted",
+            group: { code: "CANDIDATE_DETAILS_VERIFIED", label: "Candidate Details Verified" }, subStatus: { code: "FORM_SUBMITTED", label: "Form Submitted" },
+        });
+        assert.equal(await code(Q), "CANDIDATE_DETAILS_COLLECTED");
     });
 
     test("STATUS-007: Form Submitted overrides Job Assigned, and FAIL still overrides it", async () => {
         await setResult(P, "PASS");
         await assignJob();
         await submitForm();
+        assert.equal(await code(), "JOB_ASSIGNED", "the form counts only after the Candidate details");
+        await completeCandidateDetails();
+        await addDocument(P, "PASSPORT");
         assert.equal(await code(), "FORM_SUBMITTED");
         await setResult(P, "FAIL");
         assert.equal(await code(), "STOPPED_WITH_TEST");
@@ -245,7 +318,7 @@ describe("form submitted (STATUS-006, 007)", () => {
     });
 });
 
-describe("details and documents need an explicit manual verification; Visa Document Ready = Document submission complete (STATUS-FIX-001 to 012)", () => {
+describe("the manual verifications no longer move the Status; Documents Verified / Visa Document Ready follow the stages (STATUS-FIX-001 to 012)", () => {
     const verify = (passportId, kind, verified = true, who = USERS.OWNER) => api(who, "POST", `/candidates/${passportId}/verification`, { kind, verified });
     const audit = (action) => prisma.auditLog.findMany({ where: { action }, orderBy: { createdDate: "asc" } });
     // The documents Document submission needs, besides the passport: medical, scan, SL Verified and Romania police reports.
@@ -253,24 +326,29 @@ describe("details and documents need an explicit manual verification; Visa Docum
         for (const [type, variant] of REQUIRED.slice(1)) await addDocument(passportId, type, verificationStatus, variant ?? null);
     };
 
-    test("STATUS-FIX-001 / 002: completing the Candidate details, and saving Additional details, do NOT make Details Verified", async () => {
+    test("STATUS-FIX-001 / 002: Candidate Details Verified follows the data (no manual verification), and only after a PASS and a Job", async () => {
         await completeCandidateDetails();
         await addDocument(P, "PASSPORT", "REVIEW_REQUIRED");
         assert.equal((await api(USERS.ADMIN, "GET", `/candidates/${P}`)).body.stages.find((s) => s.stage === "CANDIDATE_DETAILS").completed, true, "the details stage is complete");
-        assert.equal(await code(), "REGISTERED");
+        assert.equal(await code(), "REGISTERED", "no test result yet");
+        await giveTestPassAndJob(prisma, P, USERS.ADMIN.adminId);
+        assert.equal(await code(), "CANDIDATE_DETAILS_COLLECTED");
         await addAdditionalDetails();
-        assert.equal(await code(), "REGISTERED", "additional details saved, still not verified");
         await submitForm();
-        assert.equal(await code(), "FORM_SUBMITTED", "nothing between complete data and verification");
+        assert.equal(await code(), "FORM_SUBMITTED", "an Additional details row alone is not complete");
+        await prisma.candidateAdditionalDetails.update({ where: { passportId: P }, data: completeAdditionalDetailsData() });
+        assert.deepEqual(await statusOf(), { code: "CANDIDATE_DETAILS_VERIFIED", label: "Candidate Details Verified" });
+        assert.equal(await prisma.candidateVerification.count(), 0, "nobody verified anything by hand");
     });
 
-    test("STATUS-FIX-003 / 004: the explicit Verify details action makes Details Verified (over Form Submitted) and is audited; removing it steps back", async () => {
+    test("STATUS-FIX-003 / 004: the explicit Verify details action is audited and reversible, and leaves the Status alone", async () => {
         await completeCandidateDetails();
         await addDocument(P, "PASSPORT", "REVIEW_REQUIRED");
         await submitForm();
+        const before = await statusOf();
         const response = await verify(P, "DETAILS");
         assert.equal(response.status, 200, JSON.stringify(response.body));
-        assert.deepEqual(await statusOf(), { code: "DETAILS_VERIFIED", label: "Details Verified" });
+        assert.deepEqual(await statusOf(), before);
         assert.equal(response.body.verification.details.by, USERS.OWNER.name);
         assert.equal(response.body.verification.documents, null);
         const [entry] = await audit("VERIFY_DETAILS");
@@ -279,9 +357,9 @@ describe("details and documents need an explicit manual verification; Visa Docum
         // Repeating it changes and audits nothing.
         await verify(P, "DETAILS");
         assert.equal((await audit("VERIFY_DETAILS")).length, 1);
-        // Removing the verification steps the status back and is audited.
+        // Removing the verification is audited; the Status still follows the data.
         assert.equal((await verify(P, "DETAILS", false)).status, 200);
-        assert.equal(await code(), "FORM_SUBMITTED");
+        assert.deepEqual(await statusOf(), before);
         assert.deepEqual((await audit("UNVERIFY_DETAILS")).map((e) => [e.previousStatus, e.newStatus]), [["VERIFIED", "NOT_VERIFIED"]]);
     });
 
@@ -299,61 +377,70 @@ describe("details and documents need an explicit manual verification; Visa Docum
         assert.deepEqual([row.detailsVerifiedById, row.documentsVerifiedAt], [USERS.ADMIN.adminId, null]);
     });
 
-    test("STATUS-FIX-005 / 006: uploaded documents, and an OCR-accepted (automatically VERIFIED) document, are NOT Documents Verified", async () => {
+    // Steps 1-4 complete through the real data: PASS, a Job, Candidate details (and the passport), the form, Additional details.
+    const throughStep4 = async (passportId = P) => {
+        await giveTestPassAndJob(prisma, passportId, USERS.ADMIN.adminId);
+        await completeCandidateDetails(passportId);
+        await addDocument(passportId, "PASSPORT");
+        await submitForm(passportId);
+        await prisma.candidateAdditionalDetails.create({ data: { passportId, ...completeAdditionalDetailsData() } });
+    };
+
+    test("STATUS-FIX-005 / 006: uploaded and OCR-accepted documents create no manual verification; Document submission complete alone is not a step", async () => {
         await addDocument(P, "PASSPORT", "REVIEW_REQUIRED");
         await addDocument(P, "MEDICAL", "VERIFIED");
-        assert.equal(await code(), "REGISTERED", "one is waiting for review, one was accepted by the OCR: neither was verified by a person");
+        assert.equal(await code(), "REGISTERED");
         assert.equal(await prisma.candidateVerification.count(), 0);
-        // Even every required document with the automatic VERIFIED status, the stage-based status applies and
-        // Documents Verified does not (the verification row does not exist).
+        // Every required document, but no test result: still Registered (strictly gated).
         await completeDocumentSubmission();
-        assert.equal(await code(), "VISA_DOCUMENT_READY", "Document submission is complete");
+        assert.equal(await code(), "REGISTERED");
         assert.equal((await api(USERS.ADMIN, "GET", `/candidates/${P}`)).body.verification.documents, null);
     });
 
-    test("STATUS-FIX-007: an explicit Verify documents action makes Documents Verified (over Details Verified) and is audited; it needs a document on record", async () => {
+    test("STATUS-FIX-007: the explicit Verify documents action is audited and needs a document on record; it does not move the Status", async () => {
         const nothing = await verify(P, "DOCUMENTS");
         assert.deepEqual([nothing.status, nothing.body.code], [409, "DOCUMENTS_MISSING"]);
         await completeCandidateDetails();
         await addDocument(P, "PASSPORT", "VERIFIED");
         await addDocument(P, "MEDICAL", "REVIEW_REQUIRED");
         await verify(P, "DETAILS");
-        assert.equal(await code(), "DETAILS_VERIFIED");
+        const before = await statusOf();
         const response = await verify(P, "DOCUMENTS");
         assert.equal(response.status, 200, JSON.stringify(response.body));
-        assert.deepEqual(await statusOf(), { code: "DOCUMENTS_VERIFIED", label: "Documents Verified" });
+        assert.deepEqual(await statusOf(), before);
         assert.equal(response.body.verification.documents.by, USERS.OWNER.name);
         const [entry] = await audit("VERIFY_DOCUMENTS");
         assert.deepEqual([entry.adminId, entry.previousStatus, entry.newStatus], [USERS.OWNER.adminId, "NOT_VERIFIED", "VERIFIED"]);
         await verify(P, "DOCUMENTS", false);
-        assert.equal(await code(), "DETAILS_VERIFIED");
+        assert.deepEqual(await statusOf(), before);
         assert.equal((await audit("UNVERIFY_DOCUMENTS")).length, 1);
         // A superseded document is not something to verify.
         const other = await verify(Q, "DOCUMENTS");
         assert.equal(other.status, 409);
     });
 
-    test("STATUS-FIX-008 / 009: Document submission completed = Visa Document Ready; the Visa submission stage is not needed", async () => {
-        await addDocument(P, "PASSPORT");
+    test("STATUS-FIX-008 / 009: after step 4, Document submission complete = Documents Verified; the Visa submission stage is not needed", async () => {
+        await throughStep4();
         await completeDocumentSubmission(P, "REVIEW_REQUIRED");
         const stages = (await api(USERS.ADMIN, "GET", `/candidates/${P}`)).body.stages;
         assert.equal(stages.find((s) => s.stage === "DOCUMENT_SUBMISSION").completed, true);
         assert.equal(stages.find((s) => s.stage === "VISA_SUBMISSION").completed, false, "Visa submission is not completed");
-        assert.deepEqual(await statusOf(), { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" });
+        assert.deepEqual(await statusOf(), { code: "DOCUMENTS_VERIFIED", label: "Documents Verified" });
+        assert.equal(await prisma.candidateVerification.count({ where: { documentsVerifiedAt: { not: null } } }), 0, "no manual sign-off involved");
         // A document missing again steps back down.
         await prisma.document.updateMany({ where: { passportId: P, documentType: "SCAN" }, data: { verificationStatus: "SUPERSEDED" } });
-        assert.equal(await code(), "REGISTERED");
+        assert.equal(await code(), "CANDIDATE_DETAILS_VERIFIED");
     });
 
-    test("completing Visa submission = Visa Submitted, Visa approval = Visa Approved; Departed is a recorded fact, never a stage", async () => {
-        for (const id of [P, Q]) await giveTestPassAndJob(prisma, id, USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
-        await addDocument(P, "PASSPORT");
+    test("completing Visa submission = Visa Document Ready after steps 1-5, Visa Submitted otherwise; Visa approval = Visa Approved; Departed is a recorded fact", async () => {
+        await throughStep4(P);
         await completeDocumentSubmission(P, "REVIEW_REQUIRED");
+        await giveTestPassAndJob(prisma, Q, USERS.ADMIN.adminId); // the visa stages need a PASS and a Job
         assert.equal((await completeStage(P, "VISA_SUBMISSION")).status, 200);
-        assert.deepEqual(await statusOf(), { code: "VISA_SUBMITTED", label: "Visa Submitted" });
-        // Without Document submission too: the stage is the signal.
+        assert.deepEqual(await statusOf(), { code: "VISA_DOCUMENT_READY", label: "Visa Document Ready" });
+        // Without the earlier steps (a sheet-imported "Submit"): the stage alone is Visa Submitted, as before.
         await completeStage(Q, "VISA_SUBMISSION");
-        assert.equal(await code(Q), "VISA_SUBMITTED");
+        assert.deepEqual(await statusOf(Q), { code: "VISA_SUBMITTED", label: "Visa Submitted" });
         // Visa approval (completed by hand, or the import's "Got Visa") = Visa Approved, at once.
         const approved = await completeStage(P, "VISA_APPROVAL");
         assert.equal(approved.status, 200);
@@ -368,9 +455,13 @@ describe("details and documents need an explicit manual verification; Visa Docum
         await prisma.candidate.update({ where: { passportId: P }, data: { departedAt: null } });
         // Reopening the stages steps back down.
         await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/VISA_APPROVAL`, { completed: false });
-        assert.equal(await code(), "VISA_SUBMITTED");
-        await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/VISA_SUBMISSION`, { completed: false });
         assert.equal(await code(), "VISA_DOCUMENT_READY");
+        await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/VISA_SUBMISSION`, { completed: false });
+        assert.equal(await code(), "DOCUMENTS_VERIFIED");
+        // A gap below step 6 (the form no longer submitted) makes the same completed stage Visa Submitted again.
+        await completeStage(P, "VISA_SUBMISSION");
+        await pg.exec(`UPDATE "candidate_form_access" SET "status" = 'UNLOCKED' WHERE "passport_id" = '${P}'`);
+        assert.equal(await code(), "VISA_SUBMITTED");
     });
 
     test("the retired stages are gone: IVS interview and Finalizing the job are 404, and the database refuses them", async () => {
@@ -378,40 +469,53 @@ describe("details and documents need an explicit manual verification; Visa Docum
         await assert.rejects(pg.exec(`INSERT INTO "candidate_stages" ("passport_id","stage","updated_at") VALUES ('${P}','FINALIZING_JOB', now())`), /candidate_stages_stage_check/);
     });
 
-    test("Visa Document Ready outranks Documents Verified, Details Verified, Form Submitted and Job Assigned (the specified ladder)", async () => {
+    test("FLOW-API: a manually created candidate walks the six steps in order through the real API, and each flat code is filterable", async () => {
+        const filtered = async (status) => (await api(USERS.ADMIN, "GET", `/candidates?workflowStatus=${status}`)).body.items.map((item) => item.passportId);
+        const seen = [];
+        // Q stays Registered throughout.
+        const step = async () => { seen.push(await code()); assert.deepEqual(await filtered(seen.at(-1)), seen.length === 1 ? [P, Q].sort() : [P], seen.at(-1)); };
+        await step();
         await setResult(P, "PASS");
+        await step();
+        await assignJob();
+        await step();
         await completeCandidateDetails();
         await addDocument(P, "PASSPORT");
-        await assignJob();
+        await step();
         await submitForm();
-        await verify(P, "DETAILS");
-        await verify(P, "DOCUMENTS");
-        assert.equal(await code(), "DOCUMENTS_VERIFIED");
+        await step();
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: P, ...completeAdditionalDetailsData() } });
+        await step();
         await completeDocumentSubmission();
+        await step();
+        await completeStage(P, "VISA_SUBMISSION");
+        await step();
+        assert.deepEqual(seen, ["REGISTERED", "TEST_PASSED", "JOB_ASSIGNED", "CANDIDATE_DETAILS_COLLECTED", "FORM_SUBMITTED", "CANDIDATE_DETAILS_VERIFIED", "DOCUMENTS_VERIFIED", "VISA_DOCUMENT_READY"]);
+        // Reading again changes nothing (derived, never stored), and the candidate page agrees.
         assert.equal(await code(), "VISA_DOCUMENT_READY");
+        assert.deepEqual(await filtered("VISA_SUBMITTED"), []);
+        assert.equal((await api(USERS.ADMIN, "GET", `/candidates/${P}`)).body.workflowStatus.code, "VISA_DOCUMENT_READY");
     });
 
     test("STATUS-FIX-010 / 011: FAIL overrides every later milestone, and PASS restores the latest applicable status", async () => {
-        await completeCandidateDetails();
-        await addDocument(P, "PASSPORT");
+        await throughStep4();
         await completeDocumentSubmission();
-        await submitForm();
         await verify(P, "DETAILS");
         await verify(P, "DOCUMENTS");
-        assert.equal(await code(), "VISA_DOCUMENT_READY");
+        assert.equal(await code(), "DOCUMENTS_VERIFIED");
         await setResult(P, "FAIL");
         assert.equal(await code(), "STOPPED_WITH_TEST");
         // Every verification is still on record while stopped.
         assert.equal(await prisma.candidateVerification.count({ where: { passportId: P, detailsVerifiedAt: { not: null }, documentsVerifiedAt: { not: null } } }), 1);
         await setResult(P, "PASS");
-        assert.equal(await code(), "VISA_DOCUMENT_READY");
-        // A required document changes (superseded): Document submission is incomplete again and the documents sign-off
-        // is reset, so the latest valid status is the details sign-off. FAIL / PASS around it changes nothing else.
+        assert.equal(await code(), "DOCUMENTS_VERIFIED");
+        // A required document changes (superseded): Document submission is incomplete again, so the latest valid
+        // status is step 4. FAIL / PASS around it changes nothing else.
         await prisma.document.updateMany({ where: { passportId: P, documentType: "SCAN" }, data: { verificationStatus: "SUPERSEDED" } });
         await setResult(P, "FAIL");
         assert.equal(await code(), "STOPPED_WITH_TEST");
         await setResult(P, "PASS");
-        assert.equal(await code(), "DETAILS_VERIFIED");
+        assert.equal(await code(), "CANDIDATE_DETAILS_VERIFIED");
     });
 
     test("STATUS-FIX-012: the candidate details API keeps its stages; it carries the verification state, the derived Status and the final status", async () => {
@@ -443,12 +547,12 @@ describe("a verification resets when the data it covers changes (VERIFY-RESET-00
         await addDocument(P, "PASSPORT");
         assert.equal((await editDetails({})).status, 200);
         assert.equal((await verify(P, "DETAILS")).status, 200);
-        assert.equal(await code(), "DETAILS_VERIFIED");
+        assert.equal(await cleared("DETAILS"), false);
     };
     const verifiedDocuments = async () => {
         await addDocument(P, "PASSPORT", "REVIEW_REQUIRED");
         assert.equal((await verify(P, "DOCUMENTS")).status, 200);
-        assert.equal(await code(), "DOCUMENTS_VERIFIED");
+        assert.equal(await cleared("DOCUMENTS"), false);
     };
     const cleared = async (kind) => (await verification()) && (await verification())[kind === "DETAILS" ? "detailsVerifiedAt" : "documentsVerifiedAt"] === null;
 
@@ -461,7 +565,7 @@ describe("a verification resets when the data it covers changes (VERIFY-RESET-00
         assert.deepEqual(edited.body.verification, { details: null, documents: null }, "the response already shows it cleared");
         assert.equal(await cleared("DETAILS"), true);
         assert.equal((await verification()).detailsVerifiedById, null);
-        assert.equal(await code(), "FORM_SUBMITTED", "falls back to the next status that applies");
+        assert.equal(await code(), "REGISTERED", "the Status never depended on the verification (no test result here)");
     });
 
     test("every material Candidate details value clears it (name, NIC, dates, contact, job, experience, address, nationality, sex ...)", async () => {
@@ -482,7 +586,7 @@ describe("a verification resets when the data it covers changes (VERIFY-RESET-00
         assert.equal((await editDetails({})).status, 200);
         assert.equal((await editDetails({ comment: "a comment is a stage note, not a detail" })).status, 200);
         assert.equal(await cleared("DETAILS"), false);
-        assert.equal(await code(), "DETAILS_VERIFIED");
+        assert.equal(await code(), "REGISTERED", "the Status does not read the verification");
         assert.equal((await audit("DETAILS_VERIFICATION_RESET")).length, 0);
     });
 
@@ -492,7 +596,7 @@ describe("a verification resets when the data it covers changes (VERIFY-RESET-00
         assert.equal(first.status, 200, JSON.stringify(first.body));
         assert.equal(await cleared("DETAILS"), true, "a first save of additional details");
         await verify(P, "DETAILS");
-        assert.equal(await code(), "DETAILS_VERIFIED");
+        assert.equal(await cleared("DETAILS"), false);
         const stored = (await api(USERS.ADMIN, "GET", `/candidates/${P}/additional-details`)).body;
         const second = await saveAdditional({ nameAsInPassport: "NIMAL PERERA", pantSize: "32", expectedUpdatedDate: stored.updatedDate });
         assert.equal(second.status, 200, JSON.stringify(second.body));
@@ -593,7 +697,7 @@ describe("a verification resets when the data it covers changes (VERIFY-RESET-00
         const row = await verification();
         assert.equal(row.detailsVerifiedAt, null);
         assert.notEqual(row.documentsVerifiedAt, null, "Documents Verified stays");
-        assert.equal(await code(), "DOCUMENTS_VERIFIED");
+        assert.equal(await code(), "REGISTERED", "the Status does not read the verification");
     });
 
     test("job, test and note changes do not reset Documents Verified", async () => {
@@ -623,7 +727,7 @@ describe("a verification resets when the data it covers changes (VERIFY-RESET-00
         assert.equal(await cleared("DOCUMENTS"), true);
         for (const who of [USERS.ANALYST, USERS.DESK]) assert.equal((await verify(P, "DOCUMENTS", true, who)).status, 403);
         assert.equal((await verify(P, "DOCUMENTS", true, USERS.ADMIN)).status, 200);
-        assert.equal(await code(), "DOCUMENTS_VERIFIED");
+        assert.equal(await cleared("DOCUMENTS"), false);
         assert.equal((await verification()).documentsVerifiedById, USERS.ADMIN.adminId);
         await editDetails({ address: "x" });
         await completeCandidateDetails();
@@ -688,18 +792,21 @@ describe("a verification resets when the data it covers changes (VERIFY-RESET-00
         assert.equal(await cleared("DETAILS"), false);
     });
 
-    test("VERIFY-RESET-013 / 014: Document submission complete is Visa Document Ready; FAIL still overrides everything, resets included", async () => {
+    test("VERIFY-RESET-013 / 014: after step 4, Document submission complete is Documents Verified whatever the sign-off; FAIL still overrides everything, resets included", async () => {
+        await giveTestPassAndJob(prisma, P, USERS.ADMIN.adminId);
+        await submitForm();
+        await prisma.candidateAdditionalDetails.create({ data: { passportId: P, ...completeAdditionalDetailsData() } });
         await verifiedDetails();
         await verify(P, "DOCUMENTS");
         await completeDocumentSubmission();
         assert.equal(await cleared("DOCUMENTS"), true, "four new required documents reset the sign-off");
-        assert.equal(await code(), "VISA_DOCUMENT_READY");
+        assert.equal(await code(), "DOCUMENTS_VERIFIED");
         await setResult(P, "FAIL");
         assert.equal(await code(), "STOPPED_WITH_TEST");
         await editDetails({ address: "While stopped" });
         assert.equal(await code(), "STOPPED_WITH_TEST", "a reset while stopped does not change the override");
         await setResult(P, "PASS");
-        assert.equal(await code(), "VISA_DOCUMENT_READY", "the latest currently valid status returns");
+        assert.equal(await code(), "DOCUMENTS_VERIFIED", "the latest currently valid status returns");
     });
 
     test("the migration is additive: only functions and triggers; existing verification rows are not touched", async () => {
