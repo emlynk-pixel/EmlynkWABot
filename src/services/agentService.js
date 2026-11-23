@@ -4,6 +4,7 @@ import { CandidateError, listPagination } from "./candidateService.js";
 import { JOB_STATUS } from "./jobAssignmentReader.js";
 import { normalizeCountryCode } from "../utils/countries.js";
 import { normalizePhoneNumber } from "../utils/phoneNumber.js";
+import { notifyAgentsMissingCountry } from "./notificationEvents.js";
 
 // Agent Management (Admin > Agents). Docs/AGENT_CLIENT_MANAGEMENT.md.
 //
@@ -417,6 +418,9 @@ export async function createAgent({ db, actor, values }) {
             if (clientIds.length) await tx.agentClient.createMany({ data: clientIds.map((clientId) => ({ agentId: row.id, clientId })), skipDuplicates: true });
             return row.id;
         });
+        // After the commit, best-effort (C2). The form requires a country, so this is a safeguard:
+        // the Agents without one are created by the bulk import (candidateImportService.js).
+        if (!values.countryCode) await notifyAgentsMissingCountry(db, [{ agentId: id, name: values.name }]);
         return await getAgent({ db, agentId: id });
     } catch (error) {
         if (isUniqueViolation(error)) throw new CandidateError(409, "DUPLICATE", DUPLICATE_MESSAGE);

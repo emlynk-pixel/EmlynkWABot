@@ -6,6 +6,7 @@ import { JOB_SELECT, JOB_STATUS, jobSummaryView } from "./jobAssignmentReader.js
 import { candidateMatchesJobTypes } from "./jobTypeCatalog.js";
 import { clientName } from "../utils/clientName.js";
 import { normalizeCountryCode } from "../utils/countries.js";
+import { notifyNewJobs } from "./notificationEvents.js";
 
 export { JOB_STATUS, candidateMatchesJobTypes };
 
@@ -649,12 +650,16 @@ export async function createJob({ db, actor, values, now = new Date() }) {
     // One per stored candidate (two spellings of one passport ID count once), locked in a fixed
     // order so two creations that share candidates cannot deadlock.
     const unique = [...new Set(passportIds)].sort();
+    let job;
     try {
-        return await createJobInTransaction({ db, actor, values, passportIds: unique, now });
+        job = await createJobInTransaction({ db, actor, values, passportIds: unique, now });
     } catch (error) {
         if (isUniqueViolation(error)) throw new CandidateError(409, "COMPANY_JOB_ID_EXISTS", COMPANY_JOB_ID_TAKEN);
         throw error;
     }
+    // After the commit, best-effort (C1: only while candidates who could join it are on no job).
+    if (job?.jobId && job.jobCode) await notifyNewJobs(db, [{ jobId: job.jobId, jobCode: job.jobCode }]);
+    return job;
 }
 
 async function createJobInTransaction({ db, actor, values, passportIds, now }) {

@@ -32,9 +32,10 @@ import { setAuditActor } from "./auditActor.js";
 import { RUN_KIND, RUN_TRIGGER } from "./sheetSyncStore.js";
 import { requestSheetSyncRun } from "./sheetSyncStatusService.js";
 import { allocateImportedCandidates } from "./workAllocationService.js";
+import { notifyAgentsMissingCountry, notifyCandidatesAllocated, notifyCandidatesCancelled, notifyNewJobs } from "./notificationEvents.js";
 import { AGENT_AUDIT_ACTION, ENTITY_STATUS, auditRow as entityAuditRow } from "./agentService.js";
 import { CLIENT_AUDIT_ACTION } from "./clientService.js";
-import { LEDGER_ENTITY, LEDGER_OP, changesOf, createLedger } from "./candidateImportLedger.js";
+import { LEDGER_ENTITY, LEDGER_OP, LEDGER_STATUS, changesOf, createLedger } from "./candidateImportLedger.js";
 import { LedgerKeyConfigError, readLedgerKeyring } from "./importLedgerKeys.js";
 
 export const IMPORT_CHUNK_SIZE = 100;
@@ -393,7 +394,45 @@ const auditEntry = (actor, data) => ({ auditId: crypto.randomUUID(), adminId: ac
 
 // The plans' writes, inside the caller's transaction. Returns the plans' outcomes. Every change is also
 // recorded in the import's change ledger (candidateImportLedger.js), in this same transaction.
-async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [], chunkIndex = 0, ledgerKeyring = null, createdJobTypes = [] }) {
+// What a committed chunk notifies (notificationEvents.js), collected while its transaction runs and
+// sent only once it has committed (flushImportNotices): a transaction that rolls back sends nothing.
+// A1 (New Candidates Allocated) is NOT sent per chunk: it is sent once per import, when the import is
+// closed (notifyImportAllocations).
+const newImportNotices = () => ({ agents: [], cancelled: [], jobs: [] });
+const mergeImportNotices = (into, from) => {
+    for (const key of Object.keys(into)) into[key].push(...from[key]);
+    return into;
+};
+async function flushImportNotices(db, notices, { actor, now }) {
+    await notifyAgentsMissingCountry(db, notices.agents);
+    await notifyCandidatesCancelled(db, { actorId: actor?.adminId ?? null, actorName: actor?.name, passportIds: notices.cancelled, at: now });
+    await notifyNewJobs(db, notices.jobs);
+}
+
+// A1 for a whole import: one notification per Analyst, with every candidate the import allocated to
+// them across ALL its chunks (and their row-by-row retries). The chunks are separate requests, so the
+// counts are not kept in memory: they are read from the import's change ledger, which records each
+// allocation the import made in the same transaction as the allocation itself (CANDIDATE_ALLOCATION
+// CREATE, analystId stored as it is), so it is exactly what was committed. Only APPLIED entries count
+// (a rolled-back one is not an allocation any more). Called once, by the request that closes the
+// import (finish or abort: both keep the rows); the dedupe key A1:import:<importId> is per import and
+// recipient, so a repeated close or a retried send adds nothing. Best-effort: never throws.
+async function notifyImportAllocations(db, importId) {
+    try {
+        const rows = await db.$queryRaw`
+            SELECT c."changes"->'analystId'->>'after' AS "analystId", count(*)::int AS "count"
+            FROM "candidate_import_change" c
+            WHERE c."import_id" = ${importId}::uuid AND c."entity_type" = ${LEDGER_ENTITY.ALLOCATION}
+              AND c."op" = ${LEDGER_OP.CREATE} AND c."status" = ${LEDGER_STATUS.APPLIED}
+            GROUP BY 1`;
+        const counts = rows.filter((row) => row.analystId).map((row) => ({ analystId: row.analystId, count: Number(row.count) }));
+        return await notifyCandidatesAllocated(db, { counts, batchId: `import:${importId}` });
+    } catch {
+        return { created: 0, failed: true };
+    }
+}
+
+async function executePlans(tx, plans, { importId, actor, now = new Date(), jobGroups = [], chunkIndex = 0, ledgerKeyring = null, createdJobTypes = [], notices = newImportNotices() }) {
     const audits = [];
     const ledger = createLedger({ importId, chunkIndex, keyring: ledgerKeyring });
     // The job types this transaction created for the rows' Job Roles (ensureSheetJobTypes): CREATED by this import.
@@ -465,10 +504,10 @@ async function executePlans(tx, plans, { importId, actor, now = new Date(), jobG
         }
     }
     const effects = new Map(plans.map((plan) => [plan.rowNumber, {}]));
-    await executeOrg(tx, plans, { importId, actor, audits, effects, ledger });
-    await executeExtras(tx, plans, { importId, actor, audits, effects, now, ledger });
+    await executeOrg(tx, plans, { importId, actor, audits, effects, ledger, notices });
+    await executeExtras(tx, plans, { importId, actor, audits, effects, now, ledger, notices });
     // After the Test details (this chunk may have just saved the PASS) and the Clients / Agents.
-    await executeJobGroups(tx, plans, jobGroups, { actor, importId, audits, effects, ledger });
+    await executeJobGroups(tx, plans, jobGroups, { actor, importId, audits, effects, ledger, notices });
     if (audits.length) await tx.auditLog.createMany({ data: audits });
     // The ledger with the writes: one statement, same transaction (a chunk that fails leaves no entry).
     await ledger.flush(tx);
@@ -482,7 +521,7 @@ const isoDayOf = (value) => (value instanceof Date ? value.toISOString().slice(0
 
 // Allocation (to the OFFICER), the Test details, the visa stage and Departed of the CREATE / FILL rows, all
 // fill-only (planned in candidateImportClassifier.js against this transaction's own snapshot).
-async function executeExtras(tx, plans, { importId, actor, audits, effects, now, ledger }) {
+async function executeExtras(tx, plans, { importId, actor, audits, effects, now, ledger, notices }) {
     const writing = plans.filter((plan) => plan.write?.extras && (plan.action === ROW_ACTION.CREATE || plan.action === ROW_ACTION.FILL));
     const entries = writing.filter((plan) => plan.write.extras.allocation).map((plan) => ({ passportId: passportOfPlan(plan), analystId: plan.write.extras.allocation.analystId }));
     const allocationAudits = new Map();
@@ -586,6 +625,7 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now,
         const previousOutcomeAt = new Map(updated.map((row) => [row.passportId, row.previousOutcomeAt]));
         for (const plan of recording.filter((p) => previousOutcomeAt.has(passportOfPlan(p)))) {
             effects.get(plan.rowNumber).outcome = 1;
+            if (outcome === "CANCELLED") notices.cancelled.push(passportOfPlan(plan));
             const audit = auditEntry(actor, {
                 action: "SET_FINAL_STATUS", passportId: passportOfPlan(plan), previousStatus: "NONE", newStatus: outcome,
                 reason: `Visa status in a legacy sheet (bulk import ${importId})`, newValue: JSON.stringify({ importId }),
@@ -604,7 +644,7 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now,
 // chunk may have created one since the preview), else created, then linked; a blank registration
 // number filled. Through the same audit actions as Admin > Clients / Agents. A name created twice at
 // the same time fails on the unique indexes and the chunk is retried row by row (it then finds it).
-async function executeOrg(tx, plans, { importId, actor, audits, effects, ledger }) {
+async function executeOrg(tx, plans, { importId, actor, audits, effects, ledger, notices }) {
     const agentIds = new Map();
     const clientIds = new Map();
     const reason = (what) => `${what} by a legacy sheet (bulk import ${importId})`;
@@ -621,6 +661,7 @@ async function executeOrg(tx, plans, { importId, actor, audits, effects, ledger 
                     const row = await tx.agent.create({ data: { name: agent.name, countryCode: null }, select: { id: true } });
                     agentId = row.id;
                     effect.agentCreated = 1;
+                    notices.agents.push({ agentId, name: agent.name });
                     const audit = entityAuditRow({
                         actor, action: AGENT_AUDIT_ACTION.CREATED, previousStatus: "NONE", newStatus: ENTITY_STATUS.ACTIVE, reason: reason("Agent created"),
                         newValue: JSON.stringify({ agentId, name: agent.name, countryCode: null, clientIds: [] }),
@@ -829,6 +870,8 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     // the rows' unknown Job Roles are created inside it, after the import is locked and allowed to go on: an import
     // that is refused (finished, recovered, blocked by another of this administrator's imports) creates none.
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        // This attempt's notifications: sent only if its transaction commits.
+        const notices = newImportNotices();
         try {
             const result = await db.$transaction(async (tx) => {
                 const locked = await lockImport(tx, importId);
@@ -839,9 +882,10 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
                 const { activeJobTypes, created } = await ensureSheetJobTypes(tx, canonical);
                 const validated = canonical.map((row) => validateLegacyRow(row, { activeJobTypes, today: now }));
                 const snapshot = await loadImportSnapshot(tx, validated, { activeJobTypes });
-                const outcomes = await executePlans(tx, planRows(validated, snapshot, record.sourceFlags), { ...context, createdJobTypes: created });
+                const outcomes = await executePlans(tx, planRows(validated, snapshot, record.sourceFlags), { ...context, createdJobTypes: created, notices });
                 return recordChunk(tx, locked, { importId, chunkIndex, actor, rows: outcomes, now });
             }, CHUNK_TRANSACTION);
+            if (!result.alreadyCommitted) await flushImportNotices(db, notices, { actor, now });
             return present(chunkIndex, result, canonical, result.alreadyCommitted ? { alreadyCommitted: true } : {});
         } catch (error) {
             // A refusal (finished, aborted, another import running) is the answer, not a row problem.
@@ -854,12 +898,15 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
     // The chunk failed as a whole (and rolled back alone): each row on its own, so a single bad or
     // conflicting row is isolated and the others are still written.
     const outcomes = [];
+    // The committed rows' notifications, sent together (one per Analyst, not one per row).
+    const committedNotices = newImportNotices();
     // Still allowed? (finished or aborted, or another import started, while the chunk was failing)
     await db.$transaction(async (tx) => guardCommit(tx, await lockImport(tx, importId), { importId, actor, now }), CHUNK_TRANSACTION);
     // Each row's transaction locks the import row and checks again (so the automatic recovery can never take the import
     // over while one of its rows is being written, and no row is written once it has), renews the commit lease, and
     // creates the job types that row needs, recorded in that row's ledger entries.
     for (const row of canonical) {
+        const notices = newImportNotices();
         try {
             outcomes.push(...await db.$transaction(async (tx) => {
                 await guardCommit(tx, await lockImport(tx, importId), { importId, actor, now });
@@ -867,14 +914,20 @@ export async function commitChunk({ db, actor, importId, chunkIndex, rows, now =
                 const { activeJobTypes, created } = await ensureSheetJobTypes(tx, [row]);
                 const validated = [validateLegacyRow(row, { activeJobTypes, today: now })];
                 const snapshot = await loadImportSnapshot(tx, validated, { activeJobTypes });
-                return executePlans(tx, planRows(validated, snapshot, record.sourceFlags), { ...context, createdJobTypes: created });
+                return executePlans(tx, planRows(validated, snapshot, record.sourceFlags), { ...context, createdJobTypes: created, notices });
             }, CHUNK_TRANSACTION));
+            mergeImportNotices(committedNotices, notices);
         } catch (error) {
             // A refusal (finished, aborted, recovered meanwhile) stops the chunk: nothing more is written.
-            if (error instanceof CandidateImportError) throw error;
+            if (error instanceof CandidateImportError) {
+                await flushImportNotices(db, committedNotices, { actor, now });
+                throw error;
+            }
             outcomes.push({ r: row.rowNumber, o: ROW_OUTCOME.FAILED, c: [failureCode(error)], w: false });
         }
     }
+    // The rows written above are committed whatever happens next.
+    await flushImportNotices(db, committedNotices, { actor, now });
     const result = await db.$transaction(async (tx) => {
         const locked = await lockImport(tx, importId);
         await guardCommit(tx, locked, { importId, actor, now });
@@ -951,6 +1004,9 @@ async function closeImport({ db, actor, importId, abort, now = new Date() }) {
         return { record, transitioned: true, written };
     }, CHUNK_TRANSACTION);
     if (!outcome.transitioned) return finishedView(outcome.record, { alreadyFinished: true });
+
+    // After the commit, by the one call that closed the import (A1, all chunks together).
+    await notifyImportAllocations(db, importId);
 
     // The mirror is updated by the existing reconciliation (a queued or running one is reused). Requested
     // after the status commit, by the one call that made the transition.

@@ -3,7 +3,7 @@ import helmet from "helmet";
 import authRoutes from "./routes/auth.js";
 import whatsappRoutes from "./routes/whatsapp.js";
 import { createAdminRouter } from "./routes/admin.js";
-import { errorHandler } from "./middleware/errorHandler.js";
+import { createErrorHandler } from "./middleware/errorHandler.js";
 import { trustProxyHops } from "./config/env.js";
 import { createAdminFrontendRouter, DEFAULT_ADMIN_DIST_DIR } from "./adminFrontend.js";
 import { createPublicCandidateDetailsRouter, PUBLIC_CANDIDATE_DETAILS_PATH } from "./routes/publicCandidateDetails.js";
@@ -26,7 +26,9 @@ export const FORM_BRANDING_API_PATH = "/api/admin/settings/form-branding";
 // Options exist for tests: another admin build folder, fake-DB routers, and
 // the /admin rate limiter (its default counts in PostgreSQL), and the public
 // Candidate Extra Details router.
-export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes, adminApiRouter = createAdminRouter(), adminFrontendLimiter, publicCandidateRouter = createPublicCandidateDetailsRouter(), taskRouter = createTaskRouter() } = {}) {
+// onServerError: told about every 500 (the Owner's System Alert); the process entries
+// (app.js, httpHandler.js) pass createSystemAlertReporter, the tests leave it unset.
+export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = authRoutes, adminApiRouter = createAdminRouter(), adminFrontendLimiter, publicCandidateRouter = createPublicCandidateDetailsRouter(), taskRouter = createTaskRouter(), onServerError = null } = {}) {
     const app = express();
 
     // Don't advertise the framework (SEC-015).
@@ -96,7 +98,7 @@ export function createApp({ adminDistDir = DEFAULT_ADMIN_DIST_DIR, authRouter = 
     });
 
     // Must be registered last: after the body parser and every route.
-    app.use(errorHandler);
+    app.use(createErrorHandler({ onServerError }));
 
     return app;
 }

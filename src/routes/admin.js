@@ -2,7 +2,7 @@ import { getFormBranding, parseBrandingBody, updateFormBranding } from "../servi
 import express from "express";
 
 import { createRequireActiveUser } from "../middleware/requireActiveUser.js";
-import { hasRole, requireRole, ROLES } from "../middleware/requireRole.js";
+import { ALL_ROLES, hasRole, requireRole, ROLES } from "../middleware/requireRole.js";
 import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
 import {
     listDocuments,
@@ -112,6 +112,8 @@ import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE, resolveCandidateJobTypes } f
 import { CONFIRMABLE_FIELDS, confirmAllFormFields, confirmFormField, isConfirmableField, rejectAllFormFields, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
+import { countUnread, listNotifications, markNotificationRead, NotificationError, parseNotificationListQuery } from "../services/notificationService.js";
+import { isFormLinkSystemError, notifyFormLinkFailed } from "../services/notificationEvents.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
 import {
     createAgent,
@@ -270,6 +272,38 @@ export function createAdminRouter({
         next();
     });
     router.use(requireAdmin);
+
+    // ---------------------------------------------------------------- notifications (every role)
+    // The signed-in user's own in-app notifications (notificationService.js). Always scoped to
+    // req.user.adminId: no request names a recipient, and another user's notification is 404.
+    const NOTIFICATION_READERS = ALL_ROLES;
+    const notificationAction = async (res, run) => {
+        try {
+            return await run();
+        } catch (error) {
+            if (error instanceof NotificationError) {
+                return res.status(error.status).json({ message: error.message, code: error.code, ...(error.status === 400 ? { errors: [{ field: "cursor", message: "must be the nextCursor of the previous page" }] } : {}) });
+            }
+            throw error;
+        }
+    };
+
+    router.get("/notifications", requireRole(NOTIFICATION_READERS), async (req, res) => {
+        const parsed = parseNotificationListQuery(req.query);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        const client = await resolveDb(db);
+        return notificationAction(res, async () => res.json(await listNotifications({ db: client, recipientId: req.user.adminId, params: parsed.params })));
+    });
+
+    router.get("/notifications/unread-count", requireRole(NOTIFICATION_READERS), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json({ unreadCount: await countUnread({ db: client, recipientId: req.user.adminId }) });
+    });
+
+    router.post("/notifications/:id/read", requireRole(NOTIFICATION_READERS), async (req, res) => {
+        const client = await resolveDb(db);
+        return notificationAction(res, async () => res.json(await markNotificationRead({ db: client, recipientId: req.user.adminId, id: req.params.id })));
+    });
 
     // ---------------------------------------------------------------- read-only (VIEWER and above)
 
@@ -601,6 +635,17 @@ export function createAdminRouter({
     // A candidate as the user may see it: REGISTRATION_DESK gets the registration view only.
     const candidateFor = (req, details) => (registrationOnly(req) ? registrationView(details) : details);
     const forbidden = (res) => res.status(403).json({ message: "Insufficient permissions" });
+    // Creating a Candidate Form link: a system problem (the form not configured, an unexpected
+    // error; never a refusal such as 409 FORM_SUBMITTED) also notifies the Admins and Team Leads
+    // (E10, at most once an hour). The error is answered exactly as before.
+    const reportingFormLinkFailure = async (client, create) => {
+        try {
+            return await create();
+        } catch (error) {
+            if (isFormLinkSystemError(error)) await notifyFormLinkFailed(client);
+            throw error;
+        }
+    };
 
     // The advanced filters (candidateListFilters.js) only ever narrow the user's own candidates: the
     // scope is AND-ed with them in the database. A filter the role may not use is refused (400).
@@ -937,9 +982,10 @@ export function createAdminRouter({
     router.post("/candidates/:passportId/form-share", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.status(201).json(await createFormShareLink({
-            db: client, actor: req.user, formOrigin, passportId: await storedCandidateId(client, req.params.passportId, req.user),
-        })));
+        return candidateAction(res, async () => {
+            const passportId = await storedCandidateId(client, req.params.passportId, req.user);
+            return res.status(201).json(await reportingFormLinkFailure(client, () => createFormShareLink({ db: client, actor: req.user, formOrigin, passportId })));
+        });
     });
 
     router.post("/candidates/:passportId/form-share/revoke", requireRole(CANDIDATE_STAFF), async (req, res) => {
@@ -1108,7 +1154,7 @@ export function createAdminRouter({
     router.post("/jobs/:jobId/form-share", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.status(201).json(await createJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), formOrigin })));
+        return candidateAction(res, async () => res.status(201).json(await reportingFormLinkFailure(client, () => createJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), formOrigin }))));
     });
     router.post("/jobs/:jobId/form-share/revoke", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!jobParam(req, res)) return undefined;

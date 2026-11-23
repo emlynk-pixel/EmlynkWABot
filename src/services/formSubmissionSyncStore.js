@@ -10,6 +10,8 @@
 // never candidate data, Google message text or tokens. Nothing here calls Google.
 // Completed rows are kept: they hold the submission's stable ID.
 
+import { notifySheetSyncFailed, sheetSyncHourKey } from "./notificationEvents.js";
+
 export const FORM_SYNC_STATUS = Object.freeze({ PENDING: "PENDING", PROCESSING: "PROCESSING", COMPLETED: "COMPLETED", FAILED: "FAILED" });
 
 const later = (now, ms) => new Date(now.getTime() + ms);
@@ -65,12 +67,14 @@ export function createFormSubmissionSyncStore({ db } = {}) {
         return count === 1;
     }
 
-    // Dead letter (permanent errors only): no more automatic attempts.
+    // Dead letter (permanent errors only): no more automatic attempts. A Google Sheet sync failure
+    // for the in-app notifications (E9 / F1), at most once an hour whatever the number of rows.
     async function fail(row, { errorClass, errorCode = null, now }) {
         const { count } = await table.updateMany({
             where: ownedBy(row),
             data: { status: FORM_SYNC_STATUS.FAILED, lastErrorClass: errorClass, lastErrorCode: errorCode, updatedAt: now, leaseOwner: null, leaseExpiresAt: null },
         });
+        if (count === 1) await notifySheetSyncFailed(db, { eventKey: sheetSyncHourKey("form_submissions", now) });
         return count === 1;
     }
 

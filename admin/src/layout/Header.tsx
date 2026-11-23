@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
-import { canRegisterCandidates, notificationSource } from "../auth/roles";
+import { canRegisterCandidates } from "../auth/roles";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
@@ -29,8 +29,6 @@ export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: {
     // Quick access to the registration form (the existing /candidates/new
     // route) on every page, for the roles that can register candidates.
     const showRegister = canRegisterCandidates(user);
-    // The bell's source for this role (roles.ts): the review queue, Need Attention, or none (an empty bell).
-    const bellSource = notificationSource(user);
     const trigger = "-ml-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-muted transition-colors hover:bg-canvas-muted hover:text-ink";
     const control = "flex h-8 items-center gap-1.5 rounded-lg border border-border-strong bg-surface px-2.5 text-label-md text-ink-soft transition-colors hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -104,8 +102,8 @@ export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: {
                     <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} className="size-4" />
                     <span className="sr-only">Dark mode</span>
                 </button>
-                {/* Every role has the bell; it reads only data the role may already open (never the Review Queue for a role without it). */}
-                {user && <NotificationBell source={bellSource} />}
+                {/* Every role has the bell: the server-side notification feed of the signed-in admin. */}
+                {user && <NotificationBell />}
             </div>
         </header>
     );

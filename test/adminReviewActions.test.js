@@ -607,6 +607,7 @@ describe("security and error handling", () => {
             "POST /jobs/:jobId/complete",
             "POST /jobs/:jobId/form-share", // job-group Candidate Form link: ADMIN only, audited (jobGroupShare.test.js)
             "POST /jobs/:jobId/form-share/revoke",
+            "POST /notifications/:id/read", // every role, the caller's own notification only; read_at only (notifications.test.js)
             "POST /review/:reviewId/approve",
             "POST /review/:reviewId/assign-client",
             "POST /review/:reviewId/document-type",

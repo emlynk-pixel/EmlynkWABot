@@ -33,6 +33,7 @@ import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./client
 import { clientSearchWhere } from "./adminClientService.js";
 import { findUsersByWhatsappNumber } from "./userLookupService.js";
 import { openFollowUp } from "./callLogFollowUpService.js";
+import { notifyNeedAttention } from "./notificationEvents.js";
 import { candidateJobAssignments, displayJob } from "./jobAssignmentReader.js";
 import { deriveCandidateWorkflowStatus } from "./candidateWorkflowStatus.js";
 import { candidateFilterWhere, derivedFilterMatch, needsDerivedFilter, parseCandidateFilters, queryValue, WORK_ALLOCATION_VIEWS, workAllocationViewWhere } from "./candidateListFilters.js";
@@ -1896,10 +1897,12 @@ export async function addCallLog({ db, admin, passportId, values }) {
     };
     if (values.needsAttention) {
         // One call, and its follow-up with it, or neither.
-        await db.$transaction(async (tx) => {
+        const followUp = await db.$transaction(async (tx) => {
             await tx.candidateCallLog.create({ data });
-            await openFollowUp(tx, { actor: admin, passportId, callLogId });
+            return openFollowUp(tx, { actor: admin, passportId, callLogId });
         });
+        // After the commit, best-effort (E2).
+        await notifyNeedAttention(db, { followUpId: followUp?.followUpId, passportId, actorId: admin.adminId });
     } else {
         await db.candidateCallLog.create({ data });
     }

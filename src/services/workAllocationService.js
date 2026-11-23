@@ -17,6 +17,7 @@ import {
 import { andWhere } from "./candidateAccess.js";
 import { notCompletedPlacementWhere } from "./candidateWorkflowStatus.js";
 import { candidateFilterWhere, parseCandidateFilters, queryValue, STAGE_FILTERS, workAllocationViewWhere } from "./candidateListFilters.js";
+import { notifyCandidatesAllocated } from "./notificationEvents.js";
 
 export { MAX_DERIVED_FILTER_CANDIDATES } from "./candidateService.js";
 
@@ -377,8 +378,11 @@ async function namesOf(tx, ids) {
 // changed), so a second manager working from a stale page never silently
 // overwrites the first one's allocation. A candidate that would stay with
 // the same Analyst is left as it is and not audited.
+// After the commit, each Analyst who received candidates is notified once (A1), with the number
+// newly assigned or reassigned to them; one left with the same Analyst is not counted.
 export async function assignCandidates({ db, actor, candidateIds, allocations, reassign = false }) {
-    return db.$transaction(async (tx) => {
+    let received = [];
+    const result = await db.$transaction(async (tx) => {
         const rows = await lockCandidates(tx, candidateIds);
         const analysts = await lockAllocationTargets(tx, allocations.map((entry) => entry.analystId));
         const allocated = rows.filter((row) => row.analystId);
@@ -413,6 +417,7 @@ export async function assignCandidates({ db, actor, candidateIds, allocations, r
             to: analysts.get(entry.to),
         })));
 
+        received = changes.map((entry) => ({ analystId: entry.to, count: 1 }));
         return {
             assigned: fresh.length,
             reassigned: changes.length - fresh.length,
@@ -420,6 +425,8 @@ export async function assignCandidates({ db, actor, candidateIds, allocations, r
             byAnalyst: allocations.map(({ analystId, count }) => ({ analystId, name: analysts.get(analystId).name, count })),
         };
     });
+    await notifyCandidatesAllocated(db, { counts: received });
+    return result;
 }
 
 // Bulk candidate import (candidateImportService.js): each row's OFFICER, already matched to ONE user
@@ -430,7 +437,8 @@ export async function assignCandidates({ db, actor, candidateIds, allocations, r
 // that is already allocated (to anyone) keeps its allocation. ASSIGN_CANDIDATE is audited as for a
 // manual allocation. entries: [{ passportId, analystId }]. Returns the passport IDs allocated.
 // auditIds (optional Map): receives passportId -> the audit_logs id of that ASSIGN_CANDIDATE row, so the import's
-// change ledger can name the audit row of each allocation it made.
+// change ledger can name the audit row of each allocation it made (the import's A1 notification is
+// counted from that ledger when the import is closed, candidateImportService.js).
 export async function allocateImportedCandidates(tx, { actor, entries, auditIds = null }) {
     if (!entries.length) return [];
     const officerIds = [...new Set(entries.map((entry) => entry.analystId))];
@@ -525,8 +533,10 @@ export async function unallocateForRoleChange(tx, { actor, holder, newRole }) {
 // 5. Assigns exactly equalAllocationCount candidates to each selected Analyst.
 // 6. Remainder candidates remain unallocated in the database.
 // 7. Audits every new allocation with ASSIGN_CANDIDATE.
+// After the commit, each Analyst who received candidates is notified once (A1).
 export async function autoAllocateCandidates({ db, actor, candidateIds, analystIds }) {
-    return db.$transaction(async (tx) => {
+    let received = [];
+    const result = await db.$transaction(async (tx) => {
         const rows = await lockCandidates(tx, candidateIds);
         const analysts = await lockAllocationTargets(tx, analystIds);
         const orderedAnalysts = analystIds.map((id) => analysts.get(id));
@@ -568,6 +578,7 @@ export async function autoAllocateCandidates({ db, actor, candidateIds, analystI
             })));
         }
 
+        received = plan.map((entry) => ({ analystId: entry.analystId, count: 1 }));
         const remainderRows = eligibleRows.slice(allocatedCount);
         const unallocatedCandidateIds = remainderRows.map((r) => r.passportId);
         const skippedCandidateIds = conflictingRows.map((r) => r.passportId);
@@ -590,5 +601,7 @@ export async function autoAllocateCandidates({ db, actor, candidateIds, analystI
             })),
         };
     });
+    await notifyCandidatesAllocated(db, { counts: received });
+    return result;
 }
 

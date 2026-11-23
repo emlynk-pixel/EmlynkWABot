@@ -120,6 +120,32 @@ Because Admin and API share one origin there is no CORS between them, and `conne
 
 On Vercel `TRUST_PROXY_HOPS` is `1` by default, so the rate limiters key each client by its real address. After the first deploy confirm that two clients on different networks do not share one allowance (`Docs/08-cloud-deployment.md` Step 7 asks for this check).
 
+### 8. Scheduled notifications (Cloud Scheduler)
+
+The in-app notifications that are not triggered by an action (daily reminders and summaries at 16:00 / 18:00, the Owners' health check at 06:00, deleting notifications older than 90 days) are sent by `POST /api/tasks/notification-scan` (`src/services/notificationScanService.js`). Cloud Scheduler calls it every 15 minutes; the endpoint decides what is due from the Asia/Colombo clock, so the schedule itself carries no business time. Repeated, overlapping or retried calls never duplicate a notification (dedupe keys), and a missed call is made up by the next one the same day.
+
+Authentication is the same as `/api/tasks/import-recovery`: a Google-signed OIDC token with the expected audience and the scheduler service account's verified e-mail. The route answers **404** unless **both** `NOTIFICATION_SCAN_SCHEDULER_AUDIENCE` and `NOTIFICATION_SCAN_SCHEDULER_INVOKER` are set, and 401 for a call without a valid token.
+
+**Configure it per Vercel project / environment.** Each deployment that should send notifications (production is `prod-lilygaops`, served at the production admin domain) needs its own two variables (scope: that project's Production) and its own scheduler job pointing at its own URL. A job pointing at another deployment's URL does nothing for this one; a deployment without the variables never sends scheduled notifications.
+
+```bash
+API=https://<DOMAIN>                     # this Vercel project's production domain
+SCHED_SA=<sa>@$PROJECT.iam.gserviceaccount.com
+
+# In Vercel (this project, Production), then redeploy:
+#   NOTIFICATION_SCAN_SCHEDULER_AUDIENCE = $API/api/tasks/notification-scan
+#   NOTIFICATION_SCAN_SCHEDULER_INVOKER  = $SCHED_SA
+
+gcloud scheduler jobs create http emlynk-notification-scan --project=$PROJECT --location=$REGION   --schedule="*/15 * * * *" --time-zone=Asia/Colombo   --uri="$API/api/tasks/notification-scan" --http-method=POST   --oidc-service-account-email=$SCHED_SA --oidc-token-audience="$API/api/tasks/notification-scan"   --attempt-deadline=60s
+
+gcloud scheduler jobs describe emlynk-notification-scan --project=$PROJECT --location=$REGION
+#   expect schedule '*/15 * * * *', httpTarget.oidcToken set, audience = the full endpoint URL
+```
+
+Use `gcloud scheduler jobs run emlynk-notification-scan --project=$PROJECT --location=$REGION` to trigger one at once: the answer (200) lists each rule with `NOT_DUE`, `DONE`, `SKIPPED` or `FAILED` and counts only. The function log has one `notification_scan.run` line per call; a rejected token logs `notification_scan.trigger_rejected`. Use a different job name per project when one Google Cloud project schedules several deployments.
+
+**Known limitation: password-change reminders (A3 Analysts 3 months, C3 Job Handlers 2 months, D4 Team Leads 30 days).** The app stores no password-change date, so these reminders use Supabase `auth.users.updated_at` (then the account's activation date, then its creation date). If Supabase also moves `updated_at` on sign-in, which has not been verified, the reminders may fire late or rarely for staff who sign in often. Each reminder is sent once per recorded change time. A later upgrade should add an app-owned `password_changed_at` that is set only when the password changes.
+
 ## Project B: Candidate Form
 
 ### 1. Create the project
@@ -187,3 +213,4 @@ Vercel → Deployments → pick the previous good deployment → **Promote to Pr
 - [ ] Project B: root `candidate-form`, `VITE_API_BASE_URL` set before the build
 - [ ] `CANDIDATE_FORM_ORIGIN` on A equals B's origin
 - [ ] Meta webhook verified and subscribed to `messages`
+- [ ] Scheduled notifications: `NOTIFICATION_SCAN_SCHEDULER_*` set on this project and a Cloud Scheduler job (every 15 min) calling its own `/api/tasks/notification-scan`
