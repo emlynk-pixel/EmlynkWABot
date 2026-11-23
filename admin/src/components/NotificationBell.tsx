@@ -27,8 +27,14 @@ export function NotificationBell() {
     const dropdownRef = useRef<HTMLDivElement>(null);
     const countRef = useRef(0);
     const openRef = useRef(false);
+    const seenIdsRef = useRef(new Set<string>());
+    const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
+    const badgeRef = useRef({ count: 0, dir: "up" });
     countRef.current = unreadCount;
     openRef.current = isOpen;
+    if (badgeRef.current.count !== unreadCount) {
+        badgeRef.current = { count: unreadCount, dir: unreadCount < badgeRef.current.count ? "down" : "up" };
+    }
 
     const loadList = useCallback(async (signal?: AbortSignal) => {
         if (!token) return;
@@ -36,6 +42,14 @@ export function NotificationBell() {
         setError(false);
         try {
             const page = await listNotifications(token, { limit: 30 }, signal);
+            // Presentation only: a refresh while the panel is open that brings ids not seen before is a
+            // genuine arrival. The load that happens as the panel opens never animates.
+            const seen = seenIdsRef.current;
+            if (openRef.current && seen.size > 0) {
+                const arrived = page.items.filter((i) => !seen.has(i.id)).map((i) => i.id);
+                if (arrived.length > 0) setFreshIds((current) => new Set([...current, ...arrived]));
+            }
+            page.items.forEach((i) => seen.add(i.id));
             setItems(page.items);
             setNextCursor(page.nextCursor);
             setUnreadCount(page.unreadCount);
@@ -89,6 +103,7 @@ export function NotificationBell() {
 
     const handleToggle = () => {
         if (!isOpen) {
+            setFreshIds(new Set());
             void loadList();
             void refreshCount();
         }
@@ -145,8 +160,9 @@ export function NotificationBell() {
             >
                 <Icon name={badgeText ? "notifications_active" : "notifications"} className="size-4" />
                 {badgeText && (
-                    <span aria-hidden="true" className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-critical px-1 text-label-sm font-medium leading-none text-on-critical">
-                        {badgeText}
+                    // Keyed by the count so each change replays the pop; the number slides in when it goes down.
+                    <span key={unreadCount} aria-hidden="true" className="notif-badge-pop absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center overflow-hidden rounded-full bg-critical px-1 text-label-sm font-medium leading-none text-on-critical">
+                        <span className={badgeRef.current.dir === "down" ? "notif-badge-down" : undefined}>{badgeText}</span>
                     </span>
                 )}
             </button>
@@ -176,16 +192,30 @@ export function NotificationBell() {
                                     {items.map((item) => {
                                         const unread = !item.readAt;
                                         return (
-                                            <li key={item.id} data-unread={unread ? "true" : "false"} className={unread ? "bg-primary-soft" : "bg-canvas"}>
+                                            <li
+                                                key={item.id}
+                                                data-unread={unread ? "true" : "false"}
+                                                className={`transition-colors duration-300 motion-reduce:transition-none ${unread ? "bg-primary-soft" : "bg-surface"} ${freshIds.has(item.id) ? "notif-arrive" : ""}`}
+                                            >
                                                 <button
                                                     type="button"
                                                     onClick={() => void markRead(item)}
                                                     className="relative flex w-full flex-col p-4 pl-6 text-left transition-colors hover:bg-canvas-muted"
                                                 >
-                                                    {unread && <span className="absolute left-2 top-5 size-1.5 rounded-full bg-primary" aria-hidden="true" />}
-                                                    <span className={`text-label-md text-ink ${unread ? "font-bold" : "font-semibold"}`}>{item.title}</span>
-                                                    <span className="mt-0.5 text-body-sm text-ink-soft [overflow-wrap:anywhere]">{item.message}</span>
-                                                    <span className="mt-1 text-label-sm text-ink-subtle">{formatWhen(item.createdAt)}</span>
+                                                    {/* Bar and dot are always rendered so the row never shifts; only opacity/transform change. */}
+                                                    <span
+                                                        data-testid="notif-bar"
+                                                        aria-hidden="true"
+                                                        className={`absolute inset-y-0 left-0 w-1 origin-center bg-primary transition-transform duration-300 ease-out motion-reduce:transition-none ${unread ? "scale-y-100" : "scale-y-0"}`}
+                                                    />
+                                                    <span
+                                                        data-testid="notif-dot"
+                                                        aria-hidden="true"
+                                                        className={`absolute left-3 top-[22px] size-2 rounded-full bg-primary transition-opacity duration-200 motion-reduce:transition-none ${unread ? "opacity-100" : "opacity-0"}`}
+                                                    />
+                                                    <span className={`text-label-md transition-colors duration-300 motion-reduce:transition-none ${unread ? "font-bold text-ink" : "font-normal text-ink-muted"}`}>{item.title}</span>
+                                                    <span className={`mt-0.5 text-body-sm transition-colors duration-300 motion-reduce:transition-none [overflow-wrap:anywhere] ${unread ? "text-ink-soft" : "text-ink-muted"}`}>{item.message}</span>
+                                                    <span className={`mt-1 text-label-sm transition-colors duration-300 motion-reduce:transition-none ${unread ? "text-ink-muted" : "text-ink-subtle"}`}>{formatWhen(item.createdAt)}</span>
                                                     <span className="sr-only">{unread ? "Unread" : "Read"}</span>
                                                 </button>
                                             </li>
