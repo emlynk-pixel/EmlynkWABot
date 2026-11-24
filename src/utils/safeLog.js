@@ -51,41 +51,104 @@ function isSafePrismaMetaValue(value) {
 }
 
 // P2010 ("raw query failed", e.g. from $queryRaw/$executeRaw) carries the
-// underlying driver failure as `meta.code` + `meta.message` instead of the
-// schema-name keys above. `meta.code` is the driver/Postgres SQLSTATE (a
-// fixed 5-character code such as "42501" permission denied or "08006"
-// connection failure, see
+// underlying driver failure instead of the schema-name keys above, as
+// `meta.code` + `meta.message`. `meta.code` is the driver/Postgres SQLSTATE
+// (a fixed 5-character code such as "42501" permission denied or "42P01"
+// relation does not exist, see
 // https://www.postgresql.org/docs/current/errcodes-appendix.html) - a
 // category label, never a value, so it's safe to log. `meta.message` is not:
-// for a raw query it can quote the failing SQL text. Kept separate from the
-// generic allowlist above (and from the outer `prismaCode`) so a future code
-// reusing a "code" key in `.meta` for something else isn't trusted by accident.
+// for a raw query it can quote the failing SQL text or values, so it is
+// passed through `safeErrorText` (the same redaction/truncation used
+// everywhere else in this file) before being kept, as `dbErrorMessage`,
+// rather than dropped outright.
+//
+// Confirmed shape: reproduced locally against this project's exact stack
+// (PrismaClient 6.19.3 + `@prisma/adapter-pg`, config/prisma.js) by forcing
+// a `$queryRaw`/`$executeRaw` call to fail against a stubbed `pg.Pool`. The
+// resulting `PrismaClientKnownRequestError` is `{ code: "P2010", meta: {
+// code: "<SQLSTATE>", message: "<driver message>" } }` - Prisma normalizes
+// driver-adapter raw-query failures back to this flat shape for backward
+// compatibility with the classic query engine's public contract, even
+// though internally (see @prisma/adapter-pg's `convertDriverError`) the
+// error is first mapped into a richer `{ kind, originalCode,
+// originalMessage }` object. That richer shape is not what reaches
+// application code through the public `.meta` property and is not read
+// here.
+//
+// Kept separate from the generic allowlist above (and from the outer
+// `prismaCode`) so a future code reusing a "code" key in `.meta` for
+// something else isn't trusted by accident.
+//
+// Production has shown a P2010 whose `.meta` doesn't fit the confirmed shape
+// above (no `dbErrorCode`/`dbErrorMessage` came through at all), so this also
+// reports the shape itself - `meta`'s own key names (never their values,
+// except the capped fallback below) - so the next occurrence says which
+// assumption was wrong instead of silently producing nothing again.
 const SQLSTATE_PATTERN = /^[0-9A-Z]{5}$/;
+const MAX_RAW_CODE_LENGTH = 40;
 
 function safeRawQueryMeta(meta) {
-    if (meta && typeof meta.code === "string" && SQLSTATE_PATTERN.test(meta.code)) {
-        return { dbErrorCode: meta.code };
+    if (meta === null || meta === undefined) {
+        return { dbMetaShape: meta === null ? "null" : "undefined" };
     }
-    return null;
+    if (typeof meta !== "object") {
+        return { dbMetaShape: typeof meta };
+    }
+
+    const out = { dbMetaKeys: Object.keys(meta) };
+    if (typeof meta.code === "string") {
+        if (SQLSTATE_PATTERN.test(meta.code)) {
+            out.dbErrorCode = meta.code;
+        } else {
+            // Not SQLSTATE-shaped (5 upper-case/digit chars) - still just a
+            // short driver/category code, not a value, so safe to log
+            // capped, to see what shape it actually is.
+            out.dbErrorCodeRaw = meta.code.slice(0, MAX_RAW_CODE_LENGTH);
+        }
+    }
+    if (typeof meta.message === "string") {
+        out.dbErrorMessage = safeErrorText(meta.message);
+    }
+    return out;
 }
 
-// Duck-typed on `.code` matching Prisma's "P" + 4 digits format, so this
-// doesn't need to import the generated client just to check `instanceof`.
+// Duck-typed on `.code` matching Prisma's "P" + 4 digits format, or
+// `.name` for unknown errors, so this doesn't need to import the generated client.
 // Returns null for anything else (including non-Prisma errors).
 export function safePrismaErrorFields(error) {
-    if (typeof error?.code !== "string" || !/^P\d{4}$/.test(error.code)) {
+    if (!error || typeof error !== "object") return null;
+
+    if (error.name === "PrismaClientUnknownRequestError") {
+        const out = { prismaType: "UnknownRequestError" };
+        
+        if (typeof error.message === "string") {
+            const lines = error.message.split("\n").map(l => l.trim()).filter(Boolean);
+            if (lines.length > 0) {
+                out.prismaMessage = safeErrorText(lines.join(" "));
+            }
+        }
+        
+        if (error.cause && typeof error.cause === "object") {
+            out.causeName = error.cause.name;
+            if (typeof error.cause.code === "string") out.causeCode = error.cause.code;
+            if (typeof error.cause.message === "string") out.causeMessage = safeErrorText(error.cause.message);
+        }
+        
+        return out;
+    }
+
+    if (typeof error.code !== "string" || !/^P\d{4}$/.test(error.code)) {
         return null;
     }
 
     const meta = {};
-    if (error.meta && typeof error.meta === "object") {
+    if (error.code === "P2010") {
+        Object.assign(meta, safeRawQueryMeta(error.meta));
+    } else if (error.meta && typeof error.meta === "object") {
         for (const key of SAFE_PRISMA_META_KEYS) {
             if (key in error.meta && isSafePrismaMetaValue(error.meta[key])) {
                 meta[key] = error.meta[key];
             }
-        }
-        if (error.code === "P2010") {
-            Object.assign(meta, safeRawQueryMeta(error.meta));
         }
     }
 
