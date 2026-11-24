@@ -19,6 +19,8 @@
     "user:migrate-manager": "node scripts/migrateManagerRole.js",
     "db:check": "node scripts/checkDatabaseConnection.js",
     "db:audit-stages": "node scripts/auditCandidateStages.js",
+    "db:audit-english-knowledge": "node scripts/auditEnglishKnowledge.js",
+    "db:backfill-english-knowledge": "node scripts/backfillEnglishKnowledge.js",
     "auth:audit-users": "node scripts/auditUserAccounts.js",
     "form:backfill-autofill": "node scripts/backfillCandidateFormAutoFill.mjs",
     "admin:install": "npm --prefix admin install",

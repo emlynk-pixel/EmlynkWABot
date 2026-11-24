@@ -279,7 +279,7 @@ describe("submitted -> confirmed -> canonical -> mirror", () => {
             nameAsInPassport: "ANUSHA DE SOYSA", civilStatus: "MARRIED", bloodGroup: "AB-", height: `5'9"`, weightKg: "70.5", hasDrivingLicence: "YES",
             canReadDrawings: "NO", teamLeadingSkills: "YES", otherLanguages: "ENGLISH, ROMANIAN", email: "new@example.com", city: "NEGOMBO", district: "GAMPAHA",
             dsDivision: "NEGOMBO", gnDivision: "KURANA", cityInRomania: "Cluj-Napoca", distanceToBucharestKm: String(findRomanianCity("Cluj-Napoca").distanceKm),
-            otherJobCategory: "", otherSkills1: "FORKLIFT", otherSkills2: "BASIC WELDING", englishKnowledge: "GOOD", shirtSize: "M", waistSize: "32", shoeSize: "EU 42",
+            otherJobCategory: "", otherSkills1: "FORKLIFT", otherSkills2: "BASIC WELDING", englishKnowledge: "ENGLISH 8", shirtSize: "M", waistSize: "32", shoeSize: "EU 42",
             fatherName: "SUNIL DE SOYSA", fatherPassportNumber: "N1234567", fatherBirthday: "1960-03-02", fatherAlive: "NO",
             motherName: "KUMARI DE SOYSA", motherPassportNumber: "N7654321", motherBirthday: "1965-02-03", motherAlive: "YES",
             spouseName: "NIMAL PERERA", spousePassportNumber: "N5555555", spouseBirthday: "1988-04-04",

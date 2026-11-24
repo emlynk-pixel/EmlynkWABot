@@ -39,6 +39,7 @@ import { CANDIDATE_DOCUMENT_TYPES, automaticStageMissing, currentOf, stageList }
 import { businessDateOf } from "../utils/businessDay.js";
 import { findRomanianCity } from "../utils/romaniaCities.js";
 import { jobTypesLabel } from "./jobTypeCatalog.js";
+import { resolveEnglishKnowledge } from "./englishKnowledgeLevels.js";
 
 export const DOCUMENT_NOT_SUBMITTED = "Not Submitted";
 
@@ -224,7 +225,8 @@ export function mapCandidateToSheetRow(aggregate, { mirroredAt, recordStatus = R
         otherJobCategory: text(details.otherJobCategory),
         otherSkills1: text(details.otherJobSkills),
         otherSkills2: text(details.otherJobSkills2),
-        englishKnowledge: text(details.englishKnowledge),
+        // A level saved before the ENGLISH 6..10 scale is mirrored in it.
+        englishKnowledge: text(resolveEnglishKnowledge(details.englishKnowledge).value),
         shirtSize: text(details.tshirtSize),
         waistSize: text(details.pantSize),
         shoeSize: text(details.shoeSize),
