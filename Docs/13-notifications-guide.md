@@ -44,7 +44,7 @@ Key facts:
 - A, B and C notifications go only to the role named in the table.
 - Role matching is exact. For example, A1 goes only to users whose role is exactly `ANALYST`.
 
-### All 24 notifications
+### All 25 notifications
 
 `[X]`, `[Y]`, `[N]`, `[Name]` are placeholders filled in by the code. Times are Asia/Colombo.
 
@@ -53,6 +53,7 @@ Key facts:
 | A1 | The Analyst who received candidates (role must be exactly `ANALYST`) | Candidates assigned, auto-allocated, or allocated by a bulk import (once per import) | Real time | New Candidates Allocated | You have received [X] new candidate(s). (singular: "1 new candidate.") |
 | A2 | Each Analyst, own count | Analyst has open follow-ups in Need Attention (count above 0) | Scheduled, 18:00, every day while above 0 | Pending Follow-ups | 1: "You have 1 pending follow-up in Need Attention. Please review it." More: "You have [X] pending follow-ups in Need Attention. Please review them." |
 | A3 | Each active Analyst | 3 months since last password change | Scheduled, 18:00, once per change | Password Change Reminder | It has been 3 months since your last password change. Please update your password for security. |
+| A4 | The Analyst the candidate is allocated to (role must be exactly `ANALYST`) | The candidate submits the public Candidate Form | Real time | Candidate Form Submitted | [Candidate name] has submitted the candidate form. (fallback: the passport number) |
 | B1 | Each Registration Desk user, own count | Last day of the month, count above 0 | Scheduled, 18:00 on the last day of the month | Monthly Registration Summary | You have registered [X] candidate(s) this month. (singular: "1 candidate") |
 | B2 | The user whose role changed | Role changed and the old or the new role is `REGISTRATION_DESK` | Real time | Role Updated | Your role has been changed to [Role label]. |
 | C1 | Job Handlers | A new job is added and eligible candidates are on no job | Real time | New Job Added | A new job has been added. Job ID: [Job code]. Please review the details. |
@@ -82,7 +83,8 @@ Notes on the table:
 - E8 watches only Analysts and Registration Desk staff. It never names an Owner, Admin or Team Lead.
 - F2 issues in code: Unhandled server error, Database error, Document processing failed, Document processing is delayed, Sheet sync worker is not responding, Bulk import recovery needs attention.
 - The same F2 issue is sent at most once per business day.
-- Texts never contain a passport number, NIC or phone number. Names appear only where the notification names someone.
+- Texts never contain a passport number, NIC or phone number, except A4: when the candidate has no name, A4 shows the passport number instead. Names appear only where the notification names someone.
+- A4 is sent once per submission. A form can be submitted only once, so a candidate gets at most one A4. An unallocated candidate, or one allocated to a user who is not an active Analyst, sends nothing.
 
 ## 3. How It Works (Simple)
 
@@ -130,6 +132,7 @@ The table has a unique index on (`recipient_id`, `dedupe_key`). Inserts use `ON 
 | Key shape | Example meaning |
 |---|---|
 | `A1:<batchId>` | One allocation action (bulk import: `import:<importId>`) |
+| `A4:<passportId>:<submittedAt>` | One form submission |
 | `E2:<followUpId>` | One follow-up |
 | `D2:<date>` | One day |
 | `A2:<analystId>:<date>` | One Analyst, one day |
@@ -174,6 +177,7 @@ Trigger sites (where real-time notifications are sent):
 | Notification | File |
 |---|---|
 | A1 | `src/services/workAllocationService.js`, `src/services/candidateImportService.js` |
+| A4 | `src/services/candidateFormDataService.js` (`submitCandidateForm`) |
 | B2 | `src/services/userAccountService.js`, `src/services/retiredRoleService.js` |
 | C1 | `src/services/jobService.js`, `src/services/candidateImportService.js` |
 | C2 | `src/services/agentService.js`, `src/services/candidateImportService.js` |
@@ -192,6 +196,7 @@ Trigger sites (where real-time notifications are sent):
 | `test/notifications.test.js` | Writing, recipients, real-time events, bell API (PGlite database) |
 | `test/notificationScan.test.js` | The scheduled scan and the scan route (PGlite database) |
 | `test/candidateImportProcess.test.js` | Notifications sent by a committed bulk import |
+| `test/candidateFormSubmittedNotification.test.js` | A4, sent by a real Candidate Form submission (PGlite database) |
 | `admin/src/test/notificationBell.test.tsx` | The bell component |
 
 Other test files that mention notifications or the bell: `test/adminReviewActions.test.js`, `test/roleScopeRegression.test.js`, `admin/src/test/auth.test.tsx`, `admin/src/test/candidates.test.tsx`, `admin/src/test/roleNavigation.test.tsx`. What exactly they assert was not verified.

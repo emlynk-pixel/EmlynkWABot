@@ -5,6 +5,7 @@
 //
 //   A1  New Candidates Allocated       the allocated Analyst, once per allocation action (a bulk
 //                                      import: once per import, all its chunks together)
+//   A4  Candidate Form Submitted       the Analyst the candidate is allocated to, once per submission
 //   B2  Role Updated                   the Registration Desk user whose role was changed
 //   C1  New Job Added                  Job Handlers, when unassigned eligible candidates exist
 //   C2  Missing Country Information    Job Handlers, for a new Agent without a country
@@ -31,6 +32,7 @@ import { notify, notifyAll } from "./notificationService.js";
 
 export const NOTIFICATION_TYPE = Object.freeze({
     A1: "A1_NEW_CANDIDATES_ALLOCATED",
+    A4: "A4_CANDIDATE_FORM_SUBMITTED",
     B2: "B2_ROLE_UPDATED",
     C1: "C1_NEW_JOB_ADDED",
     C2: "C2_MISSING_COUNTRY_INFORMATION",
@@ -87,6 +89,30 @@ export async function notifyCandidatesAllocated(db, { counts, batchId = randomUU
         type: NOTIFICATION_TYPE.A1, title: "New Candidates Allocated", message: allocationMessage(count),
         dedupeKey: `A1:${batchId}`, userIds: [analystId], requireRoles: [ROLES.ANALYST],
     })));
+}
+
+// ---------------------------------------------------------------- A4
+
+export const formSubmittedMessage = (name) => `${name} has submitted the candidate form.`;
+
+// A candidate submitted the public Candidate Form: the Analyst the candidate is allocated to now
+// (role exactly ANALYST, ACTIVE), nobody else. An unallocated candidate sends nothing. submittedAt:
+// the submission's stored time, so a retried submit request is sent once.
+export async function notifyCandidateFormSubmitted(db, { passportId, submittedAt }) {
+    if (!passportId || !submittedAt || typeof db?.candidate?.findUnique !== "function") return { created: 0 };
+    let candidate;
+    try {
+        candidate = await db.candidate.findUnique({ where: { passportId }, select: { firstName: true, otherName: true, allocation: { select: { analystId: true } } } });
+    } catch {
+        return { created: 0, failed: true };
+    }
+    const analystId = candidate?.allocation?.analystId;
+    if (!analystId) return { created: 0 };
+    // The one notification that falls back to an identifier: the Analyst needs to know which candidate.
+    return notify(db, {
+        type: NOTIFICATION_TYPE.A4, title: "Candidate Form Submitted", message: formSubmittedMessage(clientName(candidate) || passportId),
+        dedupeKey: `A4:${passportId}:${new Date(submittedAt).toISOString()}`, userIds: [analystId], requireRoles: [ROLES.ANALYST],
+    });
 }
 
 // ---------------------------------------------------------------- B2
