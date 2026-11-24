@@ -2,8 +2,8 @@
 // what it means here, so changing a glyph touches this file alone.
 import {
     ArrowLeft, ArrowUpFromLine, Bell, BellRing, Briefcase, Building2, Calendar, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, CircleAlert, CircleCheck, CircleCheckBig, CircleX,
-    ClipboardCheck, ClipboardList, ClipboardX, Clock, Eye, EyeOff, FileDown, FileText, FileUp, Flag, Headset, History, LayoutDashboard, LoaderCircle, Lock, LogOut,
-    Mail, Moon, NotebookPen, PanelLeft, Pencil, Phone, PhoneMissed, RefreshCw, RotateCcw, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Sun, Trash2, UserCheck, UserCog, UserPlus,
+    ClipboardCheck, ClipboardList, ClipboardX, Clock, Download, Eye, EyeOff, FileDown, FileText, FileUp, Flag, Folder, FolderArchive, Headset, History, LayoutDashboard, LoaderCircle, Lock, LogOut,
+    Mail, Moon, NotebookPen, PanelLeft, Pencil, Phone, PhoneMissed, RefreshCw, RotateCcw, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Stamp, Sun, Trash2, UserCheck, UserCog, UserPlus,
     Users, UserSearch, X, type LucideIcon,
 } from "lucide-react";
 
@@ -64,6 +64,10 @@ const ICONS = {
     keyboard_arrow_up: ChevronUp,
     keyboard_arrow_down: ChevronDown,
     unfold_more: ChevronsUpDown,
+    download: Download,
+    folder: Folder,
+    folder_zip: FolderArchive,
+    visa_submission: Stamp,
 } as const satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

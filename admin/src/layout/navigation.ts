@@ -1,5 +1,5 @@
 import type { IconName } from "../components/Icon";
-import { ADMIN_ONLY, CANDIDATE_LIST_ROLES, DASHBOARD_ROLES, FOLLOW_UP_VIEW_ROLES, OVERVIEW_ROLES, JOB_VIEW_ROLES, MASTER_DATA_ROLES, REGISTRATION_ENTRY_ROLES, REPORT_VIEW_ROLES, ALLOCATION_ROLES, type Role } from "../auth/roles";
+import { ADMIN_ONLY, CANDIDATE_LIST_ROLES, DASHBOARD_ROLES, FOLLOW_UP_VIEW_ROLES, OVERVIEW_ROLES, JOB_VIEW_ROLES, MASTER_DATA_ROLES, REGISTRATION_ENTRY_ROLES, REPORT_VIEW_ROLES, ALLOCATION_ROLES, VISA_SUBMISSION_ROLES, type Role } from "../auth/roles";
 
 // Sidebar entries, plus Missing Documents
 // and Daily Report (Phase 10 scope, same design language), Audit Logs
@@ -26,6 +26,8 @@ export const NAV_ITEMS: NavItem[] = [
     { to: "/work-allocation", label: "Work Allocation", icon: "assignment_ind", roles: ALLOCATION_ROLES },
     // Jobs and the candidates assigned to them (ADMIN, TEAM_LEAD and JOB_HANDLER).
     { to: "/jobs", label: "Jobs", icon: "work", roles: JOB_VIEW_ROLES },
+    // A Job's signed visa submissions extracted to storage, and the VISA SUBMISSION/ folder browser (ADMIN and TEAM_LEAD).
+    { to: "/visa-submission", label: "Visa Submission", icon: "visa_submission", roles: VISA_SUBMISSION_ROLES },
     // The recruiting partners and the employer clients they manage (ADMIN, TEAM_LEAD, JOB_HANDLER). The
     // technical route is /client-management: /clients is the candidate-documents area.
     { to: "/agents", label: "Agents", icon: "support_agent", roles: MASTER_DATA_ROLES },

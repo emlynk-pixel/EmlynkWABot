@@ -859,6 +859,12 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | GET | `/candidates/:passportId/visa-submission/manifest` | ADMIN, TEAM_LEAD (`VISA_SUBMISSION_ROLES`; OWNER implied) | The six merge slots in order, each `VERIFIED` / `UNVERIFIED` / `MISSING` |
 | GET | `/candidates/:passportId/visa-submission/files/:documentId` | ADMIN, TEAM_LEAD | Stream one current VERIFIED slot document (no signed URL) |
 | POST | `/candidates/:passportId/visa-submission/merged-download` | ADMIN, TEAM_LEAD | Audit a confirmed merged download `{ includedSlots }` |
+| GET | `/visa-submission/extraction/jobs` | ADMIN, TEAM_LEAD (`VISA_SUBMISSION_ROLES`; OWNER implied) | Jobs with client, primary trade and eligible candidate count |
+| GET | `/visa-submission/extraction/jobs/:jobId` | ADMIN, TEAM_LEAD | Preview of the eligible candidates in completed order, skip warnings, target folder, `batchSize` |
+| POST | `/visa-submission/extraction/jobs/:jobId/extract` | ADMIN, TEAM_LEAD | Extract one batch `{ passportIds }` (1 to 15). 409 `EXTRACTION_IN_PROGRESS`, 502 `EXCEL_UPDATE_FAILED` |
+| GET | `/visa-submission/storage?path=` | ADMIN, TEAM_LEAD | List a folder under `VISA SUBMISSION/` only |
+| GET | `/visa-submission/storage/file?path=` | ADMIN, TEAM_LEAD | Stream one file (no signed URL) |
+| GET | `/visa-submission/storage/zip?path=` | ADMIN, TEAM_LEAD | Stream a folder as a ZIP (max 300 files / 200 MB, else 413 `ZIP_TOO_LARGE`) |
 | GET | `/candidates/:passportId/call-logs` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Candidate call logs and candidate activity (Candidate History) |
 | POST | `/candidates/:passportId/call-logs` | ADMIN, TEAM_LEAD, ANALYST | Record call log `{ note, calledAt, needsAttention?, outcome? }` (`outcome: "NO_ANSWER"`: no note needed) |
 | POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, TEAM_LEAD, ANALYST | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's) |

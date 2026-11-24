@@ -220,7 +220,7 @@ describe("dashboard shell", () => {
 
     test("ADMIN: every section, then Audit Logs and Settings (Invite User and Change Roles are Settings tabs)", async () => {
         await signedIn();
-        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
+        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Visa Submission", "Agents", "Client Management", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report", "Audit Logs", "Settings"]);
         await userEvent.setup().click(screen.getByRole("link", { name: "Police Workflow" }));
         expect(await screen.findByRole("heading", { name: "Police Workflow" })).toBeInTheDocument();
     });

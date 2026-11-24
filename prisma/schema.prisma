@@ -57,6 +57,8 @@ model User {
   candidateImports      CandidateImport[]
   // In-app notifications this user received (one row per recipient).
   notifications         Notification[]
+  // Visa Submission extractions this user ran.
+  visaSubmissionExtractions VisaSubmissionExtraction[]
 
   @@map("user")
 }
@@ -300,6 +302,8 @@ model Candidate {
   formFieldReviews  CandidateFormFieldReview[]
   // Explicit details / documents verification (a relation only).
   verification      CandidateVerification?
+  // Visa Submission extractions of this candidate's signed documents (a relation only).
+  visaSubmissionExtractions VisaSubmissionExtraction[]
 
   // The candidate lists' order (newest registered first, passport ID for ties) and the
   // Registered date filter (migration 20261107120000_candidate_created_date_index).
@@ -749,6 +753,8 @@ model Job {
   formLinks        CandidateFormLink[]
   // Set when the Job was created by the Google Sheet upload (its code is JOB-YYYY-MMDDNN).
   importGroup      ImportJobGroup?
+  // Visa Submission extractions run for this job (a relation only).
+  visaSubmissionExtractions VisaSubmissionExtraction[]
 
   @@index([status, createdAt])
   @@index([clientId])
@@ -851,10 +857,53 @@ model Document {
   // SINHALA. Null for every other document.
   documentVariant String? @map("document_variant")
 
+  // The Visa Submission extraction of this (VISA_SUBMISSION) document, if any (a relation only).
+  visaSubmissionExtraction VisaSubmissionExtraction?
+
   @@unique([passportId, fileSha256])
   @@index([fileSha256])
   @@index([temporaryId])
   @@map("documents")
+}
+
+// Visa Submission extraction (Phase 2, visaExtractionService.js): one row per signed VISA_SUBMISSION
+// document copied into VISA SUBMISSION/{date}/Plan B/ and written to its Client's Excel files.
+// document_id is UNIQUE: a document is extracted once; a re-upload is a new document, so eligible
+// again. Written only after the PDF copy and the Excel update succeeded. document_id is SET NULL when
+// the document row is removed (the Phase 1 remove deletes it) so the extraction history is kept.
+// Migration 20261124140000_visa_submission_extractions.
+model VisaSubmissionExtraction {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  passportId    String   @map("passport_id")
+  jobId         String   @map("job_id") @db.Uuid
+  documentId    String?  @unique @map("document_id")
+  // The Client's name when extracted (the Excel files are named after it).
+  clientName    String   @map("client_name")
+  // The copied PDF: VISA SUBMISSION/{YYYY-MM-DD}/Plan B/{passport_id}.pdf
+  storagePath   String   @map("storage_path")
+  extractedAt   DateTime @default(now()) @map("extracted_at") @db.Timestamptz(3)
+  extractedById String   @map("extracted_by")
+
+  candidate   Candidate @relation(fields: [passportId], references: [passportId], onDelete: Cascade, onUpdate: Cascade)
+  job         Job       @relation(fields: [jobId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  document    Document? @relation(fields: [documentId], references: [documentId], onDelete: SetNull, onUpdate: Cascade)
+  extractedBy User      @relation(fields: [extractedById], references: [adminId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([jobId, extractedAt])
+  @@index([passportId])
+  @@index([extractedById])
+  @@map("visa_submission_extraction")
+}
+
+// One Visa Submission extraction at a time per (Asia/Colombo date, Client files): a lease row,
+// taken with one INSERT ... ON CONFLICT and deleted when the batch ends. expires_at frees a lock
+// whose request died (a Vercel function stopped at its time limit). No candidate data.
+model VisaSubmissionExtractionLock {
+  lockKey   String   @id @map("lock_key")
+  holder    String   @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@map("visa_submission_extraction_lock")
 }
 
 //added temporary table

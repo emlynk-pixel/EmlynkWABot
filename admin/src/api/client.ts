@@ -145,6 +145,28 @@ export async function apiPostForFile(path: string, body: unknown, { signal, toke
     return { blob: await response.blob(), filename: filenameFromDisposition(response.headers.get("Content-Disposition")) };
 }
 
+// GET answered by a file (a stored file, a ZIP), with the file name from Content-Disposition. Unlike
+// apiRequestBlob, errors keep the server's code (e.g. ZIP_TOO_LARGE) and its 502 message.
+export async function apiGetForFile(path: string, { signal, token }: Pick<RequestOptions, "signal" | "token"> = {}): Promise<{ blob: Blob; filename: string | null }> {
+    const headers: Record<string, string> = {};
+    const effectiveToken = authorizationToken(token);
+    if (effectiveToken) headers["Authorization"] = `Bearer ${effectiveToken}`;
+
+    let response: Response;
+    try {
+        response = await fetch(path, { headers, credentials: "omit", cache: "no-store", signal });
+    } catch (error) {
+        if ((error as Error)?.name === "AbortError") throw error;
+        throw new ApiError(0, "Cannot reach the server. Check your connection and try again.");
+    }
+    if (!response.ok) {
+        const data = await readErrorData(response);
+        const message = response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : data.message ?? FALLBACK_MESSAGE;
+        throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined, [], data.code);
+    }
+    return { blob: await response.blob(), filename: filenameFromDisposition(response.headers.get("Content-Disposition")) };
+}
+
 function filenameFromDisposition(value: string | null): string | null {
     if (!value) return null;
     const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(value)?.[1];

@@ -2,7 +2,7 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router";
 import { useAuth } from "./auth/AuthProvider";
 import {
     ADMIN_ONLY, ALLOCATION_ROLES, CANDIDATE_LIST_ROLES, CANDIDATE_VIEW_ROLES, DASHBOARD_ROLES, FOLLOW_UP_VIEW_ROLES, JOB_VIEW_ROLES, MASTER_DATA_ROLES,
-    REGISTRATION_ROLES, REPORT_VIEW_ROLES, hasRole, landingPath, type Role,
+    REGISTRATION_ROLES, REPORT_VIEW_ROLES, VISA_SUBMISSION_ROLES, hasRole, landingPath, type Role,
 } from "./auth/roles";
 import { RequireAuth } from "./auth/RequireAuth";
 import { AdminLayout } from "./layout/AdminLayout";
@@ -36,6 +36,7 @@ import { SettingsIndex, SettingsPage, SettingsTab, SheetSyncSettings } from "./p
 import { FormBrandingSettings } from "./pages/FormBrandingSettings";
 import { JobTypesSettings } from "./pages/JobTypesSettings";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
+import { VisaSubmissionPage } from "./pages/VisaSubmissionPage";
 import { WorkAllocationPage } from "./pages/WorkAllocationPage";
 
 // The landing page: the Overview (ADMIN, TEAM_LEAD, ANALYST), or for a role without
@@ -118,6 +119,9 @@ export function AppRoutes() {
                 <Route element={<AllowRoles roles={JOB_VIEW_ROLES} />}>
                     <Route path="jobs" element={<JobsPage />} />
                     <Route path="jobs/:jobId" element={<JobDetailsPage />} />
+                </Route>
+                <Route element={<AllowRoles roles={VISA_SUBMISSION_ROLES} />}>
+                    <Route path="visa-submission" element={<VisaSubmissionPage />} />
                 </Route>
                 <Route element={<AllowRoles roles={MASTER_DATA_ROLES} />}>
                     <Route path="agents" element={<AgentsPage />} />

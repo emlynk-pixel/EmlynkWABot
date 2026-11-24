@@ -179,6 +179,11 @@ import {
 } from "../services/candidateService.js";
 import { VISA_SUBMISSION_DOCUMENT_TYPE, VISA_SUBMISSION_ROLES } from "../config/visaSubmission.js";
 import { getVisaSubmissionFile, getVisaSubmissionManifest, parseMergedDownloadBody, recordMergedDownload } from "../services/visaSubmissionService.js";
+import { extractBatch, getExtractionPreview, listExtractionJobs, parseExtractBody } from "../services/visaExtractionService.js";
+import {
+    attachmentDisposition, browseFolder, openStoredFile, planFolderZip, recordStorageDownload, streamFolderZip,
+    VISA_FILE_DOWNLOAD_AUDIT_ACTION, VISA_ZIP_DOWNLOAD_AUDIT_ACTION,
+} from "../services/visaSubmissionStorage.js";
 
 
 // Quotes and non-ASCII characters are replaced so the header can't be broken.
@@ -897,6 +902,92 @@ export function createAdminRouter({
         return candidateAction(res, async () => res.status(201).json(await recordMergedDownload({
             db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
         })));
+    });
+
+    // ---------------------------------------------------------------- visa submission extraction (VISA_SUBMISSION_ROLES)
+    // Phase 2 (visaExtractionService.js, visaSubmissionStorage.js): a Job's signed submissions copied into
+    // VISA SUBMISSION/{date}/Plan B/ with the Client's Excel files, and a read-only browser of
+    // VISA SUBMISSION/ (no other part of the bucket, no signed URLs).
+    const extractionJobParam = (req, res) => {
+        if (isValidJobIdParam(req.params.jobId)) return true;
+        res.status(404).json({ message: "Job not found", code: "JOB_NOT_FOUND" });
+        return false;
+    };
+    // A query value given twice is an array: refused like any other invalid path.
+    const singleQuery = (value) => (Array.isArray(value) ? [] : value);
+
+    router.get("/visa-submission/extraction/jobs", requireRole(VISA_SUBMISSION_ROLES), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json(await listExtractionJobs({ db: client }));
+    });
+
+    router.get("/visa-submission/extraction/jobs/:jobId", requireRole(VISA_SUBMISSION_ROLES), async (req, res) => {
+        if (!extractionJobParam(req, res)) return undefined;
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getExtractionPreview({ db: client, jobId: req.params.jobId.toLowerCase() })));
+    });
+
+    router.post("/visa-submission/extraction/jobs/:jobId/extract", requireRole(VISA_SUBMISSION_ROLES), async (req, res) => {
+        if (!extractionJobParam(req, res)) return undefined;
+        const parsed = parseExtractBody(req.body);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => res.json(await extractBatch({
+            db: client, bucket: storage, actor: req.user, jobId: req.params.jobId.toLowerCase(), passportIds: parsed.values.passportIds,
+        })));
+    });
+
+    // ?path= below VISA SUBMISSION/ ("" or absent: the root).
+    router.get("/visa-submission/storage", requireRole(VISA_SUBMISSION_ROLES), async (req, res) => {
+        const storage = await resolveBucket(bucket);
+        return candidateAction(res, async () => res.json(await browseFolder({ bucket: storage, path: singleQuery(req.query.path) })));
+    });
+
+    // One file, streamed (never a signed URL), as an attachment and sandboxed like the review file.
+    router.get("/visa-submission/storage/file", requireRole(VISA_SUBMISSION_ROLES), async (req, res) => {
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => {
+            const file = await openStoredFile({ bucket: storage, path: singleQuery(req.query.path) });
+            await recordStorageDownload({ db: client, actor: req.user, action: VISA_FILE_DOWNLOAD_AUDIT_ACTION, details: { path: file.relative, size: file.size } });
+            res.set({
+                "Content-Type": file.mimeType,
+                "Content-Disposition": attachmentDisposition(file.fileName),
+                "Content-Security-Policy": "default-src 'none'; sandbox",
+                "Cross-Origin-Resource-Policy": "same-origin",
+                "X-Content-Type-Options": "nosniff",
+                ...(file.size ? { "Content-Length": String(file.size) } : {}),
+            });
+            if (file.buffer) return res.send(file.buffer);
+            try {
+                await pipeline(file.stream, res);
+            } catch (error) {
+                console.warn("Visa submission storage file: stream ended early", safeErrorInfo(error));
+                res.destroy();
+            }
+            return undefined;
+        });
+    });
+
+    // A folder as one ZIP, streamed. Its size is checked first: 413 ZIP_TOO_LARGE (JSON) before any byte.
+    router.get("/visa-submission/storage/zip", requireRole(VISA_SUBMISSION_ROLES), async (req, res) => {
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => {
+            const plan = await planFolderZip({ bucket: storage, path: singleQuery(req.query.path) });
+            await recordStorageDownload({ db: client, actor: req.user, action: VISA_ZIP_DOWNLOAD_AUDIT_ACTION, details: { path: plan.relative, files: plan.files.length, bytes: plan.totalBytes } });
+            res.set({
+                "Content-Type": "application/zip",
+                "Content-Disposition": attachmentDisposition(plan.zipName),
+                "Cross-Origin-Resource-Policy": "same-origin",
+                "X-Content-Type-Options": "nosniff",
+            });
+            try {
+                await streamFolderZip({ bucket: storage, plan, out: res });
+            } catch {
+                // Started: the ZIP can only be cut off (the download fails, never a silently partial file).
+                res.destroy();
+            }
+            return undefined;
+        });
     });
 
     router.get("/candidates/:passportId/call-logs", requireRole(CANDIDATE_READERS), async (req, res) => {

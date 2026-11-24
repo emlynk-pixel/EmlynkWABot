@@ -189,7 +189,7 @@ describe("Invite User", () => {
 describe("existing roles", () => {
     test("UI-JH-015: ADMIN and ANALYST keep their sidebars; REGISTRATION_DESK has Add Candidate only", { timeout: 30_000 }, async () => {
         const expected: Record<string, string[]> = {
-            ADMIN: ["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report", "Audit Logs", "Settings"],
+            ADMIN: ["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Visa Submission", "Agents", "Client Management", "Documents", "Missing Documents", "Review Queue", "Police Workflow", "Daily Report", "Audit Logs", "Settings"],
             ANALYST: ["Overview", "Candidates", "Need Attention"],
             REGISTRATION_DESK: ["Add Candidate"],
         };

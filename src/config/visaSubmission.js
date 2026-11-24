@@ -24,3 +24,21 @@ export const VISA_SUBMISSION_SLOTS = Object.freeze([
 ].map((slot) => Object.freeze(slot)));
 
 export const VISA_SUBMISSION_SLOT_KEYS = Object.freeze(VISA_SUBMISSION_SLOTS.map((slot) => slot.key));
+
+// ---- Phase 2: extraction into VISA SUBMISSION/ (services/visaExtractionService.js) and its file browser
+// (services/visaSubmissionStorage.js). Same roles: VISA_SUBMISSION_ROLES.
+
+// Root of everything Phase 2 writes and the only part of the bucket its browser can reach.
+export const VISA_SUBMISSION_ROOT = "VISA SUBMISSION";
+// VISA SUBMISSION/{YYYY-MM-DD, Asia/Colombo}/Plan B/
+export const VISA_SUBMISSION_PLAN_FOLDER = "Plan B";
+
+// Candidates per extract request: the admin page sends the preview's list in chunks. Small enough that
+// one request (copies plus the Excel read-modify-write) ends well inside Vercel's 60 s function limit.
+export const VISA_EXTRACTION_BATCH_SIZE = 10;
+export const VISA_EXTRACTION_MAX_BATCH_SIZE = 15;
+
+// The ZIP download of a folder is refused (413 ZIP_TOO_LARGE, before anything is streamed) above these:
+// it is streamed through one Vercel function invocation, which ends after 60 s.
+export const VISA_ZIP_MAX_FILES = 300;
+export const VISA_ZIP_MAX_BYTES = 200 * 1024 * 1024;

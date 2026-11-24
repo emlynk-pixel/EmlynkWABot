@@ -5,7 +5,7 @@ import { CANDIDATE_STAGES, type CandidateDetails } from "../api/candidates";
 import type { FollowUpList } from "../api/followUps";
 import {
     ALL_ROLES, CANDIDATE_LIST_ROLES, FOLLOW_UP_ROLES, FOLLOW_UP_VIEW_ROLES, canListCandidates, canManageAllocations, canManageCandidates, canManageMasterData, canRegisterCandidates,
-    canViewCandidates, canViewDailyReport, canViewDashboard, canViewFollowUps, canViewOverview, canViewJobs, canWorkFollowUps, hasRole, isAdmin, landingPath,
+    canViewCandidates, canViewDailyReport, canViewDashboard, canViewFollowUps, canViewOverview, canViewJobs, canUseVisaSubmission, canWorkFollowUps, hasRole, isAdmin, landingPath,
 } from "../auth/roles";
 import { NAV_ITEMS } from "../layout/navigation";
 import { RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes, expectRedirectedHome } from "./helpers";
@@ -90,7 +90,7 @@ describe("roles.ts: the shared permission mapping", () => {
         const guards: Record<string, (user: { role: string }) => boolean> = {
             "/": canViewOverview, "/documents": canViewDashboard, "/missing-documents": canViewDashboard, "/review": canViewDashboard, "/police": canViewDashboard,
             "/candidates": canListCandidates, "/candidates/new": canRegisterCandidates, "/follow-ups": canViewFollowUps,
-            "/work-allocation": canManageAllocations, "/jobs": canViewJobs, "/agents": canManageMasterData, "/client-management": canManageMasterData,
+            "/work-allocation": canManageAllocations, "/jobs": canViewJobs, "/visa-submission": canUseVisaSubmission, "/agents": canManageMasterData, "/client-management": canManageMasterData,
             "/reports/daily": canViewDailyReport, "/audit-logs": isAdmin, "/settings": isAdmin,
         };
         expect(NAV_ITEMS.map((item) => item.to).sort()).toEqual(Object.keys(guards).sort());
@@ -107,7 +107,7 @@ describe("roles.ts: the shared permission mapping", () => {
 
     test("every sidebar entry names its roles explicitly (never TEAM_LEAD through ADMIN)", () => {
         const visible = (role: string) => NAV_ITEMS.filter((item) => (item.roles as readonly string[]).includes(role)).map((item) => item.label);
-        expect(visible("TEAM_LEAD")).toEqual(["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Daily Report"]);
+        expect(visible("TEAM_LEAD")).toEqual(["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Visa Submission", "Agents", "Client Management", "Daily Report"]);
         expect(visible("REGISTRATION_DESK")).toEqual(["Add Candidate"]);
         expect(visible("JOB_HANDLER")).toEqual(["Candidates", "Jobs", "Agents", "Client Management"]);
     });

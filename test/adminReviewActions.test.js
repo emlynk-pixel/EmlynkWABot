@@ -617,6 +617,7 @@ describe("security and error handling", () => {
             "POST /review/:reviewId/remove",
             "POST /review/:reviewId/replace-verified", // M4 Policy B: existing verified document of the same type only
             "POST /review/:reviewId/retry", // H3: failed submissions only
+            "POST /visa-submission/extraction/jobs/:jobId/extract", // VISA_SUBMISSION_ROLES: copies into VISA SUBMISSION/ and its Excel files only, audited (visaExtraction.test.js)
             "POST /work-allocation/allocate",
             "POST /work-allocation/assign", // Work Allocation: ADMIN only; one transaction, audited (workAllocation.test.js)
             "POST /work-allocation/auto-allocate",

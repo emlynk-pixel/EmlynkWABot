@@ -374,6 +374,17 @@ All core application tables reside in the `public` schema.
 - `job.company_job_id` (`TEXT`, nullable; added by `20261018130000`): the employer's own Job ID, an **editable label, never a key**. CHECK `^[A-Z0-9][A-Z0-9 ._/#-]{0,39}$`; **unique per company** (`UNIQUE (company_id, company_job_id) WHERE company_job_id IS NOT NULL`), not global. Identity is `job.id`; `job_code` is the internal display code.
 - **Security**: RLS enabled and all privileges revoked from `anon` and `authenticated` on all six, no policies (backend connection only). Not mirrored to the Google Sheet.
 
+#### Visa submission extraction tables (Phase 2)
+
+Added by `20261124140000_visa_submission_extractions`. See `Docs/Visa Submission/ARCHITECTURE.md`.
+
+- **`visa_submission_extraction`** (model `VisaSubmissionExtraction`): one row per signed Visa Submission document copied into `VISA SUBMISSION/{date}/Plan B/`.
+  - `id` (uuid), `passport_id` (FK `candidate`, `ON DELETE CASCADE`), `job_id` (FK `job`, `RESTRICT`), `document_id` (**UNIQUE**, nullable FK `documents`, `ON DELETE SET NULL`), `client_name`, `storage_path`, `extracted_at`, `extracted_by` (FK `user.admin_id`, `RESTRICT`).
+  - Indexes: (`job_id`, `extracted_at`), `passport_id`, `extracted_by`.
+  - A candidate is **eligible again** when their current VERIFIED signed document has no row here. A re-upload creates a new `documents` row, so it has no extraction row. `document_id` is SET NULL (not RESTRICT or CASCADE) because removing a candidate document deletes its `documents` row: RESTRICT would block the removal and CASCADE would erase the extraction history.
+- **`visa_submission_extraction_lock`** (model `VisaSubmissionExtractionLock`): `lock_key` (primary key, `{Colombo date}/{client file name}`), `holder` (uuid), `expires_at`. A 120 s lease taken by one atomic `INSERT ... ON CONFLICT DO UPDATE ... WHERE expires_at <= now()`. It holds no candidate data.
+- **Security**: RLS enabled and all privileges revoked from `anon` and `authenticated` on both, no policies (backend connection only). Not mirrored to the Google Sheet.
+
 ---
 
 ### 3. Candidate Table (`public.candidate`)
@@ -528,6 +539,9 @@ Migrations 6.1 and 6.2 are applied and active on the shared database.
 - DDL only: replaces `candidate_additional_details_english_knowledge_check` with one that allows `ENGLISH 6`..`ENGLISH 10` as well as the older six levels. No row is rewritten or backfilled; `candidate_form_response` / `candidate_form_prefill_snapshot` are unchanged. Read-only check before / after deploying: `npm run db:audit-english-knowledge` (counts only).
 - Optional data backfill after the migration: `npm run db:backfill-english-knowledge` (dry run) then `-- --apply`: `BASIC`..`FLUENT` → `ENGLISH 6`..`ENGLISH 10` in `candidate_additional_details` only, one transaction, idempotent; `NO KNOWLEDGE`, NULL and `ENGLISH n` untouched; no audit entry and `updated_date` unchanged (the meaning of the value does not change).
 
+
+#### 6.10 `20261124140000_visa_submission_extractions`
+- Additive: creates `visa_submission_extraction` and `visa_submission_extraction_lock` (see "Visa submission extraction tables" above) with RLS on and no access for `anon` / `authenticated`. No existing table or row is changed.
 
 ---
 

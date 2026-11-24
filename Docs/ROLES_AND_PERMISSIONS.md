@@ -49,6 +49,7 @@ The **MANAGER** role was retired on 2026-10-30; ADMIN holds everything it could 
 | Daily Report: **Summary by Roles** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Audit Logs** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Visa submission**: download merged unsigned PDF, upload or remove the signed PDF | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| **Visa Submission tab**: extract completed candidates per Job, browse and download the extracted files and ZIPs | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 
 
 ### Review queue (WhatsApp submissions)
@@ -313,7 +314,7 @@ Sidebar: **Candidates**, **Jobs**, **Agents**, **Client Management**. Lands on J
 
 ## 5. Notes
 
-- **Visa submission is narrower than other candidate documents.** The Visa submission document (signed PDF) and the merged unsigned PDF download are limited to `VISA_SUBMISSION_ROLES` (ADMIN, TEAM_LEAD, OWNER implied). An ANALYST can no longer upload or remove that one document type, even for an allocated candidate; every other document type is unchanged. To add a role, edit `VISA_SUBMISSION_ROLES` in `src/config/visaSubmission.js` and in `admin/src/auth/roles.ts`. See `Docs/Visa Submission/README.md`.
+- **Visa submission is narrower than other candidate documents.** The Visa submission document (signed PDF) and the merged unsigned PDF download are limited to `VISA_SUBMISSION_ROLES` (ADMIN, TEAM_LEAD, OWNER implied). An ANALYST can no longer upload or remove that one document type, even for an allocated candidate; every other document type is unchanged. To add a role, edit `VISA_SUBMISSION_ROLES` in `src/config/visaSubmission.js` and in `admin/src/auth/roles.ts`. The **Visa Submission** tab and its API (bulk extraction, folder browser, file and ZIP download) use the same `VISA_SUBMISSION_ROLES`. See `Docs/Visa Submission/README.md`.
 - **OWNER = ADMIN for access.** Every rule that names ADMIN admits OWNER too (`hasRole()`); OWNER only adds managing ADMIN accounts (and accounts holding a retired role).
 - **TEAM_LEAD inherits nothing.** `hasRole()` admits TEAM_LEAD only where a tier names it (`REPORT_READERS`, `CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_WORKFLOW`, `REGISTRATION_STAFF`, `ALLOCATION_MANAGERS`, `JOB_READERS`, `JOB_MANAGERS`, `MASTER_DATA_STAFF` in `src/routes/admin.js`). It is in no `ADMINS_ONLY` route and in no user-management, Settings, Sheet Sync or import route.
 - **The screens follow the same lists.** `admin/src/auth/roles.ts` holds the role lists; the sidebar (`navigation.ts`) and the page guards (`App.tsx` `AllowRoles`, an allow-list: a role not named is refused) use them, so a page hidden from a role, opened by URL (or as the page someone was on before signing in), takes that role to its own home page instead, with no warning, and requests nothing.
