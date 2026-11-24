@@ -29,7 +29,7 @@ export class StorageTimeoutError extends Error {
     }
 }
 
-function settleWithin(promise, timeoutMs, operation) {
+export function settleWithin(promise, timeoutMs, operation) {
     let timer;
     const timeout = new Promise((resolve) => {
         timer = setTimeout(() => resolve({ data: null, error: new StorageTimeoutError(operation) }), timeoutMs);

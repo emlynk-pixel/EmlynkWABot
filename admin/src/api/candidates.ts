@@ -1,4 +1,4 @@
-import { apiRequest, uploadToSignedUrl } from "./client";
+import { apiRequest, apiRequestBlob, uploadToSignedUrl } from "./client";
 import type { CandidateJobAssignment } from "./jobs";
 import type { AllocationStatus } from "./workAllocation";
 
@@ -329,19 +329,55 @@ export function updateCandidateStage(
     return apiRequest<CandidateDetails>(`${base(passportId)}/stages/${stage}`, { method: "PUT", token, body });
 }
 
+// A VISA_SUBMISSION finalize also answers whether the upload completed the Visa submission stage
+// (code / reason: why not, e.g. VISA_NEEDS_TEST_PASS). Absent for every other document type.
+export type StageCompletion = { stage: CandidateStageKey; completed: boolean; code: string | null; reason: string | null };
+export type UploadedCandidate = CandidateDetails & { stageCompletion?: StageCompletion };
+
 // The file goes browser -> storage, never through the API: the API checks the
 // description (type, variant, MIME type, size) and answers with a signed URL
 // for one object; the file is PUT there; then the API checks the stored
 // bytes and records the document.
-export async function uploadCandidateDocument(token: string, passportId: string, documentType: CandidateDocumentType, file: File, variant?: string): Promise<CandidateDetails> {
+export async function uploadCandidateDocument(token: string, passportId: string, documentType: CandidateDocumentType, file: File, variant?: string): Promise<UploadedCandidate> {
     const described = { type: documentType, ...(variant ? { variant } : {}), mimeType: file.type, fileName: file.name };
     const target = await apiRequest<{ uploadId: string; uploadUrl: string }>(`${base(passportId)}/documents/upload-target`, {
         method: "POST", token, body: { ...described, fileSize: file.size },
     });
     await uploadToSignedUrl(target.uploadUrl, file);
-    return apiRequest<CandidateDetails>(`${base(passportId)}/documents/finalize`, {
+    return apiRequest<UploadedCandidate>(`${base(passportId)}/documents/finalize`, {
         method: "POST", token, body: { ...described, uploadId: target.uploadId },
     });
+}
+
+// ---------------------------------------------------------------- visa submission (roles.ts VISA_SUBMISSION_ROLES)
+
+// The documents merged into the unsigned submission file, in merge order (the server's
+// src/config/visaSubmission.js is the only list). document: set only when the slot is VERIFIED.
+export type VisaSubmissionSlotStatus = "VERIFIED" | "UNVERIFIED" | "MISSING";
+export type VisaSubmissionSlot = {
+    order: number;
+    key: string;
+    label: string;
+    documentType: CandidateDocumentType;
+    variant: string | null;
+    status: VisaSubmissionSlotStatus;
+    document: { documentId: string; mimeType: string; size: number | null; fileUrl: string } | null;
+};
+export type VisaSubmissionManifest = { passportId: string; slots: VisaSubmissionSlot[] };
+
+export function getVisaSubmissionManifest(token: string, passportId: string, signal?: AbortSignal): Promise<VisaSubmissionManifest> {
+    return apiRequest<VisaSubmissionManifest>(`${base(passportId)}/visa-submission/manifest`, { token, signal });
+}
+
+// One slot's file, streamed from private storage through the API.
+export function getVisaSubmissionFile(token: string, passportId: string, documentId: string, signal?: AbortSignal): Promise<Blob> {
+    return apiRequestBlob(`${base(passportId)}/visa-submission/files/${encodeURIComponent(documentId)}`, { token, signal });
+}
+
+// The audit entry of a merged download (the merged file itself is never sent). 409 SLOT_NOT_VERIFIED:
+// a slot changed since the manifest was read.
+export function recordVisaSubmissionDownload(token: string, passportId: string, includedSlots: string[]): Promise<{ auditId: string; passportId: string; includedSlots: string[]; excludedSlots: string[] }> {
+    return apiRequest(`${base(passportId)}/visa-submission/merged-download`, { method: "POST", token, body: { includedSlots } });
 }
 
 // Deletes the candidate's current document (record and file); the reason is

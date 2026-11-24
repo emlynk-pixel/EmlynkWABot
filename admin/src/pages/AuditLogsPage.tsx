@@ -86,6 +86,7 @@ const ACTION_LABELS: Record<string, string> = {
     UPLOAD_DOCUMENT: "Document uploaded",
     REMOVE_DOCUMENT: "Document removed",
     DELETE_TEMPORARY_DOCUMENT: "Temporary document deleted",
+    VISA_SUBMISSION_MERGED_DOWNLOAD: "Visa submission downloaded",
     INVITE_USER: "User invited",
     REACTIVATE_USER: "User reactivated",
     COMPLETE_INVITATION: "Invitation accepted",

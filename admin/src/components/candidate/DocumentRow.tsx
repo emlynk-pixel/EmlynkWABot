@@ -1,7 +1,7 @@
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
-import { removeCandidateDocument, uploadCandidateDocument, variantLabel, type CandidateDetails, type CandidateDocument, type CandidateDocumentType } from "../../api/candidates";
+import { removeCandidateDocument, uploadCandidateDocument, variantLabel, type CandidateDocument, type CandidateDocumentType, type UploadedCandidate } from "../../api/candidates";
 import { formatDate } from "../format";
 import { Icon } from "../Icon";
 import { ActionDialog, DialogError, dangerButton, dangerSolidButton, secondaryButton } from "../Dialog";
@@ -16,6 +16,10 @@ function statusLine(document: CandidateDocument | null, description?: string, sh
     return [description, displayName, showVariant ? variantLabel(document.variant) : null, formatDate(document.receivedDate)].filter(Boolean).join(" • ");
 }
 
+// The Visa submission document's 403 (the code is answered for that document type only), said plainly.
+const errorMessage = (caught: ApiError) =>
+    caught.code === "VISA_SUBMISSION_FORBIDDEN" ? "Only an Admin or Team Lead can upload or remove the visa submission document." : caught.message;
+
 // One document: its name, what is stored now, Upload / Replace and Remove. A
 // file is uploaded as soon as it is chosen. `variant`: this row is one variant
 // of a police report or affidavit (each has its own row and its own current
@@ -23,7 +27,7 @@ function statusLine(document: CandidateDocument | null, description?: string, sh
 // (a police report with no known variant). Remove deletes the stored document
 // and its file, after a confirmation with a reason (kept in the audit log).
 // onUploaded gets the candidate after an upload or a removal.
-export function DocumentRow({ passportId, documentType, label, removeTitle = label, description, required, document, variant, uploadable = true, removable = true, accept = DOCUMENT_ACCEPT, readOnly, onUploaded, title, lockedReason = null }: {
+export function DocumentRow({ passportId, documentType, label, removeTitle = label, description, required, document, variant, uploadable = true, removable = true, accept = DOCUMENT_ACCEPT, readOnly, onUploaded, title, lockedReason = null, rejectFile, actions }: {
     passportId: string;
     documentType: CandidateDocumentType;
     label: string;
@@ -37,10 +41,14 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
     readOnly?: boolean;
     // false: Upload / Replace without Remove (the registration form for the Registration Desk).
     removable?: boolean;
-    onUploaded: (details: CandidateDetails) => void;
+    onUploaded: (details: UploadedCandidate) => void;
     title?: string;
     // Upload / Replace not possible yet, and why (e.g. Scans need a Job). Viewing and Remove are unaffected.
     lockedReason?: string | null;
+    // Why a chosen file is refused before it is sent (null: accepted), e.g. PDF only. The server checks again.
+    rejectFile?: (file: File) => string | null;
+    // More buttons left of Upload / Replace (Visa submission: Download).
+    actions?: ReactNode;
 }) {
     const { token } = useAuth();
     const input = useRef<HTMLInputElement>(null);
@@ -75,7 +83,7 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
             setError(null);
             setDone("Removed");
         } catch (caught) {
-            setRemoveError(caught instanceof ApiError ? caught.message : "The file could not be removed.");
+            setRemoveError(caught instanceof ApiError ? errorMessage(caught) : "The file could not be removed.");
         } finally {
             setBusy(false);
         }
@@ -83,6 +91,13 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
 
     const upload = async (file: File | undefined) => {
         if (!file || !token || !uploadable) return;
+        const rejection = rejectFile?.(file) ?? null;
+        if (rejection) {
+            setError(rejection);
+            setDone(null);
+            if (input.current) input.current.value = "";
+            return;
+        }
         setBusy(true);
         setError(null);
         setDone(null);
@@ -90,7 +105,7 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
             onUploaded(await uploadCandidateDocument(token, passportId, documentType, file, variant));
             setDone("Saved");
         } catch (caught) {
-            setError(caught instanceof ApiError ? caught.message : "The file could not be uploaded.");
+            setError(caught instanceof ApiError ? errorMessage(caught) : "The file could not be uploaded.");
         } finally {
             setBusy(false);
             if (input.current) input.current.value = "";
@@ -109,6 +124,7 @@ export function DocumentRow({ passportId, documentType, label, removeTitle = lab
                     <p className="truncate text-label-sm text-ink-subtle">{statusLine(document, description, !variant)}</p>
                 </div>
                 <div className="flex items-center gap-2">
+                    {actions}
                     {uploadable && (
                         <>
                             <input ref={input} type="file" accept={accept} className="hidden" aria-label={`${removeTitle} file`} disabled={readOnly || busy || Boolean(lockedReason)} onChange={(event) => upload(event.target.files?.[0])} />

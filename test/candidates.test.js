@@ -1130,11 +1130,14 @@ describe("candidate routes: roles", () => {
         };
         const target = (role, body, db, bucket) => call(role, "POST", "/api/admin/candidates/N1023757/documents/upload-target", { type: "VISA_SUBMISSION", mimeType: "application/pdf", fileSize: PDF.length, fileName: "visa.pdf", ...body }, db, { bucket });
 
-        test("every candidate role can upload; a new file replaces the current one; stored under its own folder; audited", async () => {
+        test("VISA_SUBMISSION_ROLES upload (ANALYST and REGISTRATION_DESK may not); a new file replaces the current one; stored under its own folder; audited", async () => {
             const { db, bucket } = await setup();
             assert.equal((await directUpload("REGISTRATION_DESK", "N1023757", db, bucket, { type: "VISA_SUBMISSION" })).status, 403, "not a registration document");
+            const analyst = await directUpload("ANALYST", "N1023757", db, bucket, { type: "VISA_SUBMISSION" });
+            assert.deepEqual([analyst.status, analyst.body.code], [403, "VISA_SUBMISSION_FORBIDDEN"], "not an Analyst's");
+            assert.equal(bucket.signedUploads.length, 0, "no upload URL for the Analyst");
             const uploads = [];
-            for (const [index, role] of ["OWNER", "ADMIN", "ANALYST"].entries()) {
+            for (const [index, role] of ["OWNER", "ADMIN", "TEAM_LEAD"].entries()) {
                 const result = await directUpload(role, "N1023757", db, bucket, { type: "VISA_SUBMISSION", buffer: Buffer.concat([PDF, Buffer.from([index])]) });
                 assert.equal(result.status, 200, role);
                 uploads.push(result.body.documents.VISA_SUBMISSION);
@@ -1154,7 +1157,9 @@ describe("candidate routes: roles", () => {
             const logged = JSON.stringify(db.state.auditLogs);
             assert.doesNotMatch(logged, /token=|signedUrl|uploadUrl|storage\/v1|%PDF/, "no signed URL or file content in the audit log");
 
-            // Uploading changes no stage: Visa submission is completed by hand; the scan and the submission are untouched.
+            // No passed test here: the stage stays open, with the reason; the scan and the submission are untouched.
+            const last = await directUpload("ADMIN", "N1023757", db, bucket, { type: "VISA_SUBMISSION", buffer: Buffer.concat([PDF, Buffer.from("last")]) });
+            assert.deepEqual(last.body.stageCompletion, { stage: "VISA_SUBMISSION", completed: false, code: "VISA_NEEDS_TEST_PASS", reason: "The candidate must pass the test before the visa stage can be completed." });
             const details = (await call("ADMIN", "GET", "/api/admin/candidates/N1023757", undefined, db, { bucket })).body;
             assert.equal(details.stages.find((st) => st.stage === "VISA_SUBMISSION").completed, false);
             assert.equal(details.documents.SCAN, null);
@@ -1168,6 +1173,9 @@ describe("candidate routes: roles", () => {
             const { documentId } = uploaded.body.documents.VISA_SUBMISSION;
             const removePath = `/api/admin/candidates/N1023757/documents/${documentId}/remove`;
             assert.equal((await call("REGISTRATION_DESK", "POST", removePath, { reason: "x" }, db, { bucket })).status, 403, "not the Registration Desk's");
+            const analyst = await call("ANALYST", "POST", removePath, { reason: "x" }, db, { bucket });
+            assert.deepEqual([analyst.status, analyst.body.code], [403, "VISA_SUBMISSION_FORBIDDEN"], "not an Analyst's");
+            assert.equal(db.state.documents.length, 1, "nothing removed by the Analyst");
             assert.equal((await call("ADMIN", "POST", removePath, {}, db, { bucket })).status, 400, "a reason is required");
             const removed = await call("ADMIN", "POST", removePath, { reason: "Wrong embassy form" }, db, { bucket });
             assert.equal(removed.status, 200);
@@ -1177,18 +1185,22 @@ describe("candidate routes: roles", () => {
             assert.deepEqual([audit.action, audit.documentType, audit.previousStatus, audit.newStatus, audit.reason], ["REMOVE_DOCUMENT", "VISA_SUBMISSION", "VERIFIED", "REMOVED", "Wrong embassy form"]);
         });
 
-        test("the existing file rules apply: wrong type, oversize and mismatched content are refused, nothing is stored", async () => {
+        test("PDF only, and the existing file rules apply: wrong type, oversize and mismatched content are refused, nothing is stored", async () => {
             const { db, bucket } = await setup();
-            for (const mimeType of ["text/plain", "video/mp4", "application/zip"]) {
-                const refused = await target("ANALYST", { mimeType }, db, bucket);
+            for (const mimeType of ["text/plain", "video/mp4", "application/zip", "image/jpeg", "image/png"]) {
+                const refused = await target("ADMIN", { mimeType }, db, bucket);
                 assert.equal(refused.status, 422, mimeType);
                 assert.equal(refused.body.code, "FILE_REJECTED", mimeType);
+                assert.equal(refused.body.message, "This file type is not accepted. Use PDF.", mimeType);
             }
-            const tooBig = await target("ANALYST", { fileSize: 10 * 1024 * 1024 + 1 }, db, bucket);
+            // An image declared as an image is refused at finalize too (no target needed to reach it).
+            const finalizeImage = await call("ADMIN", "POST", "/api/admin/candidates/N1023757/documents/finalize", { type: "VISA_SUBMISSION", mimeType: "image/png", uploadId: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b" }, db, { bucket });
+            assert.deepEqual([finalizeImage.status, finalizeImage.body.code], [422, "FILE_REJECTED"]);
+            const tooBig = await target("ADMIN", { fileSize: 10 * 1024 * 1024 + 1 }, db, bucket);
             assert.deepEqual([tooBig.status, tooBig.body.code], [422, "FILE_REJECTED"]);
             assert.match(tooBig.body.message, /10 MB/);
             // Declared a PDF, but the bytes are a PNG: refused at finalize, and the staged file is removed.
-            const disguised = await directUpload("ANALYST", "N1023757", db, bucket, { type: "VISA_SUBMISSION", mimeType: "application/pdf", buffer: PNG });
+            const disguised = await directUpload("ADMIN", "N1023757", db, bucket, { type: "VISA_SUBMISSION", mimeType: "application/pdf", buffer: PNG });
             assert.equal(disguised.status, 422);
             assert.equal(bucket.objects.size, 0);
             assert.equal(db.state.documents.length, 0);
@@ -1197,8 +1209,10 @@ describe("candidate routes: roles", () => {
 
         test("any other role is refused (403) before a signed URL is issued or anything is written", async () => {
             const { db, bucket } = await setup();
-            assert.equal((await target("UNKNOWN", {}, db, bucket)).status, 403);
-            assert.equal((await call("UNKNOWN", "POST", "/api/admin/candidates/N1023757/documents/finalize", { type: "VISA_SUBMISSION", mimeType: "application/pdf", uploadId: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b" }, db, { bucket })).status, 403);
+            for (const role of ["UNKNOWN", "ANALYST", "JOB_HANDLER", "REGISTRATION_DESK"]) {
+                assert.equal((await target(role, {}, db, bucket)).status, 403, role);
+                assert.equal((await call(role, "POST", "/api/admin/candidates/N1023757/documents/finalize", { type: "VISA_SUBMISSION", mimeType: "application/pdf", uploadId: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b" }, db, { bucket })).status, 403, role);
+            }
             assert.equal(bucket.signedUploads.length, 0);
             assert.equal(db.state.documents.length, 0);
         });

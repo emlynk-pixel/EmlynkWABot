@@ -597,6 +597,7 @@ describe("security and error handling", () => {
             "POST /candidates/:passportId/form-submission/reject-all", // ADMIN, TEAM_LEAD, ANALYST (own candidates): dismiss every pending value, record unchanged, audited per field
             "POST /candidates/:passportId/form-submission/reject-field", // ADMIN, TEAM_LEAD, ANALYST (own candidates): dismiss one proposed value, record unchanged, audited
             "POST /candidates/:passportId/verification", // Verify details / documents: ADMIN only, audited (candidateWorkflowStatus.test.js)
+            "POST /candidates/:passportId/visa-submission/merged-download", // VISA_SUBMISSION_ROLES: writes one audit entry only (visaSubmission.test.js)
             "POST /client-management",
             "POST /documents/:documentId/police-date",
             "POST /follow-ups/:followUpId/complete", // the row is kept, audited

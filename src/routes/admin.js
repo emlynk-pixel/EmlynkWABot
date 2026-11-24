@@ -1,5 +1,6 @@
 import { getFormBranding, parseBrandingBody, updateFormBranding } from "../services/candidateFormBrandingService.js";
 import express from "express";
+import { pipeline } from "node:stream/promises";
 
 import { createRequireActiveUser } from "../middleware/requireActiveUser.js";
 import { ALL_ROLES, hasRole, requireRole, ROLES } from "../middleware/requireRole.js";
@@ -176,6 +177,8 @@ import {
     registrationView,
     REGISTRATION_DOCUMENT_TYPES,
 } from "../services/candidateService.js";
+import { VISA_SUBMISSION_DOCUMENT_TYPE, VISA_SUBMISSION_ROLES } from "../config/visaSubmission.js";
+import { getVisaSubmissionFile, getVisaSubmissionManifest, parseMergedDownloadBody, recordMergedDownload } from "../services/visaSubmissionService.js";
 
 
 // Quotes and non-ASCII characters are replaced so the header can't be broken.
@@ -238,6 +241,8 @@ const JOB_MANAGERS = [ADMIN, TEAM_LEAD, JOB_HANDLER];                   // job w
 const MASTER_DATA_STAFF = [ADMIN, TEAM_LEAD, JOB_HANDLER];              // Agents and Client Management
 // (an ANALYST works only on candidates allocated to them, and a new
 // candidate is unallocated, so registration is not an Analyst action)
+// Visa Submission (the merged file, and the VISA_SUBMISSION document's upload and removal):
+// VISA_SUBMISSION_ROLES, config/visaSubmission.js (ADMIN, TEAM_LEAD; an OWNER through hasRole).
 
 // Admin dashboard API, mounted at /api/admin (Phase 10). Read-only except
 // the review actions (approve, keep pending, remove from review) and the
@@ -635,6 +640,10 @@ export function createAdminRouter({
     // A candidate as the user may see it: REGISTRATION_DESK gets the registration view only.
     const candidateFor = (req, details) => (registrationOnly(req) ? registrationView(details) : details);
     const forbidden = (res) => res.status(403).json({ message: "Insufficient permissions" });
+    // The VISA_SUBMISSION document is uploaded and removed by VISA_SUBMISSION_ROLES only (removal:
+    // removeCandidateDocument checks the stored record); every other type keeps its route's tier.
+    const mayManageDocumentType = (req, documentType) => documentType !== VISA_SUBMISSION_DOCUMENT_TYPE || hasRole(req.user.role, VISA_SUBMISSION_ROLES);
+    const visaSubmissionForbidden = (res) => res.status(403).json({ message: "Insufficient permissions", code: "VISA_SUBMISSION_FORBIDDEN" });
     // Creating a Candidate Form link: a system problem (the form not configured, an unexpected
     // error; never a refusal such as 409 FORM_SUBMITTED) also notifies the Admins and Team Leads
     // (E10, at most once an hour). The error is answered exactly as before.
@@ -780,6 +789,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         if (registrationOnly(req) && !REGISTRATION_DOCUMENTS.includes(parsed.values.documentType)) return forbidden(res);
+        if (!mayManageDocumentType(req, parsed.values.documentType)) return visaSubmissionForbidden(res);
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
         return candidateAction(res, async () => res.json(await createUploadTarget({
             db: client,
@@ -798,7 +808,9 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         if (registrationOnly(req) && !REGISTRATION_DOCUMENTS.includes(parsed.values.documentType)) return forbidden(res);
+        if (!mayManageDocumentType(req, parsed.values.documentType)) return visaSubmissionForbidden(res);
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        // A VISA_SUBMISSION upload also answers stageCompletion (candidateService.js storeCandidateDocument).
         return candidateAction(res, async () => res.json(candidateFor(req, await finalizeUpload({
             db: client,
             bucket: storage,
@@ -827,6 +839,63 @@ export function createAdminRouter({
             passportId: await storedCandidateId(client, req.params.passportId, req.user),
             documentId: req.params.documentId,
             reason: parsed.values.reason,
+        })));
+    });
+
+    // ---------------------------------------------------------------- visa submission (VISA_SUBMISSION_ROLES)
+    // The merged submission file is built in the browser (visaSubmissionService.js): the server
+    // never merges, so these answers stay small JSON or one document at a time.
+
+    router.get("/candidates/:passportId/visa-submission/manifest", requireRole(VISA_SUBMISSION_ROLES), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.json(await getVisaSubmissionManifest({
+            db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user),
+        })));
+    });
+
+    // One slot document, streamed from private storage like the review file (same headers): the
+    // storage path comes from the record, never the request, and no storage URL reaches the browser.
+    // Streamed, not buffered: a Vercel function response is capped at about 4.5 MB.
+    router.get("/candidates/:passportId/visa-submission/files/:documentId", requireRole(VISA_SUBMISSION_ROLES), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        if (!isValidDocumentIdParam(req.params.documentId)) {
+            return res.status(400).json({ message: "Invalid document ID", errors: [{ field: "documentId", message: "must be a document ID" }] });
+        }
+        const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
+        return candidateAction(res, async () => {
+            const passportId = await storedCandidateId(client, req.params.passportId, req.user);
+            const file = await getVisaSubmissionFile({ db: client, bucket: storage, passportId, documentId: req.params.documentId });
+            if (!file) return res.status(404).json({ message: "Document not found", code: "DOCUMENT_NOT_FOUND" });
+            if (file.unavailable) return res.status(502).json({ message: "The file could not be loaded from storage" });
+
+            res.set({
+                "Content-Type": file.mimeType,
+                "Content-Disposition": contentDisposition(file.fileName),
+                "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
+                "Cross-Origin-Resource-Policy": "same-origin",
+                ...(file.size ? { "Content-Length": String(file.size) } : {}),
+            });
+            if (file.buffer) return res.send(file.buffer);
+            try {
+                await pipeline(file.stream, res);
+            } catch (error) {
+                // Headers are already sent: the connection is closed so the browser sees a failed download.
+                console.warn("Visa submission file: stream ended early", { documentId: req.params.documentId, ...safeErrorInfo(error) });
+                res.destroy();
+            }
+            return undefined;
+        });
+    });
+
+    // Called when the user confirms the merged download: one audit entry, the slots included and excluded.
+    router.post("/candidates/:passportId/visa-submission/merged-download", requireRole(VISA_SUBMISSION_ROLES), async (req, res) => {
+        if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
+        const parsed = parseMergedDownloadBody(req.body);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
+        const client = await resolveDb(db);
+        return candidateAction(res, async () => res.status(201).json(await recordMergedDownload({
+            db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
         })));
     });
 

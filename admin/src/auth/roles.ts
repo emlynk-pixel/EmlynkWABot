@@ -136,6 +136,11 @@ export const canAssignJobFromCandidatePage = (user: WithRole) => hasRole(user, A
 // for reading and writing. The other roles get no entry and the API answers 403.
 export const MASTER_DATA_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD, ROLES.JOB_HANDLER];
 export const canManageMasterData = (user: WithRole) => hasRole(user, MASTER_DATA_ROLES);
+// Visa Submission (src/config/visaSubmission.js VISA_SUBMISSION_ROLES): downloading the merged unsigned
+// submission file, and uploading / removing the signed VISA_SUBMISSION document. ADMIN (an OWNER too)
+// and TEAM_LEAD; not ANALYST, REGISTRATION_DESK or JOB_HANDLER.
+export const VISA_SUBMISSION_ROLES: readonly Role[] = [ROLES.ADMIN, ROLES.TEAM_LEAD];
+export const canUseVisaSubmission = (user: WithRole) => hasRole(user, VISA_SUBMISSION_ROLES);
 // Registering a new candidate.
 export const canRegisterCandidates = (user: WithRole) => hasRole(user, REGISTRATION_ROLES);
 // Where a signed-in role lands ("/"), and where a page it can't open sends it: the Overview for

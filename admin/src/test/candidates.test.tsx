@@ -2749,7 +2749,8 @@ describe("field hints", () => {
 describe("Visa submission document", () => {
     const visaFile = () => new File(["%PDF-1.4 visa"], "visa-form.pdf", { type: "application/pdf" });
 
-    test("the Visa submission stage has its own upload row; a candidate role uploads through the existing direct upload", async () => {
+    // Uploading it is for ADMIN / OWNER / TEAM_LEAD only, PDF only (visaSubmission.test.tsx covers the rest).
+    test("the Visa submission stage has its own upload row; a Team Lead uploads the signed PDF through the existing direct upload", async () => {
         const uploaded: CandidateDetails = {
             ...DETAILS,
             documents: { ...DETAILS.documents, VISA_SUBMISSION: { documentId: "doc-visa", originalFilename: "N0000002 - VISA_SUBMISSION.PDF", verificationStatus: "VERIFIED", variant: null, receivedDate: "2026-10-09T00:00:00.000Z" } },
@@ -2770,7 +2771,7 @@ describe("Visa submission document", () => {
         await vi.waitFor(() => expect(calls.some((c) => c.path.endsWith("/documents/finalize"))).toBe(true));
         expect(calls.find((c) => c.path.endsWith("/documents/upload-target"))!.body).toMatchObject({ type: "VISA_SUBMISSION", mimeType: "application/pdf" });
         expect(await within(row).findByText(/VISA_SUBMISSION\.PDF/)).toBeInTheDocument();
-        // Completion stays manual: the upload doesn't change it.
+        // No stageCompletion in this answer: the checkbox keeps the stage's saved state.
         expect((screen.getByRole("checkbox", { name: "Stage completed" }) as HTMLInputElement).checked).toBe(completedBefore);
     });
 

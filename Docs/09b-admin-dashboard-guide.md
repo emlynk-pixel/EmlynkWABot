@@ -853,9 +853,12 @@ All endpoints are under `/api/admin` and require a Supabase session (`Authorizat
 | GET | `/candidates/:passportId` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Candidate details and stage status (returns `jobAssignments: { current, history }`) |
 | PUT | `/candidates/:passportId` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Update candidate details |
 | PUT | `/candidates/:passportId/stages/:stage` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Update candidate deployment stage `{ completed, notes, ... }` |
-| POST | `/candidates/:passportId/documents/upload-target` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Issue signed upload URL for candidate document |
-| POST | `/candidates/:passportId/documents/finalize` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Finalize and verify candidate document upload |
-| POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Remove candidate document `{ reason }` |
+| POST | `/candidates/:passportId/documents/upload-target` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK (`VISA_SUBMISSION` type: ADMIN, TEAM_LEAD only, PDF only) | Issue signed upload URL for candidate document |
+| POST | `/candidates/:passportId/documents/finalize` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK (`VISA_SUBMISSION` type: ADMIN, TEAM_LEAD only, PDF only) | Finalize and verify candidate document upload. For `VISA_SUBMISSION` the response adds `stageCompletion { stage, completed, code, reason }` |
+| POST | `/candidates/:passportId/documents/:documentId/remove` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK (`VISA_SUBMISSION` type: ADMIN, TEAM_LEAD only) | Remove candidate document `{ reason }`. Removing the Visa submission document reopens the stage |
+| GET | `/candidates/:passportId/visa-submission/manifest` | ADMIN, TEAM_LEAD (`VISA_SUBMISSION_ROLES`; OWNER implied) | The six merge slots in order, each `VERIFIED` / `UNVERIFIED` / `MISSING` |
+| GET | `/candidates/:passportId/visa-submission/files/:documentId` | ADMIN, TEAM_LEAD | Stream one current VERIFIED slot document (no signed URL) |
+| POST | `/candidates/:passportId/visa-submission/merged-download` | ADMIN, TEAM_LEAD | Audit a confirmed merged download `{ includedSlots }` |
 | GET | `/candidates/:passportId/call-logs` | ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK | Candidate call logs and candidate activity (Candidate History) |
 | POST | `/candidates/:passportId/call-logs` | ADMIN, TEAM_LEAD, ANALYST | Record call log `{ note, calledAt, needsAttention?, outcome? }` (`outcome: "NO_ANSWER"`: no note needed) |
 | POST | `/candidates/:passportId/call-logs/:callLogId/follow-up` | ADMIN, TEAM_LEAD, ANALYST | Mark a call for follow-up (201; 409 `FOLLOW_UP_EXISTS` if it already has an open one; 404 if the call isn't this candidate's) |

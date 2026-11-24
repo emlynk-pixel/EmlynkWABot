@@ -42,6 +42,8 @@ import { andWhere } from "./candidateAccess.js";
 import { normalizeSearchText, searchTokens } from "../utils/searchText.js";
 import { setAuditActor } from "./auditActor.js";
 import { formatTestId } from "./testId.js";
+import { hasRole } from "../middleware/requireRole.js";
+import { VISA_SUBMISSION_DOCUMENT_TYPE, VISA_SUBMISSION_ROLES } from "../config/visaSubmission.js";
 
 // ---------------------------------------------------------------- definitions
 
@@ -76,7 +78,8 @@ export const CANDIDATE_DOCUMENT_TYPES = Object.freeze({
     SCAN: {},
     // Uploaded in the Visa submission stage (a document type of its own, so
     // the single SCAN stays the scan). Not part of the required submission.
-    VISA_SUBMISSION: {},
+    // PDF only; uploaded and removed by VISA_SUBMISSION_ROLES only (routes/admin.js).
+    VISA_SUBMISSION: { pdfOnly: true },
 });
 
 // The five documents a candidate's submission must include (Document
@@ -1207,6 +1210,62 @@ async function requireJobForScan(db, passportId, documentType) {
     if (!(await hasActiveJob(db, passportId))) throw new CandidateError(409, "SCAN_NEEDS_JOB", SCAN_NEEDS_JOB_MESSAGE);
 }
 
+// The Visa submission stage also follows its document (VISA_SUBMISSION): storing one completes the
+// stage when the visa rules pass (requireVisaPrerequisites, as for the manual completion, which is
+// unchanged); otherwise the document is still stored and the stage stays as it is, with the rule's
+// code and message. Removing the document reopens the stage. The candidate_stages trigger queues the
+// Google Sheet sync, as for any stage save.
+const VISA_SUBMISSION_STAGE = "VISA_SUBMISSION";
+
+// { completed, code, reason }: what storing the document will do to the stage (read before the write).
+async function visaSubmissionCompletion(db, passportId) {
+    const candidate = await getCandidate({ db, passportId });
+    if (!candidate) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
+    if (candidate.stages.find((s) => s.stage === VISA_SUBMISSION_STAGE)?.completed) return { completed: true, code: null, reason: null };
+    try {
+        await requireVisaPrerequisites(db, candidate);
+    } catch (error) {
+        if (error instanceof CandidateError) return { completed: false, code: error.code, reason: error.message };
+        throw error;
+    }
+    return { completed: true, code: null, reason: null };
+}
+
+const visaStageRow = async (tx, passportId) =>
+    (await tx.candidateStage.findMany({ where: { passportId, stage: VISA_SUBMISSION_STAGE }, select: { completed: true } }))[0] ?? null;
+
+const writeVisaStageAudit = (tx, { actor, passportId, completed, reason }) => writeCandidateAudit(tx, {
+    actor,
+    action: CANDIDATE_AUDIT_ACTION.UPDATE_STAGE,
+    passportId,
+    previousStatus: stageStatus(!completed),
+    newStatus: stageStatus(completed),
+    reason,
+    previousValue: JSON.stringify({ stage: VISA_SUBMISSION_STAGE, completed: !completed }),
+    newValue: JSON.stringify({ stage: VISA_SUBMISSION_STAGE, completed }),
+});
+
+// In the document's transaction. A stage completed meanwhile (by hand) is left as it is.
+async function completeVisaSubmissionStage(tx, { actor, passportId, now }) {
+    if ((await visaStageRow(tx, passportId))?.completed) return;
+    await tx.candidateStage.upsert({
+        where: { passportId_stage: { passportId, stage: VISA_SUBMISSION_STAGE } },
+        create: { passportId, stage: VISA_SUBMISSION_STAGE, completed: true, completedAt: now },
+        update: { completed: true, completedAt: now },
+    });
+    await writeVisaStageAudit(tx, { actor, passportId, completed: true, reason: "Visa submission document uploaded" });
+}
+
+async function reopenVisaSubmissionStage(tx, { actor, passportId }) {
+    if (!(await visaStageRow(tx, passportId))?.completed) return;
+    await tx.candidateStage.upsert({
+        where: { passportId_stage: { passportId, stage: VISA_SUBMISSION_STAGE } },
+        create: { passportId, stage: VISA_SUBMISSION_STAGE, completed: false, completedAt: null },
+        update: { completed: false, completedAt: null },
+    });
+    await writeVisaStageAudit(tx, { actor, passportId, completed: false, reason: "Visa submission document removed" });
+}
+
 // PUT /api/admin/candidates/:passportId/stages/:stage. Automatic stages take
 // notes only; their completion follows their data.
 export async function updateStage({ db, passportId, stage, values, actor = null, now = new Date() }) {
@@ -1278,7 +1337,9 @@ const UPLOAD_REJECTION_MESSAGES = {
     INVALID_FILE_SIZE: "The file is empty.",
     FILE_TOO_LARGE: `The file is larger than ${MAX_FILE_SIZE / (1024 * 1024)} MB.`,
     FILE_SIGNATURE_MISMATCH: "The file's content does not match its type.",
+    PDF_ONLY: "This file type is not accepted. Use PDF.",
 };
+const PDF_MIME_TYPE = "application/pdf";
 
 // A video document type (the skill video) takes videos only: a PDF or an
 // image is refused, never checked as a document. Every other type takes
@@ -1292,6 +1353,8 @@ export function validateCandidateUpload({ documentType, mimeType, buffer }) {
         if (buffer.length > MAX_VIDEO_FILE_SIZE) return tooLargeMessage(MAX_VIDEO_FILE_SIZE);
         return videoSignatureMatches(buffer, mimeType) ? null : UPLOAD_REJECTION_MESSAGES.FILE_SIGNATURE_MISMATCH;
     }
+    // The %PDF signature itself is checked by validateDocumentFile below.
+    if (definition?.pdfOnly && mimeType && mimeType !== PDF_MIME_TYPE) return UPLOAD_REJECTION_MESSAGES.PDF_ONLY;
     const result = validateDocumentFile({ mimeType, fileSize: buffer?.length ?? 0, fileBuffer: buffer });
     if (result.valid) return null;
     return UPLOAD_REJECTION_MESSAGES[result.reason] ?? "The file was not accepted.";
@@ -1331,6 +1394,8 @@ export function checkDeclaredFile({ documentType, mimeType, fileSize }) {
     if (!mimeType) return UPLOAD_REJECTION_MESSAGES.MISSING_MIME_TYPE;
     if (CANDIDATE_DOCUMENT_TYPES[documentType]?.video) {
         if (!VIDEO_MIME_TYPES.includes(mimeType)) return "This file type is not accepted. Use MP4, MOV or WebM.";
+    } else if (CANDIDATE_DOCUMENT_TYPES[documentType]?.pdfOnly) {
+        if (mimeType !== PDF_MIME_TYPE) return UPLOAD_REJECTION_MESSAGES.PDF_ONLY;
     } else if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
         return UPLOAD_REJECTION_MESSAGES.UNSUPPORTED_FILE_TYPE;
     }
@@ -1432,6 +1497,15 @@ async function storeCandidateDocument({ db, bucket, admin, passportId, documentT
     const sameFile = await db.document.findFirst({ where: { passportId, fileSha256 }, select: { documentId: true } });
     if (sameFile) await refuse(new CandidateError(409, "DUPLICATE_FILE", "This exact file is already stored for this candidate."));
 
+    let visaCompletion = null;
+    if (documentType === VISA_SUBMISSION_DOCUMENT_TYPE) {
+        try {
+            visaCompletion = await visaSubmissionCompletion(db, passportId);
+        } catch (error) {
+            await refuse(error);
+        }
+    }
+
     const extension = extensionForMimeType(mimeType);
     const existingCount = await db.document.count({ where: { passportId, documentType } });
     let placed;
@@ -1490,6 +1564,7 @@ async function storeCandidateDocument({ db, bucket, admin, passportId, documentT
                     newValue: variant,
                 },
             });
+            if (visaCompletion?.completed) await completeVisaSubmissionStage(tx, { actor: admin, passportId, now });
         });
     } catch (error) {
         // The object is not referenced by any row: remove it again.
@@ -1501,7 +1576,8 @@ async function storeCandidateDocument({ db, bucket, admin, passportId, documentT
         throw new Error(`Document record not written (${error.message}); ${cleanup.removed ? "upload removed" : `upload NOT removed (${cleanup.error})`}`);
     }
 
-    return getCandidate({ db, passportId });
+    const details = await getCandidate({ db, passportId });
+    return visaCompletion ? { ...details, stageCompletion: { stage: VISA_SUBMISSION_STAGE, ...visaCompletion } } : details;
 }
 
 // A file whose bytes are already on the server, uploaded to its standard name.
@@ -1663,6 +1739,10 @@ export async function removeCandidateDocument({ db, bucket, admin, passportId, d
             select: { documentId: true, documentType: true, verificationStatus: true, storagePath: true, fileSha256: true, temporaryId: true },
         });
         if (!row) throw notFound();
+        // Checked here, on the record itself: the route can't tell the document's type from the request.
+        if (row.documentType === VISA_SUBMISSION_DOCUMENT_TYPE && !hasRole(admin?.role, VISA_SUBMISSION_ROLES)) {
+            throw new CandidateError(403, "VISA_SUBMISSION_FORBIDDEN", "Insufficient permissions");
+        }
 
         await tx.auditLog.create({
             data: {
@@ -1682,6 +1762,7 @@ export async function removeCandidateDocument({ db, bucket, admin, passportId, d
         // Only if it is still the same record: a second, concurrent removal finds nothing.
         const { count } = await tx.document.deleteMany({ where: { documentId: row.documentId, passportId, verificationStatus: row.verificationStatus } });
         if (count !== 1) throw notFound();
+        if (row.documentType === VISA_SUBMISSION_DOCUMENT_TYPE) await reopenVisaSubmissionStage(tx, { actor: admin, passportId });
         // The file goes only if no other record points at it.
         const shared = row.storagePath ? await tx.document.count({ where: { storagePath: row.storagePath } }) : 0;
         return { path: shared === 0 ? row.storagePath : null };

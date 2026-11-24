@@ -12,10 +12,13 @@ import {
     type CandidateDetails,
     type CandidateDetailsInput,
     type CandidateStageKey,
+    type StageCompletion,
     type StageState,
     type TestResult,
+    type UploadedCandidate,
     type VariantDocumentType,
 } from "../../api/candidates";
+import { canUseVisaSubmission } from "../../auth/roles";
 import { documentTypeLabel } from "../format";
 import { DatePicker } from "../DatePicker";
 import { Icon } from "../Icon";
@@ -24,6 +27,7 @@ import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, text
 import { DocumentRow, VIDEO_ACCEPT } from "./DocumentRow";
 import { exportDocumentSubmissionPdf } from "./exportPdf";
 import { FormChangesButtons, mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
+import { useVisaSubmissionDownload } from "./VisaSubmissionDownload";
 
 type PanelProps = { details: CandidateDetails; canEdit: boolean; onChange: (details: CandidateDetails) => void };
 
@@ -158,6 +162,51 @@ function VerifyBar({ details, kind, onChange }: { details: CandidateDetails; kin
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "The changes could not be saved.");
 
+const VISA_SUBMISSION_READ_ONLY = "Only an Admin or Team Lead can upload or remove the visa submission document.";
+const rejectNonPdf = (file: File) => (file.type === "application/pdf" ? null : "Only PDF files can be uploaded as the visa submission document.");
+
+// The signed Visa submission document (PDF only) and the Download of the unsigned file to sign:
+// both for roles.ts VISA_SUBMISSION_ROLES only. Another candidate role sees the row read only.
+function VisaSubmissionDocument({ details, canEdit, onChange }: PanelProps) {
+    const { user } = useAuth();
+    const passportId = details.candidate.passportId;
+    const allowed = canUseVisaSubmission(user);
+    const download = useVisaSubmissionDownload(passportId);
+    const [completion, setCompletion] = useState<StageCompletion | null>(null);
+    const uploaded = ({ stageCompletion, ...next }: UploadedCandidate) => {
+        setCompletion(stageCompletion ?? null);
+        onChange(next);
+    };
+    return (
+        <>
+            <DocumentRow
+                passportId={passportId}
+                documentType="VISA_SUBMISSION"
+                label="Visa submission document"
+                description="Signed visa submission. Accepted format: PDF."
+                accept="application/pdf"
+                rejectFile={rejectNonPdf}
+                document={details.documents.VISA_SUBMISSION}
+                readOnly={!canEdit}
+                removable={allowed}
+                lockedReason={canEdit && !allowed ? VISA_SUBMISSION_READ_ONLY : null}
+                actions={allowed ? download.button : undefined}
+                onUploaded={uploaded}
+            />
+            {allowed && download.panel}
+            {completion && (
+                completion.completed ? (
+                    <p role="status" className="mt-2 inline-flex items-center gap-1 text-label-sm text-verified"><Icon name="check" className="size-3.5" />Document saved. The Visa submission stage is now completed.</p>
+                ) : (
+                    <p role="status" className="mt-2 rounded-lg border border-review-border bg-review-bg px-3 py-2 text-label-sm text-review">
+                        Document saved, but the stage was not completed: {completion.reason ?? "its requirements are not met yet."}
+                    </p>
+                )
+            )}
+        </>
+    );
+}
+
 // The stages completed by an admin (Test details, Job details, Visa submission, Visa
 // approval): notes and completion. Test details also
 // shows the candidate's job (from the Job assignment, read-only) and records the
@@ -233,13 +282,23 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
 
     // Visa submission also takes its document. The upload row saves on its own
     // and sits outside the notes form (its remove dialog has a form of its own),
-    // like the uploads in Candidate details. Completion stays manual.
+    // like the uploads in Candidate details. Uploading the signed document can
+    // complete the stage on the server, and removing it reopens the stage; the
+    // manual completion below still works.
     if (stage === "VISA_SUBMISSION") {
         return (
             <div>
                 <PanelHeading title={STAGE_LABELS[stage]} />
                 <div className="mt-4">
-                    <DocumentRow passportId={details.candidate.passportId} documentType="VISA_SUBMISSION" label="Visa submission document" description="Accepted formats: PDF, JPG, PNG." document={details.documents.VISA_SUBMISSION} readOnly={!canEdit} onUploaded={onChange} />
+                    <VisaSubmissionDocument
+                        details={details}
+                        canEdit={canEdit}
+                        onChange={(next) => {
+                            // The server's completion replaces the checkbox's; typed notes stay.
+                            setCompleted(stageOf(next, stage).completed);
+                            onChange(next);
+                        }}
+                    />
                 </div>
                 <form onSubmit={submit}>{notesAndFooter}</form>
             </div>

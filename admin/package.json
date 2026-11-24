@@ -18,6 +18,7 @@
     "exceljs": "4.4.0",
     "jspdf": "^4.2.1",
     "lucide-react": "1.59.0",
+    "pdf-lib": "1.17.1",
     "react": "19.3.0",
     "react-day-picker": "10.0.2",
     "react-dom": "19.3.0",

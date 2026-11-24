@@ -200,7 +200,7 @@ All core application tables reside in the `public` schema.
 - **Primary Key**: Composite `(passport_id, stage)`.
 - **Important Columns**:
   - `passport_id` (`TEXT`, FK -> `candidate.passport_id` `ON DELETE CASCADE`).
-  - `stage` (`TEXT`): Stage code (`TEST_DETAILS`, `JOB_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `IVS_INTERVIEW`, `VISA_SUBMISSION`, `VISA_APPROVAL`, `FINALIZING_JOB`). A plain text column with no database constraint: a new stage needs no migration.
+  - `stage` (`TEXT`): Stage code: `TEST_DETAILS`, `JOB_DETAILS`, `CANDIDATE_DETAILS`, `DOCUMENT_SUBMISSION`, `VISA_SUBMISSION` or `VISA_APPROVAL`. The column is plain text, but the CHECK constraint `candidate_stages_stage_check` (migration `20261109120000_candidate_status_cleanup`) allows only these six, so a new stage needs a migration. The retired stages `IVS_INTERVIEW` and `FINALIZING_JOB` are no longer accepted. A completed `VISA_SUBMISSION` stage is set automatically when the signed Visa submission PDF is uploaded and the existing visa rules pass (see `Docs/Visa Submission/`); no schema change was needed.
   - `completed` (`BOOLEAN`, default `false`).
   - `completed_at` (`TIMESTAMPTZ`, nullable).
   - `notes` (`TEXT`, nullable).
