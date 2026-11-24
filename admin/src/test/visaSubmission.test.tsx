@@ -77,10 +77,10 @@ async function openVisa(role: string, routes: FetchRoutes = {}, files: Record<st
     const saved: string[] = [];
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:visa"), revokeObjectURL: vi.fn() }));
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.download); });
-    renderApp(`/candidates/${PASSPORT_ID}?stage=VISA_SUBMISSION`);
+    const view = renderApp(`/candidates/${PASSPORT_ID}?stage=VISA_SUBMISSION`);
     expect(await screen.findByRole("heading", { name: "Visa submission" }, RENDER_STEP)).toBeInTheDocument();
     const row = screen.getByText("Visa submission document").closest("div.rounded-xl") as HTMLElement;
-    return { ...backend, saved, row };
+    return { ...backend, saved, row, view };
 }
 
 const uploadsOf = (calls: { path: string; method: string }[]) => calls.filter((c) => c.path.includes("/documents/") || c.method === "PUT");
@@ -181,6 +181,93 @@ describe("Visa submission: Download", () => {
         await userEvent.setup().click(within(row).getByRole("button", { name: "Download" }));
         expect(await screen.findByText(/The download could not be recorded, so the file was not saved/, undefined, RENDER_STEP)).toBeInTheDocument();
         expect(saved).toEqual([]);
+    });
+});
+
+describe("Visa submission: leave-page warning", () => {
+    // True when a beforeunload handler asks the browser to confirm leaving.
+    const leaveWarned = () => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+    };
+    const AUDIT_OK = { status: 201, body: { auditId: "a1", passportId: PASSPORT_ID, includedSlots: [], excludedSlots: [] } };
+
+    // Holds the first document's request until release() so the merge can be observed mid-way.
+    const holdFirstFile = (fetchMock: { getMockImplementation: () => ((...args: never[]) => unknown) | undefined; mockImplementation: (fn: never) => unknown }) => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const inner = fetchMock.getMockImplementation()! as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+        fetchMock.mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (String(input).endsWith("/files/doc-PASSPORT")) await gate;
+            return inner(input, init);
+        }) as never);
+        return release;
+    };
+
+    test("not active when idle", async () => {
+        await openVisa("ADMIN", { [`GET ${BASE}/visa-submission/manifest`]: { status: 200, body: manifest({}) } });
+        expect(leaveWarned()).toBe(false);
+    });
+
+    test("not active while the confirmation dialog is open, or after it is cancelled", async () => {
+        const { row } = await openVisa("ADMIN", { [`GET ${BASE}/visa-submission/manifest`]: { status: 200, body: manifest({ MEDICAL: "MISSING" }) } });
+        const user = userEvent.setup();
+        await user.click(within(row).getByRole("button", { name: "Download" }));
+        const dialog = await screen.findByRole("dialog");
+        expect(leaveWarned()).toBe(false);
+        await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+        expect(leaveWarned()).toBe(false);
+    });
+
+    test("active while the file is prepared, removed once it is saved", async () => {
+        const { fetchMock, row, saved } = await openVisa("ADMIN", {
+            [`GET ${BASE}/visa-submission/manifest`]: { status: 200, body: manifest({}) },
+            [`POST ${BASE}/visa-submission/merged-download`]: AUDIT_OK,
+        });
+        const release = holdFirstFile(fetchMock);
+        await userEvent.setup().click(within(row).getByRole("button", { name: "Download" }));
+        await screen.findByText("Do not close this tab until the download starts.", undefined, RENDER_STEP);
+        expect(leaveWarned()).toBe(true);
+        release();
+        await vi.waitFor(() => expect(saved).toHaveLength(1), RENDER_STEP);
+        expect(leaveWarned()).toBe(false);
+    });
+
+    test("removed after an error (a damaged document)", async () => {
+        const { fetchMock, row } = await openVisa("ADMIN", { [`GET ${BASE}/visa-submission/manifest`]: { status: 200, body: manifest({}) } }, { "doc-MEDICAL": new TextEncoder().encode("broken") });
+        const release = holdFirstFile(fetchMock);
+        await userEvent.setup().click(within(row).getByRole("button", { name: "Download" }));
+        await screen.findByText("Do not close this tab until the download starts.", undefined, RENDER_STEP);
+        expect(leaveWarned()).toBe(true);
+        release();
+        await screen.findByText(/^Medical could not be added to the visa submission file/, undefined, RENDER_STEP);
+        expect(leaveWarned()).toBe(false);
+    });
+
+    test("removed after the audit entry fails", async () => {
+        const { row } = await openVisa("ADMIN", {
+            [`GET ${BASE}/visa-submission/manifest`]: { status: 200, body: manifest({}) },
+            [`POST ${BASE}/visa-submission/merged-download`]: { status: 500, body: {} },
+        });
+        await userEvent.setup().click(within(row).getByRole("button", { name: "Download" }));
+        await screen.findByText(/The download could not be recorded/, undefined, RENDER_STEP);
+        expect(leaveWarned()).toBe(false);
+    });
+
+    test("removed when the page is left (unmount) mid-merge", async () => {
+        const { fetchMock, row, view } = await openVisa("ADMIN", {
+            [`GET ${BASE}/visa-submission/manifest`]: { status: 200, body: manifest({}) },
+            [`POST ${BASE}/visa-submission/merged-download`]: AUDIT_OK,
+        });
+        const remove = vi.spyOn(window, "removeEventListener");
+        holdFirstFile(fetchMock);
+        await userEvent.setup().click(within(row).getByRole("button", { name: "Download" }));
+        await screen.findByText("Do not close this tab until the download starts.", undefined, RENDER_STEP);
+        expect(leaveWarned()).toBe(true);
+        view.unmount();
+        expect(remove).toHaveBeenCalledWith("beforeunload", expect.any(Function));
+        expect(leaveWarned()).toBe(false);
     });
 });
 

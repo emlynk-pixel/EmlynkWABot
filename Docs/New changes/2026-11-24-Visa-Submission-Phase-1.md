@@ -26,6 +26,7 @@ Order: Passport, SL Normal Police Report, SL Verified Police Report, Romania Pol
 ### Good to know
 - The PDF is built in your browser and is never stored. Each download is recorded in the Audit Logs as "Visa submission downloaded".
 - A password-protected or damaged document stops the merge and the error names it.
+- While the PDF is being prepared, closing or reloading the tab shows the browser's "leave site?" warning. It is active only during the merge. Using a link inside the admin app, or the Back button, is not blocked and cancels the merge.
 
 ## 2. Signed upload completes the stage
 

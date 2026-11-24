@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "../../auth/AuthProvider";
 import { ApiError } from "../../api/client";
 import { getVisaSubmissionFile, getVisaSubmissionManifest, recordVisaSubmissionDownload, type VisaSubmissionManifest } from "../../api/candidates";
@@ -30,6 +30,20 @@ export function useVisaSubmissionDownload(passportId: string): { button: ReactNo
     const [done, setDone] = useState<string | null>(null);
     const [confirming, setConfirming] = useState<VisaSubmissionManifest | null>(null);
     const busy = phase !== "idle";
+    const merging = phase === "merging" || phase === "recording";
+
+    // Warn before the tab is closed or reloaded, but only while the file is being prepared: leaving then
+    // loses the merge. Not while the manifest loads or the dialog is open (nothing is lost yet). The
+    // cleanup removes it on every exit: saved, failed, or the component unmounting.
+    useEffect(() => {
+        if (!merging) return;
+        const warn = (event: BeforeUnloadEvent) => {
+            event.preventDefault();
+            event.returnValue = "";
+        };
+        window.addEventListener("beforeunload", warn);
+        return () => window.removeEventListener("beforeunload", warn);
+    }, [merging]);
 
     const build = async (manifest: VisaSubmissionManifest) => {
         if (!token) return;
@@ -100,7 +114,7 @@ export function useVisaSubmissionDownload(passportId: string): { button: ReactNo
 
     const panel = (
         <>
-            {phase === "merging" || phase === "recording" ? (
+            {merging ? (
                 <div role="status" className="mt-2 rounded-lg border border-review-border bg-review-bg px-3 py-2 text-label-sm text-review">
                     <p>{progress ? `Preparing document ${progress.current}/${progress.total}…` : "Preparing…"}</p>
                     <p className="font-medium">Do not close this tab until the download starts.</p>

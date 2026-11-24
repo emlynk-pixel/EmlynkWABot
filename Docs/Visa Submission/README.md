@@ -92,13 +92,14 @@ Do not copy the list anywhere else. Phase 2 will reuse the same constants.
 | Completion uses the existing visa rules | One source of truth: test PASS and an active Job, as the manual form requires. |
 | Rules failing still saves the document | The file is not lost; staff see why the stage is not completed. |
 | Removing the signed document reopens the stage | The stage must not stay completed without its document. |
+| A leave-page warning is shown only while merging | Closing or reloading the tab cancels the merge and loses the work. The warning is removed as soon as the merge ends, so it never appears at other times. |
 | Every confirmed download is audited | `VISA_SUBMISSION_MERGED_DOWNLOAD` records who downloaded and which documents were included or left out. |
 
 ## 6. Limits of the browser merge
 
 - The browser downloads every document, so a slow internet connection makes it slower.
 - A very large merge needs PC memory. Close heavy tabs if it fails.
-- **Keep the tab open** until the file is saved.
+- **Keep the tab open** until the file is saved. While the merge runs, the browser shows its own "leave site?" warning if you close or reload the tab. The warning appears only during the merge. Clicking a link inside the admin app (for example the sidebar) or the Back button is **not** blocked and silently cancels the merge, because the app's router cannot block in-app navigation without a larger change.
 - A password-protected or corrupt PDF stops the merge, and the error names the document.
 - Images are not compressed, so the file can be large.
 - No copy is kept. Download again if you need it again.
@@ -118,3 +119,4 @@ Do not copy the list anywhere else. Phase 2 will reuse the same constants.
 10. Remove the signed document. The stage must go back to not completed.
 11. Sign in as ANALYST. Download must be hidden and Upload disabled.
 12. As ADMIN open **Audit Logs**. Find "Visa submission downloaded" for the download in step 4.
+13. Start a download with a large set of documents and try to close or reload the tab while "Preparing document…" shows. The browser should warn you. After the file is saved, closing the tab must not warn.
