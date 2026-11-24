@@ -2,6 +2,7 @@ import { businessDateOf } from "../utils/businessDay.js";
 import { CandidateError } from "./candidateService.js";
 import { FORM_ACCESS_STATUS } from "./candidateFormShareService.js";
 import { activeJobTypeNames, isNoPreference, NO_PREFERRED_JOB_TYPE } from "./jobTypeCatalog.js";
+import { notifyCandidateFormSubmitted } from "./notificationEvents.js";
 import { parseHeight, parseWeight } from "../utils/bodyMeasurements.js";
 import { findRomanianCity, ROMANIA_CITIES } from "../utils/romaniaCities.js";
 
@@ -592,7 +593,7 @@ function parseAnswerValues(answers, { now, jobCategories, groups = null, civilSt
 // A retry of the winning request (same idempotency key) gets the same success;
 // anything else after submission is 409 with a neutral body.
 export async function submitCandidateForm({ db, passportId, linkId, version, kind = "SINGLE", jobId = null, values, idempotencyKey, now = new Date() }) {
-    return db.$transaction(async (tx) => {
+    const result = await db.$transaction(async (tx) => {
         if (kind === "JOB_GROUP") {
             // The job must still be PROCESSING and the candidate still on it, now (FOR SHARE
             // keeps a completion from slipping in between this check and the write).
@@ -640,4 +641,8 @@ export async function submitCandidateForm({ db, passportId, linkId, version, kin
         await tx.candidateFormSheetSync.create({ data: { passportId, createdAt: now, updatedAt: now, nextAttemptAt: now } });
         return { submittedAt: now.toISOString() };
     });
+    // After the commit, best-effort (A4). Also on a retry of the winning request: the dedupe key
+    // (the stored submission time) keeps it to one, and a retry can still send one that failed.
+    await notifyCandidateFormSubmitted(db, { passportId, submittedAt: result.submittedAt });
+    return result;
 }
