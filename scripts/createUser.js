@@ -7,7 +7,7 @@
 // password typed at a hidden prompt (asked twice; for automation it may come
 // from the BOOTSTRAP_PASSWORD environment variable, never a command-line
 // argument), and its ACTIVE public."user" row. The default role is ADMIN; --role OWNER
-// makes the system owner of a new environment (Docs/OWNER_ROLE.md).
+// makes the system owner of a new environment (Docs/08-Security-and-Access/OWNER_ROLE.md).
 //
 // With --link: creates the public."user" row for an existing Supabase Auth
 // identity (found by email) that does not have one yet. An email whose row

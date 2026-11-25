@@ -1,5 +1,5 @@
 // Google Sheet operational mirror: the sync ENGINE (Phase 3/4).
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 7, 8.6 and 9.)
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 7, 8.6 and 9.)
 //
 // Two operations, one mapper, one comparison:
 //   reconcile()              every candidate in a complete database snapshot

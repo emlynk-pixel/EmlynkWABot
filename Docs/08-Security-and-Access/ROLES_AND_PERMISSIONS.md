@@ -329,8 +329,8 @@ Sidebar: **Candidates**, **Jobs**, **Agents**, **Client Management**. Lands on J
   - 403 `OWNER_REQUIRED` / `OWNER_LOCKED` and 400 `SELF_CHANGE`: user-management refusals.
 - **Related documents:**
   - [`OWNER_ROLE.md`](OWNER_ROLE.md): OWNER details and the database procedure.
-  - [`09a-admin-dashboard-api.md`](09a-admin-dashboard-api.md) §12–13: route tiers and the user-management API.
-  - [`09b-admin-dashboard-guide.md`](09b-admin-dashboard-guide.md) §7: the operator view.
+  - [`09a-admin-dashboard-api.md`](../04-Admin-Dashboard/09a-admin-dashboard-api.md) §12–13: route tiers and the user-management API.
+  - [`09b-admin-dashboard-guide.md`](../04-Admin-Dashboard/09b-admin-dashboard-guide.md) §7: the operator view.
   - [`10-security.md`](10-security.md): the security model.
 - **Keep this table in step with the code.** When a route's role tier changes in `src/routes/admin.js`, update this document.
 

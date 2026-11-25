@@ -54,7 +54,7 @@ Each entry: **Symptom → Cause → How to verify → Fix.** Only problems that 
 
 ### `P4002` from `prisma db pull` / `migrate diff`
 - **Cause:** `"user".auth_user_id` references Supabase's `auth` schema, which Prisma does not manage.
-- **Fix:** accepted limitation. Do not use these commands against Supabase; use `migrate status` and `validate` (`Docs/SUPABASE_AUTH.md`).
+- **Fix:** accepted limitation. Do not use these commands against Supabase; use `migrate status` and `validate` (`Docs/08-Security-and-Access/SUPABASE_AUTH.md`).
 
 ---
 
@@ -75,7 +75,7 @@ Each entry: **Symptom → Cause → How to verify → Fix.** Only problems that 
 
 ### Webhook signature failures only on Vercel
 - **Cause:** the request body was parsed before Express could verify the HMAC.
-- **Verify:** `NODEJS_HELPERS=0` present in the project's variables; `Docs/08-cloud-deployment.md` Step 7.
+- **Verify:** `NODEJS_HELPERS=0` present in the project's variables; `Docs/09-Deployment/08-cloud-deployment.md` Step 7.
 - **Fix:** set `NODEJS_HELPERS=0` and redeploy.
 
 ### All users share one rate-limit allowance (429 for unrelated users)
@@ -187,7 +187,7 @@ Each entry: **Symptom → Cause → How to verify → Fix.** Only problems that 
 
 ### Nothing is written to the Sheet
 - **Cause:** by design while `SHEET_SYNC_ENABLED` is not exactly `true`, or a pilot (`SHEET_SYNC_PILOT_CANDIDATE_IDS`) restricts the run.
-- **Fix:** do not "fix" this casually; writing is enabled only through the activation procedure (`Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §24.10).
+- **Fix:** do not "fix" this casually; writing is enabled only through the activation procedure (`Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §24.10).
 
 ---
 

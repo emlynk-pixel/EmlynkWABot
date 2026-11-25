@@ -97,7 +97,7 @@ WITH promoted AS (
 )
 INSERT INTO public.audit_logs (audit_id, admin_id, action, previous_status, new_status, reason, previous_value, new_value, created_date)
 SELECT gen_random_uuid()::text, admin_id, 'UPDATE_USER_ROLE', 'ADMIN', 'OWNER',
-       'Initial system owner (manual promotion, Docs/OWNER_ROLE.md)', 'ADMIN', 'OWNER', now()
+       'Initial system owner (manual promotion, Docs/08-Security-and-Access/OWNER_ROLE.md)', 'ADMIN', 'OWNER', now()
 FROM promoted
 RETURNING admin_id;
 
@@ -132,10 +132,10 @@ WITH demoted AS (
 )
 INSERT INTO public.audit_logs (audit_id, admin_id, action, previous_status, new_status, reason, previous_value, new_value, created_date)
 SELECT gen_random_uuid()::text, admin_id, 'UPDATE_USER_ROLE', 'OWNER', 'ADMIN',
-       'Owner changed (manual, Docs/OWNER_ROLE.md)', 'OWNER', 'ADMIN', now() FROM demoted
+       'Owner changed (manual, Docs/08-Security-and-Access/OWNER_ROLE.md)', 'OWNER', 'ADMIN', now() FROM demoted
 UNION ALL
 SELECT gen_random_uuid()::text, admin_id, 'UPDATE_USER_ROLE', 'ADMIN', 'OWNER',
-       'Owner changed (manual, Docs/OWNER_ROLE.md)', 'ADMIN', 'OWNER', now() FROM promoted
+       'Owner changed (manual, Docs/08-Security-and-Access/OWNER_ROLE.md)', 'ADMIN', 'OWNER', now() FROM promoted
 RETURNING admin_id, new_value;
 
 -- Exactly TWO rows returned (one ADMIN, one OWNER): COMMIT;

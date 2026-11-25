@@ -153,7 +153,7 @@ The old cards (totals, Client documents, police due dates, the two document char
 - [src/routes/admin.js](../../src/routes/admin.js) (`GET /api/admin/overview`)
 - [admin/src/pages/OverviewPage.tsx](../../admin/src/pages/OverviewPage.tsx)
 - Tests: `test/overviewRoles.test.js` and `admin/src/test/dashboard.test.tsx`
-- API details: `Docs/09a-admin-dashboard-api.md`
+- API details: `Docs/04-Admin-Dashboard/09a-admin-dashboard-api.md`
 
 ---
 
@@ -185,7 +185,7 @@ By our own server, not by Supabase. On every request the server reads the sign-i
 - [admin/src/auth/AuthProvider.tsx](../../admin/src/auth/AuthProvider.tsx) and [admin/src/auth/supabaseClient.ts](../../admin/src/auth/supabaseClient.ts) (the choice and ending the session when the browser closes)
 - [src/auth/supabaseIdentity.js](../../src/auth/supabaseIdentity.js) (the 30-day limit)
 - Tests: `admin/src/test/rememberMe.test.tsx` and `test/sessionMaxAge.test.js`
-- Details: `Docs/SUPABASE_AUTH.md`
+- Details: `Docs/08-Security-and-Access/SUPABASE_AUTH.md`
 
 ---
 

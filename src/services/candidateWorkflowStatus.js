@@ -29,7 +29,7 @@
 //      1-5 all holding the same stage is step 6 instead.
 // DETAILS_VERIFIED is no longer derived (the manual Verify details action no longer moves the Status);
 // the code and label are kept so old links and saved filters stay valid.
-// Docs/20-candidate-management.md §4.0 has the signals.
+// Docs/05-Candidate-Management/20-candidate-management.md §4.0 has the signals.
 
 export const WORKFLOW_STATUS = Object.freeze({
     REGISTERED: "REGISTERED",

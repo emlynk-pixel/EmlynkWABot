@@ -1,5 +1,5 @@
 // Converting accounts that still hold a retired role (requireRole.js RETIRED_ROLES) to a supported
-// one: scripts/migrateManagerRole.js, Docs/ROLES_AND_PERMISSIONS.md ("Retired MANAGER role").
+// one: scripts/migrateManagerRole.js, Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md ("Retired MANAGER role").
 //
 // An account with a retired role can't use the application (requireActiveUser.js answers 403
 // ROLE_NOT_SUPPORTED, and no route tier admits it), so every such account, whatever its status
@@ -41,7 +41,7 @@ export async function findRetiredRoleAccounts({ db, retiredRole }) {
 // Returns the converted accounts ({ adminId, status }).
 export async function convertRetiredRole({ db, retiredRole, replacementRole, actorId }) {
     if (!isRetiredRole(retiredRole)) throw new RetiredRoleError("NOT_RETIRED", "Not a retired role");
-    // Never the OWNER role (set in the database only, Docs/OWNER_ROLE.md), never another retired one.
+    // Never the OWNER role (set in the database only, Docs/08-Security-and-Access/OWNER_ROLE.md), never another retired one.
     if (!isValidRole(replacementRole) || replacementRole === ROLES.OWNER) {
         throw new RetiredRoleError("INVALID_ROLE", "The replacement must be a supported role other than OWNER");
     }

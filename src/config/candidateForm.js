@@ -1,5 +1,5 @@
 // Candidate Extra Details public form (candidate-form/, its own Vercel
-// project): backend-only settings. Docs/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md.
+// project): backend-only settings. Docs/08-Security-and-Access/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md.
 //
 //   CANDIDATE_FORM_ORIGIN        the form's exact origin (CORS allow-list of
 //                                /api/public/candidate-details only). Unset:

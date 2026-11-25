@@ -1,6 +1,6 @@
 # 09. Testing and Verification
 
-Two parts: automated checks you run on your machine, and a manual smoke test after each deployment. Background on how the suites are organised: [`Docs/12-testing-and-quality.md`](../Docs/12-testing-and-quality.md).
+Two parts: automated checks you run on your machine, and a manual smoke test after each deployment. Background on how the suites are organised: [`Docs/10-Testing-and-Quality/12-testing-and-quality.md`](../Docs/10-Testing-and-Quality/12-testing-and-quality.md).
 
 > **Rules.** Automated suites use in-memory fakes and an in-process PGlite database, so they never touch a real environment. The commands marked **REAL** below do touch real infrastructure. Run them only against a development or stage environment, never production. Never use real candidate data (passports, NICs, medical or police records) in any test. Use synthetic data.
 
@@ -79,7 +79,7 @@ Run on **stage** before promoting, and a reduced version on production after rel
 
 ### B. Sign-in and roles
 
-One account per role. Create them by invitation from the Admin console (OWNER/ADMIN), not by SQL. Role rules: [`Docs/ROLES_AND_PERMISSIONS.md`](../Docs/ROLES_AND_PERMISSIONS.md).
+One account per role. Create them by invitation from the Admin console (OWNER/ADMIN), not by SQL. Role rules: [`Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md`](../Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md).
 
 | Role | Sign in | Should see | Should be refused (URL typed directly gives 403 or redirect) |
 |---|---|---|---|

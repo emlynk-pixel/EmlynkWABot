@@ -6,7 +6,7 @@ import { normalizeCountryCode } from "../utils/countries.js";
 import { normalizePhoneNumber } from "../utils/phoneNumber.js";
 import { notifyAgentsMissingCountry } from "./notificationEvents.js";
 
-// Agent Management (Admin > Agents). Docs/AGENT_CLIENT_MANAGEMENT.md.
+// Agent Management (Admin > Agents). Docs/06-Jobs-and-Clients/AGENT_CLIENT_MANAGEMENT.md.
 //
 // An Agent is a BUSINESS entity (the overseas recruiting partner), never a
 // login: it has no link to the user table. One Agent belongs to ONE country and

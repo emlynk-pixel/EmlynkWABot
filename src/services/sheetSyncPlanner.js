@@ -1,5 +1,5 @@
 // Google Sheet operational mirror: sync PLANNING (Phase 2, read-only).
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 7 and 8.6.)
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 7 and 8.6.)
 //
 // Works out what a sync would do for a candidate, without doing it:
 //   APPEND     the candidate has no row in the Sheet yet

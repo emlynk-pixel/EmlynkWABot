@@ -1,6 +1,6 @@
 # Google Sheet Integration: Operational Mirror & Candidate Form Submissions
 
-**Contents:** Part A — Integration architecture, operations and troubleshooting (both tabs: Operational Mirror and Candidate Form Submissions) · Part B — Operational Mirror feature reference (formerly `GOOGLE_SHEET_SYNC_FEATURE.md`). The design specification, decisions and runbook are in [`GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md); the bulk import and the current 83-column mirror mapping in [`CANDIDATE_BULK_IMPORT.md`](CANDIDATE_BULK_IMPORT.md).
+**Contents:** Part A — Integration architecture, operations and troubleshooting (both tabs: Operational Mirror and Candidate Form Submissions) · Part B — Operational Mirror feature reference (formerly `GOOGLE_SHEET_SYNC_FEATURE.md`). The design specification, decisions and runbook are in [`GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md); the bulk import and the current 83-column mirror mapping in [`CANDIDATE_BULK_IMPORT.md`](../05-Candidate-Management/CANDIDATE_BULK_IMPORT.md).
 
 > **Current column layout.** The Operational Mirror uses the approved **83-column** layout (`A–CE`, see `CANDIDATE_BULK_IMPORT.md` §3). The 40- and 41-column figures that appear below (and in Part B) are earlier layouts, kept as history.
 
@@ -18,10 +18,10 @@
 - **Runtime Identity:** `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com` (Keyless Application Default Credentials)
 - **Primary References:**
   - Operational Mirror Feature Doc (formerly `GOOGLE_SHEET_SYNC_FEATURE.md`): [Part B of this document](#part-b--operational-mirror-feature-reference)
-  - Candidate Sync Architecture Spec: [Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md)
-  - Outbox Migration (Mirror): [prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql](../prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql)
-  - Outbox Migration (Form Submissions): [prisma/migrations/20261028120000_candidate_form_sheet_sync/migration.sql](../prisma/migrations/20261028120000_candidate_form_sheet_sync/migration.sql)
-  - Issues & Debugging History: [Docs/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md](EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md)
+  - Candidate Sync Architecture Spec: [Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md)
+  - Outbox Migration (Mirror): [prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql](../../prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql)
+  - Outbox Migration (Form Submissions): [prisma/migrations/20261028120000_candidate_form_sheet_sync/migration.sql](../../prisma/migrations/20261028120000_candidate_form_sheet_sync/migration.sql)
+  - Issues & Debugging History: [Docs/History/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md](../History/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md)
 
 ---
 
@@ -125,16 +125,16 @@ flowchart TD
 
 | Component | Path | Responsibility |
 | :--- | :--- | :--- |
-| **Form Sheet Schema** | [src/services/formSubmissionSheetSchema.js](../src/services/formSubmissionSheetSchema.js) | Defines the 74 required columns, exact header text, A1 range builders, and row mapper for candidate form submissions. |
-| **Form Sheets Adapter** | [src/services/formSubmissionSheetAdapter.js](../src/services/formSubmissionSheetAdapter.js) | Interacts with Google Sheets API v4 for the form tab. Reads headers, validates layout, reads submission IDs, and writes raw row updates/appends. |
-| **Form Sync Store** | [src/services/formSubmissionSyncStore.js](../src/services/formSubmissionSyncStore.js) | Outbox persistence layer for `candidate_form_sheet_sync`. Handles optimistic CAS batch claiming, completion marks, retry backoffs, and dead-letter failures. |
-| **Form Sync Engine** | [src/services/formSubmissionSync.js](../src/services/formSubmissionSync.js) | Orchestrates `processDue`. Claims batches under the shared writer lease, builds mapped cells, calls the adapter, and settles outbox rows. |
-| **Sync Worker Service** | [src/services/sheetSyncWorker.js](../src/services/sheetSyncWorker.js) | Central worker loop. Runs heartbeat, processes durable runs (`TEST_CONNECTION`, `RECONCILE`), claims writer lease, and invokes `formSubmissions.processDue` if writes are enabled. |
-| **Executable Entrypoint** | [src/sheetSyncWorker.js](../src/sheetSyncWorker.js) | The standalone executable script (`node src/sheetSyncWorker.js`). Validates environment, initializes Prisma, sets up Google ADC, binds HTTP server, and starts worker loop. |
-| **Worker Process Helper** | [src/sheetSyncWorkerProcess.js](../src/sheetSyncWorkerProcess.js) | Module helper defining `createSheetSyncHttpServer`, OIDC verifier, and `startSheetSyncWorkerProcess` graceful shutdown handlers. |
-| **Sheet Config Loader** | [src/config/sheetSync.js](../src/config/sheetSync.js) | Reads and validates environment variables for both tabs, destination mappings, pilot filters, tuning parameters, and schedule definitions. |
-| **Form Data Service** | [src/services/candidateFormDataService.js](../src/services/candidateFormDataService.js) | Implements `submitCandidateForm`, creating `candidate_form_response` and `candidate_form_sheet_sync` in the same database transaction. |
-| **Deployment Config** | [deploy/sheet-sync-worker.env.yaml](../deploy/sheet-sync-worker.env.yaml) | Cloud Run service environment definition file. |
+| **Form Sheet Schema** | [src/services/formSubmissionSheetSchema.js](../../src/services/formSubmissionSheetSchema.js) | Defines the 74 required columns, exact header text, A1 range builders, and row mapper for candidate form submissions. |
+| **Form Sheets Adapter** | [src/services/formSubmissionSheetAdapter.js](../../src/services/formSubmissionSheetAdapter.js) | Interacts with Google Sheets API v4 for the form tab. Reads headers, validates layout, reads submission IDs, and writes raw row updates/appends. |
+| **Form Sync Store** | [src/services/formSubmissionSyncStore.js](../../src/services/formSubmissionSyncStore.js) | Outbox persistence layer for `candidate_form_sheet_sync`. Handles optimistic CAS batch claiming, completion marks, retry backoffs, and dead-letter failures. |
+| **Form Sync Engine** | [src/services/formSubmissionSync.js](../../src/services/formSubmissionSync.js) | Orchestrates `processDue`. Claims batches under the shared writer lease, builds mapped cells, calls the adapter, and settles outbox rows. |
+| **Sync Worker Service** | [src/services/sheetSyncWorker.js](../../src/services/sheetSyncWorker.js) | Central worker loop. Runs heartbeat, processes durable runs (`TEST_CONNECTION`, `RECONCILE`), claims writer lease, and invokes `formSubmissions.processDue` if writes are enabled. |
+| **Executable Entrypoint** | [src/sheetSyncWorker.js](../../src/sheetSyncWorker.js) | The standalone executable script (`node src/sheetSyncWorker.js`). Validates environment, initializes Prisma, sets up Google ADC, binds HTTP server, and starts worker loop. |
+| **Worker Process Helper** | [src/sheetSyncWorkerProcess.js](../../src/sheetSyncWorkerProcess.js) | Module helper defining `createSheetSyncHttpServer`, OIDC verifier, and `startSheetSyncWorkerProcess` graceful shutdown handlers. |
+| **Sheet Config Loader** | [src/config/sheetSync.js](../../src/config/sheetSync.js) | Reads and validates environment variables for both tabs, destination mappings, pilot filters, tuning parameters, and schedule definitions. |
+| **Form Data Service** | [src/services/candidateFormDataService.js](../../src/services/candidateFormDataService.js) | Implements `submitCandidateForm`, creating `candidate_form_response` and `candidate_form_sheet_sync` in the same database transaction. |
+| **Deployment Config** | [deploy/sheet-sync-worker.env.yaml](../../deploy/sheet-sync-worker.env.yaml) | Cloud Run service environment definition file. |
 | **Database Migrations** | `prisma/migrations/20261006120000_sheet_sync_outbox`<br>`prisma/migrations/20261028120000_candidate_form_sheet_sync` | Additive SQL migrations creating outbox tables, indexes, triggers, and RLS policies. |
 
 ---
@@ -143,7 +143,7 @@ flowchart TD
 
 ### `candidate_form_sheet_sync` Table Schema
 
-Defined in [prisma/schema.prisma](../prisma/schema.prisma#L326-L346):
+Defined in [prisma/schema.prisma](../../prisma/schema.prisma#L326-L346):
 
 ```prisma
 model CandidateFormSheetSync {
@@ -199,7 +199,7 @@ model CandidateFormSheetSync {
 
 ## 5. Google Sheet Schemas
 
-> **Superseded column table (2026-10-28).** The live mirror now uses the latest approved *Emlynk Candidate Operational Mirror* headers and order (83 columns, `_SYSTEM_CANDIDATE_ID` in B, `SURNAME`/`OTHER NAME` by stored meaning, ONE `POLICE REP SRI LANKA` column: the duplicate SL Normal column was removed). The authoritative table, the deployment header renames and each column's kind are in [CANDIDATE_BULK_IMPORT.md](CANDIDATE_BULK_IMPORT.md) §3–§4 and in `src/services/sheetSchema.js`. The table below is kept as history.
+> **Superseded column table (2026-10-28).** The live mirror now uses the latest approved *Emlynk Candidate Operational Mirror* headers and order (83 columns, `_SYSTEM_CANDIDATE_ID` in B, `SURNAME`/`OTHER NAME` by stored meaning, ONE `POLICE REP SRI LANKA` column: the duplicate SL Normal column was removed). The authoritative table, the deployment header renames and each column's kind are in [CANDIDATE_BULK_IMPORT.md](../05-Candidate-Management/CANDIDATE_BULK_IMPORT.md) §3–§4 and in `src/services/sheetSchema.js`. The table below is kept as history.
 
 ### Tab 1: `Emlynk Candidate Operational Mirror` (41 Columns)
 - **Header Row:** Row 1 (exact matching, position-independent).
@@ -277,7 +277,7 @@ The Cloud Run service `emlynk-sheet-sync-worker` runs in region `asia-south1`.
 
 ### Dockerfile Entrypoint vs. Worker Entrypoint
 
-The root [Dockerfile](../Dockerfile#L40) serves the primary Express backend API:
+The root [Dockerfile](../../Dockerfile#L40) serves the primary Express backend API:
 ```dockerfile
 # Default CMD in root Dockerfile (Express Web API):
 CMD ["node", "src/app.js"]
@@ -291,8 +291,8 @@ Container Entrypoint Override:
   Args:    src/sheetSyncWorker.js
 ```
 
-- [src/sheetSyncWorker.js](../src/sheetSyncWorker.js) is the **actual executable**.
-- [src/sheetSyncWorkerProcess.js](../src/sheetSyncWorkerProcess.js) is a module export library. Pointing Cloud Run args to `src/sheetSyncWorkerProcess.js` causes the container to exit immediately with code 0.
+- [src/sheetSyncWorker.js](../../src/sheetSyncWorker.js) is the **actual executable**.
+- [src/sheetSyncWorkerProcess.js](../../src/sheetSyncWorkerProcess.js) is a module export library. Pointing Cloud Run args to `src/sheetSyncWorkerProcess.js` causes the container to exit immediately with code 0.
 
 ---
 
@@ -317,7 +317,7 @@ The worker process binds an HTTP server to `process.env.PORT` (defaults to 8080)
 
 ## 11. Deployment Configuration
 
-Environment variables defined in [deploy/sheet-sync-worker.env.yaml](../deploy/sheet-sync-worker.env.yaml):
+Environment variables defined in [deploy/sheet-sync-worker.env.yaml](../../deploy/sheet-sync-worker.env.yaml):
 
 | Variable | Default Value | Purpose |
 | :--- | :--- | :--- |
@@ -407,7 +407,7 @@ node --test test/candidateFormSubmissionView.test.js test/candidateFormShare.tes
 
 ### 2. `POST /tasks/reconcile` returns 404 even after Command Override
 - **Symptom:** Worker process starts, `/health` returns 200, but `/tasks/reconcile` returns 404.
-- **Root Cause:** In [src/sheetSyncWorkerProcess.js](../src/sheetSyncWorkerProcess.js#L52), the route was conditionally gated by `&& verifyScheduler`. When `SHEET_SYNC_SCHEDULER_AUDIENCE` and `SHEET_SYNC_SCHEDULER_INVOKER` were commented out in the env file, `verifyScheduler` was `null`, causing the server to return 404.
+- **Root Cause:** In [src/sheetSyncWorkerProcess.js](../../src/sheetSyncWorkerProcess.js#L52), the route was conditionally gated by `&& verifyScheduler`. When `SHEET_SYNC_SCHEDULER_AUDIENCE` and `SHEET_SYNC_SCHEDULER_INVOKER` were commented out in the env file, `verifyScheduler` was `null`, causing the server to return 404.
 - **Fix:** Modified route handling to always register `/tasks/reconcile`, making token verification optional while relying on Cloud Run IAM authentication.
 
 ### 3. Cloud Run returns 411 Length Required
@@ -465,16 +465,16 @@ node --test test/candidateFormSubmissionView.test.js test/candidateFormShare.tes
 - **Target Service Account:** `emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`
 - **Target Cloud Run Worker:** `emlynk-sheet-sync-worker` (Region: `asia-south1`)
 - **Primary References:**
-  - Architecture Specification: [Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md)
-  - Outbox Migration: [prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql](../prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql)
-  - Sheet Schema: [src/services/sheetSchema.js](../src/services/sheetSchema.js)
-  - Candidate Sheet Mapper: [src/services/candidateSheetMapper.js](../src/services/candidateSheetMapper.js)
-  - Google Sheets Adapter: [src/services/googleSheetsAdapter.js](../src/services/googleSheetsAdapter.js)
-  - Aggregate Reader: [src/services/candidateAggregateReader.js](../src/services/candidateAggregateReader.js)
-  - Sync Store: [src/services/sheetSyncStore.js](../src/services/sheetSyncStore.js)
-  - Sync Engine: [src/services/sheetSyncEngine.js](../src/services/sheetSyncEngine.js)
-  - Worker Service: [src/services/sheetSyncWorker.js](../src/services/sheetSyncWorker.js)
-  - Admin UI: [admin/src/pages/SettingsPage.tsx](../admin/src/pages/SettingsPage.tsx)
+  - Architecture Specification: [Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md)
+  - Outbox Migration: [prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql](../../prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql)
+  - Sheet Schema: [src/services/sheetSchema.js](../../src/services/sheetSchema.js)
+  - Candidate Sheet Mapper: [src/services/candidateSheetMapper.js](../../src/services/candidateSheetMapper.js)
+  - Google Sheets Adapter: [src/services/googleSheetsAdapter.js](../../src/services/googleSheetsAdapter.js)
+  - Aggregate Reader: [src/services/candidateAggregateReader.js](../../src/services/candidateAggregateReader.js)
+  - Sync Store: [src/services/sheetSyncStore.js](../../src/services/sheetSyncStore.js)
+  - Sync Engine: [src/services/sheetSyncEngine.js](../../src/services/sheetSyncEngine.js)
+  - Worker Service: [src/services/sheetSyncWorker.js](../../src/services/sheetSyncWorker.js)
+  - Admin UI: [admin/src/pages/SettingsPage.tsx](../../admin/src/pages/SettingsPage.tsx)
 
 ---
 
@@ -516,24 +516,24 @@ Google Sheet (`Emlynk Candidate Operational Mirror`)
 
 | Component | Repository Path | Core Responsibilities |
 | :--- | :--- | :--- |
-| **Sheet Schema** | [src/services/sheetSchema.js](../src/services/sheetSchema.js) | Defines the 41 required headers (canonical layout `A:AO`) and resolves columns **by header name** (`readSheetLayout`: any order, extra operator columns allowed, missing or duplicate required headers give `SCHEMA_INVALID`). Exports the single column-letter helper, A1 range builders (one write range per contiguous run of system columns), `validateHeaderRow` and `assertSheetRow`. |
-| **Candidate Mapper** | [src/services/candidateSheetMapper.js](../src/services/candidateSheetMapper.js) | Pure mapper turning candidate aggregates into 41 deterministic string cells in canonical field order (position-free; the adapter translates to the live Sheet order). Enforces identical business logic as Admin UI for document currentness and stage completeness. |
-| **Sheets Adapter** | [src/services/googleSheetsAdapter.js](../src/services/googleSheetsAdapter.js) | The only module communicating with Google Sheets API v4. Implements narrow read/write methods (`readHeader`, `validateSchema`, `readLayout`, `readCandidateIds`, `readRows`, `readRowsByNumber`, `writeRows`, `appendRow`, `updateRow`). Enforces write gating, keyless ADC authentication, and error sanitation. Contains **zero** clear or row-deletion methods. |
-| **Aggregate Reader** | [src/services/candidateAggregateReader.js](../src/services/candidateAggregateReader.js) | Reads candidate aggregates (`users`, `candidate_stages`, `documents`) in single queries by `unique_id`. Supports keyset pagination and transactional `readSnapshot` (`REPEATABLE READ`) verified against exact record counts. |
-| **Sync Planner** | [src/services/sheetSyncPlanner.js](../src/services/sheetSyncPlanner.js) | Read-only planning module. Indexes Sheet candidate IDs from the `_SYSTEM_CANDIDATE_ID` column, detects duplicate system IDs (`SheetDuplicateCandidateIdError`), diffs expected cells against actual cells (`changedColumns`), and classifies operations (`APPEND`, `UPDATE`, `UNCHANGED`, `NOT_IN_DATABASE`). |
-| **Health Check** | [src/services/sheetHealthCheck.js](../src/services/sheetHealthCheck.js) | Read-only connection and schema probe (row 1). Validates Google API connectivity and the header-name schema (reports missing / duplicated required headers) using `spreadsheets.readonly` scope without writing. |
-| **Sync Store** | [src/services/sheetSyncStore.js](../src/services/sheetSyncStore.js) | PostgreSQL persistence layer: atomic compare-and-swap (CAS) queue claiming, leases, fenced settlements, bounded exponential backoff (`15s * 4^(attempt-1)` ±20% jitter), durable run tracking (`sheet_sync_runs`), single-row integration state (`sheet_sync_state`), and distributed writer lease acquisition. |
-| **Sync Engine** | [src/services/sheetSyncEngine.js](../src/services/sheetSyncEngine.js) | Implements incremental sync (`syncCandidates`) and full reconciliation (`reconcile`). Handles chunked writing (200 rows/batch), pre-write schema validation, duplicate detection, dry-run mode, and deletion guard verification. |
-| **Sync Worker** | [src/services/sheetSyncWorker.js](../src/services/sheetSyncWorker.js) | Core worker loop: reports heartbeat, processes claimed runs (`TEST_CONNECTION` or `RECONCILE`), claims incremental queue batches, enforces writer lease, manages halting on configuration/data errors, and prunes aged completed queue rows. |
-| **Status Service** | [src/services/sheetSyncStatusService.js](../src/services/sheetSyncStatusService.js) | Read-only service for Admin UI: gathers worker heartbeat, write gate status, queue counts, run history, and integration health from PostgreSQL. Never communicates with Google. |
-| **Settings Routes** | [src/routes/sheetSyncSettings.js](../src/routes/sheetSyncSettings.js) | Express router mounted at `/api/admin/settings/sheet-sync`. Protected by `requireRole([ADMIN])`. Provides `GET /status`, `POST /test`, `POST /run`, and `GET /runs/:runId`. |
-| **Admin Settings UI** | [admin/src/pages/SettingsPage.tsx](../admin/src/pages/SettingsPage.tsx) | React Admin console page at `/admin/settings`. Displays connection status, integration state, write gate, target hint, queue counts, run summaries, and triggers background runs via "Test Connection" and "Sync Now". |
-| **Admin API Client** | [admin/src/api/sheetSync.ts](../admin/src/api/sheetSync.ts) | TypeScript API client for settings endpoints. |
-| **Database Migration** | [prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql](../prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql) | Additive migration creating `sheet_sync_queue`, `sheet_sync_runs`, `sheet_sync_state`, partial unique indexes, RLS policies, and database triggers on `users`, `candidate_stages`, and `documents`. |
-| **Worker Process** | [src/sheetSyncWorker.js](../src/sheetSyncWorker.js), [src/sheetSyncWorkerProcess.js](../src/sheetSyncWorkerProcess.js) | Dedicated Cloud Run process entrypoint (`npm run sheet:worker`). Validates environment, binds HTTP server on `$PORT` with `/health` and OIDC-protected `POST /tasks/reconcile`, and handles graceful shutdown via SIGTERM/SIGINT. |
-| **Operator CLI** | [src/sheetSyncRequest.js](../src/sheetSyncRequest.js) | Operator CLI command (`npm run sheet:request -- reconcile\|test`) to enqueue durable runs directly via database without HTTP. |
-| **Health Check CLI** | [src/sheetSyncCheck.js](../src/sheetSyncCheck.js) | Standalone read-only CLI check (`npm run sheet:check`) printing sanitized JSON results. |
-| **Deployment Config** | [deploy/sheet-sync-worker.env.yaml](../deploy/sheet-sync-worker.env.yaml) | Cloud Run environment variable definition with non-secret defaults. |
+| **Sheet Schema** | [src/services/sheetSchema.js](../../src/services/sheetSchema.js) | Defines the 41 required headers (canonical layout `A:AO`) and resolves columns **by header name** (`readSheetLayout`: any order, extra operator columns allowed, missing or duplicate required headers give `SCHEMA_INVALID`). Exports the single column-letter helper, A1 range builders (one write range per contiguous run of system columns), `validateHeaderRow` and `assertSheetRow`. |
+| **Candidate Mapper** | [src/services/candidateSheetMapper.js](../../src/services/candidateSheetMapper.js) | Pure mapper turning candidate aggregates into 41 deterministic string cells in canonical field order (position-free; the adapter translates to the live Sheet order). Enforces identical business logic as Admin UI for document currentness and stage completeness. |
+| **Sheets Adapter** | [src/services/googleSheetsAdapter.js](../../src/services/googleSheetsAdapter.js) | The only module communicating with Google Sheets API v4. Implements narrow read/write methods (`readHeader`, `validateSchema`, `readLayout`, `readCandidateIds`, `readRows`, `readRowsByNumber`, `writeRows`, `appendRow`, `updateRow`). Enforces write gating, keyless ADC authentication, and error sanitation. Contains **zero** clear or row-deletion methods. |
+| **Aggregate Reader** | [src/services/candidateAggregateReader.js](../../src/services/candidateAggregateReader.js) | Reads candidate aggregates (`users`, `candidate_stages`, `documents`) in single queries by `unique_id`. Supports keyset pagination and transactional `readSnapshot` (`REPEATABLE READ`) verified against exact record counts. |
+| **Sync Planner** | [src/services/sheetSyncPlanner.js](../../src/services/sheetSyncPlanner.js) | Read-only planning module. Indexes Sheet candidate IDs from the `_SYSTEM_CANDIDATE_ID` column, detects duplicate system IDs (`SheetDuplicateCandidateIdError`), diffs expected cells against actual cells (`changedColumns`), and classifies operations (`APPEND`, `UPDATE`, `UNCHANGED`, `NOT_IN_DATABASE`). |
+| **Health Check** | [src/services/sheetHealthCheck.js](../../src/services/sheetHealthCheck.js) | Read-only connection and schema probe (row 1). Validates Google API connectivity and the header-name schema (reports missing / duplicated required headers) using `spreadsheets.readonly` scope without writing. |
+| **Sync Store** | [src/services/sheetSyncStore.js](../../src/services/sheetSyncStore.js) | PostgreSQL persistence layer: atomic compare-and-swap (CAS) queue claiming, leases, fenced settlements, bounded exponential backoff (`15s * 4^(attempt-1)` ±20% jitter), durable run tracking (`sheet_sync_runs`), single-row integration state (`sheet_sync_state`), and distributed writer lease acquisition. |
+| **Sync Engine** | [src/services/sheetSyncEngine.js](../../src/services/sheetSyncEngine.js) | Implements incremental sync (`syncCandidates`) and full reconciliation (`reconcile`). Handles chunked writing (200 rows/batch), pre-write schema validation, duplicate detection, dry-run mode, and deletion guard verification. |
+| **Sync Worker** | [src/services/sheetSyncWorker.js](../../src/services/sheetSyncWorker.js) | Core worker loop: reports heartbeat, processes claimed runs (`TEST_CONNECTION` or `RECONCILE`), claims incremental queue batches, enforces writer lease, manages halting on configuration/data errors, and prunes aged completed queue rows. |
+| **Status Service** | [src/services/sheetSyncStatusService.js](../../src/services/sheetSyncStatusService.js) | Read-only service for Admin UI: gathers worker heartbeat, write gate status, queue counts, run history, and integration health from PostgreSQL. Never communicates with Google. |
+| **Settings Routes** | [src/routes/sheetSyncSettings.js](../../src/routes/sheetSyncSettings.js) | Express router mounted at `/api/admin/settings/sheet-sync`. Protected by `requireRole([ADMIN])`. Provides `GET /status`, `POST /test`, `POST /run`, and `GET /runs/:runId`. |
+| **Admin Settings UI** | [admin/src/pages/SettingsPage.tsx](../../admin/src/pages/SettingsPage.tsx) | React Admin console page at `/admin/settings`. Displays connection status, integration state, write gate, target hint, queue counts, run summaries, and triggers background runs via "Test Connection" and "Sync Now". |
+| **Admin API Client** | [admin/src/api/sheetSync.ts](../../admin/src/api/sheetSync.ts) | TypeScript API client for settings endpoints. |
+| **Database Migration** | [prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql](../../prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql) | Additive migration creating `sheet_sync_queue`, `sheet_sync_runs`, `sheet_sync_state`, partial unique indexes, RLS policies, and database triggers on `users`, `candidate_stages`, and `documents`. |
+| **Worker Process** | [src/sheetSyncWorker.js](../../src/sheetSyncWorker.js), [src/sheetSyncWorkerProcess.js](../../src/sheetSyncWorkerProcess.js) | Dedicated Cloud Run process entrypoint (`npm run sheet:worker`). Validates environment, binds HTTP server on `$PORT` with `/health` and OIDC-protected `POST /tasks/reconcile`, and handles graceful shutdown via SIGTERM/SIGINT. |
+| **Operator CLI** | [src/sheetSyncRequest.js](../../src/sheetSyncRequest.js) | Operator CLI command (`npm run sheet:request -- reconcile\|test`) to enqueue durable runs directly via database without HTTP. |
+| **Health Check CLI** | [src/sheetSyncCheck.js](../../src/sheetSyncCheck.js) | Standalone read-only CLI check (`npm run sheet:check`) printing sanitized JSON results. |
+| **Deployment Config** | [deploy/sheet-sync-worker.env.yaml](../../deploy/sheet-sync-worker.env.yaml) | Cloud Run environment variable definition with non-secret defaults. |
 
 ---
 
@@ -641,7 +641,7 @@ The operational mirror links database candidates to Sheet rows exclusively throu
 
 ### 4. Google Sheet Schema
 
-> **Superseded column table (2026-10-28).** The live mirror now uses the latest approved *Emlynk Candidate Operational Mirror* headers and order (83 columns, `_SYSTEM_CANDIDATE_ID` in B, `SURNAME`/`OTHER NAME` by stored meaning, ONE `POLICE REP SRI LANKA` column: the duplicate SL Normal column was removed). The authoritative table, the deployment header renames and each column's kind are in [CANDIDATE_BULK_IMPORT.md](CANDIDATE_BULK_IMPORT.md) §3–§4 and in `src/services/sheetSchema.js`. The table below is kept as history.
+> **Superseded column table (2026-10-28).** The live mirror now uses the latest approved *Emlynk Candidate Operational Mirror* headers and order (83 columns, `_SYSTEM_CANDIDATE_ID` in B, `SURNAME`/`OTHER NAME` by stored meaning, ONE `POLICE REP SRI LANKA` column: the duplicate SL Normal column was removed). The authoritative table, the deployment header renames and each column's kind are in [CANDIDATE_BULK_IMPORT.md](../05-Candidate-Management/CANDIDATE_BULK_IMPORT.md) §3–§4 and in `src/services/sheetSchema.js`. The table below is kept as history.
 
 The operational mirror implements **41 required headers** (40 human-facing operational columns plus the technical identity `_SYSTEM_CANDIDATE_ID`), resolved dynamically **by header name**. Operators may reorder columns and add their own; order is irrelevant.
 
@@ -960,7 +960,7 @@ POST /tasks/reconcile
 #### Trigger Verification
 
 1. **Cloud Run IAM:** Cloud Run rejects any request that lacks `roles/run.invoker` permission.
-2. **OIDC Token Defense-in-Depth:** The worker's internal HTTP server ([src/sheetSyncWorkerProcess.js](../src/sheetSyncWorkerProcess.js)) verifies the Google-signed OIDC bearer token:
+2. **OIDC Token Defense-in-Depth:** The worker's internal HTTP server ([src/sheetSyncWorkerProcess.js](../../src/sheetSyncWorkerProcess.js)) verifies the Google-signed OIDC bearer token:
    - Token signature validated against Google certs.
    - Token audience matches `SHEET_SYNC_SCHEDULER_AUDIENCE`.
    - Token email matches `SHEET_SYNC_SCHEDULER_INVOKER`.
@@ -1054,17 +1054,17 @@ The feature is covered by comprehensive automated test suites covering backend s
 
 | Test File | Component Under Test | Test Count | Status |
 | :--- | :--- | :---: | :---: |
-| [test/sheetSchema.test.js](../test/sheetSchema.test.js) | Header-name layout (any order, extra columns, missing / duplicate / renamed headers), column-letter helper, A1 ranges and write runs, assertSheetRow. | 25 | **PASS** |
-| [test/candidateSheetMapper.test.js](../test/candidateSheetMapper.test.js) | Aggregate mapping, date formatting, document/stage statuses, record status, pure mapping invariants. | 21 | **PASS** |
-| [test/googleSheetsAdapter.test.js](../test/googleSheetsAdapter.test.js) | Narrow adapter methods, write gate enforcement, error classification, range quoting, header-name reads and writes (operator columns never written), live client test runner guard. | 35 | **PASS** |
-| [test/sheetSyncPhase2.test.js](../test/sheetSyncPhase2.test.js) | Aggregate reader batching, planning actions, duplicate ID detection, read-only health checks. | 30 | **PASS** |
-| [test/sheetSyncOutbox.test.js](../test/sheetSyncOutbox.test.js) | Additive PostgreSQL migration on PGlite, atomic triggers, coalescing, delete hint stickiness, passport cascade. | 14 | **PASS** |
-| [test/sheetSyncEngine.test.js](../test/sheetSyncEngine.test.js) | Incremental sync, reconciliation drift repair, deletion guard logic, duplicate stops, dry-run mode. | 13 | **PASS** |
-| [test/sheetSyncReordering.test.js](../test/sheetSyncReordering.test.js) | Dynamic column mapping regression suite: canonical, reversed and unusual layouts; identity in A / middle / last; moved VISA columns; custom columns preserved; missing, duplicate and renamed headers; no wrong-column writes; layout re-read on a later run; mid-run layout change; idempotent recovery. | 23 | **PASS** |
-| [test/sheetSyncWorker.test.js](../test/sheetSyncWorker.test.js) | Worker loop, lease management, writer lease fencing, exponential backoff, dead lettering, pilot restrictions, halted states, schema problem codes, PII redaction. | 37 | **PASS** |
-| [test/sheetSyncSettingsApi.test.js](../test/sheetSyncSettingsApi.test.js) | Express Settings API routes, RBAC (403 for non-admin roles), token claim validation, deduplication of active runs. | 13 | **PASS** |
-| [test/sheetSyncWorkerProcess.test.js](../test/sheetSyncWorkerProcess.test.js) | Worker HTTP server, `/health`, Cloud Scheduler OIDC verification, operator CLI command, shutdown signals. | 7 | **PASS** |
-| [admin/src/test/settings.test.tsx](../admin/src/test/settings.test.tsx) | Admin UI Settings page, sidebar navigation, breadcrumbs, status badge rendering, action buttons, RBAC restricted card. | 12 | **PASS** |
+| [test/sheetSchema.test.js](../../test/sheetSchema.test.js) | Header-name layout (any order, extra columns, missing / duplicate / renamed headers), column-letter helper, A1 ranges and write runs, assertSheetRow. | 25 | **PASS** |
+| [test/candidateSheetMapper.test.js](../../test/candidateSheetMapper.test.js) | Aggregate mapping, date formatting, document/stage statuses, record status, pure mapping invariants. | 21 | **PASS** |
+| [test/googleSheetsAdapter.test.js](../../test/googleSheetsAdapter.test.js) | Narrow adapter methods, write gate enforcement, error classification, range quoting, header-name reads and writes (operator columns never written), live client test runner guard. | 35 | **PASS** |
+| [test/sheetSyncPhase2.test.js](../../test/sheetSyncPhase2.test.js) | Aggregate reader batching, planning actions, duplicate ID detection, read-only health checks. | 30 | **PASS** |
+| [test/sheetSyncOutbox.test.js](../../test/sheetSyncOutbox.test.js) | Additive PostgreSQL migration on PGlite, atomic triggers, coalescing, delete hint stickiness, passport cascade. | 14 | **PASS** |
+| [test/sheetSyncEngine.test.js](../../test/sheetSyncEngine.test.js) | Incremental sync, reconciliation drift repair, deletion guard logic, duplicate stops, dry-run mode. | 13 | **PASS** |
+| [test/sheetSyncReordering.test.js](../../test/sheetSyncReordering.test.js) | Dynamic column mapping regression suite: canonical, reversed and unusual layouts; identity in A / middle / last; moved VISA columns; custom columns preserved; missing, duplicate and renamed headers; no wrong-column writes; layout re-read on a later run; mid-run layout change; idempotent recovery. | 23 | **PASS** |
+| [test/sheetSyncWorker.test.js](../../test/sheetSyncWorker.test.js) | Worker loop, lease management, writer lease fencing, exponential backoff, dead lettering, pilot restrictions, halted states, schema problem codes, PII redaction. | 37 | **PASS** |
+| [test/sheetSyncSettingsApi.test.js](../../test/sheetSyncSettingsApi.test.js) | Express Settings API routes, RBAC (403 for non-admin roles), token claim validation, deduplication of active runs. | 13 | **PASS** |
+| [test/sheetSyncWorkerProcess.test.js](../../test/sheetSyncWorkerProcess.test.js) | Worker HTTP server, `/health`, Cloud Scheduler OIDC verification, operator CLI command, shutdown signals. | 7 | **PASS** |
+| [admin/src/test/settings.test.tsx](../../admin/src/test/settings.test.tsx) | Admin UI Settings page, sidebar navigation, breadcrumbs, status badge rendering, action buttons, RBAC restricted card. | 12 | **PASS** |
 | **Total Verified Sheet Sync Tests** | **All core sheet sync backend & frontend suites** | **230** | **100% PASS** |
 
 #### Additional Validations
@@ -1090,7 +1090,7 @@ During deployment configuration on Windows PowerShell, passing comma-separated e
   ```powershell
   SHEET_SYNC_ENABLED="true SHEET_SYNC_PILOT_CANDIDATE_IDS=0003"
   ```
-- **Safety System Outcome:** The fail-closed configuration validator in [src/config/sheetSync.js](../src/config/sheetSync.js) recognized the value as invalid (`INVALID`), defaulted `enabled = false`, and refused to boot, successfully preventing unauthorized writes.
+- **Safety System Outcome:** The fail-closed configuration validator in [src/config/sheetSync.js](../../src/config/sheetSync.js) recognized the value as invalid (`INVALID`), defaulted `enabled = false`, and refused to boot, successfully preventing unauthorized writes.
 - **Resolution:** When using Windows PowerShell, update variables individually or use the stop-parsing symbol `--%`:
   ```powershell
   # Safe Method: Update variables separately
@@ -1103,7 +1103,7 @@ During deployment configuration on Windows PowerShell, passing comma-separated e
 | Issue Observed | Likely Cause | Investigation & Remediation |
 | :--- | :--- | :--- |
 | **Connected but no rows written** | Write sync is disabled. | Check Admin UI "Write sync" badge or `SHEET_SYNC_ENABLED` env var. If `false`, Sync Now runs as a dry run. Enable via `SHEET_SYNC_ENABLED=true`. |
-| **Integration state: Configuration error: sync halted** | Header modified or access denied. | Run "Test Connection" in Admin UI. Review Cloud Logging for `sheet_sync.config_error`. If `SCHEMA_INVALID`, compare Sheet header against [src/services/sheetSchema.js](../src/services/sheetSchema.js). If `ACCESS_DENIED`, verify service account has Editor role on the Sheet. |
+| **Integration state: Configuration error: sync halted** | Header modified or access denied. | Run "Test Connection" in Admin UI. Review Cloud Logging for `sheet_sync.config_error`. If `SCHEMA_INVALID`, compare Sheet header against [src/services/sheetSchema.js](../../src/services/sheetSchema.js). If `ACCESS_DENIED`, verify service account has Editor role on the Sheet. |
 | **Integration state: Duplicate candidate IDs: sync halted** | Duplicate ID in Column `AN`. | Inspect Google Sheet Column `AN`. Filter for duplicate values. Remove or fix duplicate technical IDs. Once fixed, run "Test Connection" or wait 5 minutes for automatic resume. |
 | **Worker banner: Worker is not reporting** | Cloud Run instance stopped or crashing. | Verify Cloud Run service `emlynk-sheet-sync-worker` in GCP console. Check Cloud Run logs for startup validation failures or database connection errors. Verify Secret Manager `DATABASE_URL` binding. |
 | **Queue items accumulating in FAILED** | Repeated transient errors exceeded max retries. | Check `sheet_sync_queue` table or Admin UI pending/failed count. Triggering "Sync Now" reconciles all candidates and resolves older failed queue items upon successful write. |
@@ -1169,7 +1169,7 @@ If immediate external access revocation is required without touching Cloud Run:
 
 #### Database Schema Considerations
 
-The database migration [prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql](../prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql) is **strictly additive**:
+The database migration [prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql](../../prisma/migrations/20261006120000_sheet_sync_outbox/migration.sql) is **strictly additive**:
 - It adds new tables (`sheet_sync_queue`, `sheet_sync_runs`, `sheet_sync_state`) and triggers.
 - It does **NOT** modify or drop any existing columns, constraints, or relationships in `users`, `documents`, or `candidate_stages`.
 

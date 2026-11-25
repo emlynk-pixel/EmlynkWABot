@@ -1,7 +1,7 @@
 // Agent Management + Client Management (Admin > Agents, Admin > Client Management).
 // On a REAL PostgreSQL (PGlite, every migration applied) through the real Prisma
 // client, the real services and the real admin router. No Supabase.
-// Cases AGENT-001..013, CLIENT-001..014, REL-001..008 (docs/AGENT_CLIENT_MANAGEMENT.md).
+// Cases AGENT-001..013, CLIENT-001..014, REL-001..008 (docs/06-Jobs-and-Clients/AGENT_CLIENT_MANAGEMENT.md).
 // Since 20261026120000_agent_client_many_to_many the Agent <-> Client links are agent_client
 // rows (many-to-many; agentClientManyToMany.test.js); the single "agentId" the cases below send
 // is still accepted on create and on PATCH …/agent (it means exactly that one agent).

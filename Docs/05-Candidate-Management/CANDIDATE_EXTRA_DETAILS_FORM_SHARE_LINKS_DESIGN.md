@@ -1,15 +1,15 @@
 # Candidate Form — Share Links, Verification, Single Submission
 
-> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](../08-Security-and-Access/ROLES_AND_PERMISSIONS.md).
 
 Branch: `version/candidate-extra-details-form`
 Date: 2026-10-16 (Task 3)
 Status: implemented on the branch, not committed. Migration `20261017120000_candidate_form_share_and_response` is not applied to any shared database yet.
 
 Related documents:
-- [CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md](CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md), section 29 (new risks R-085 to R-094)
+- [CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md](../08-Security-and-Access/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md), section 29 (new risks R-085 to R-094)
 - [CANDIDATE_EXTRA_DETAILS_FORM_ISSUES_AND_SOLUTIONS.md](CANDIDATE_EXTRA_DETAILS_FORM_ISSUES_AND_SOLUTIONS.md) (ISS-035 onwards)
-- [candidate-form/README.md](../candidate-form/README.md), [20-candidate-management.md](20-candidate-management.md) §4.6, [09a-admin-dashboard-api.md](09a-admin-dashboard-api.md) §4q, [03-database-design.md](03-database-design.md) Part 2 §2.13–2.16
+- [candidate-form/README.md](../../candidate-form/README.md), [20-candidate-management.md](20-candidate-management.md) §4.6, [09a-admin-dashboard-api.md](../04-Admin-Dashboard/09a-admin-dashboard-api.md) §4q, [03-database-design.md](../02-Architecture/03-database-design.md) Part 2 §2.13–2.16
 
 ---
 
@@ -19,7 +19,7 @@ Related documents:
 2. The candidate opens the link and enters their **Passport Number and NIC Number**. The link and both numbers must belong to the same candidate.
 3. The form opens with what is already known about the candidate filled in and marked *From your record*.
 4. The candidate submits **once**. After that the form is closed for good. Opening the link again with the right details shows a neutral "already submitted" screen.
-5. The answers are stored in a **separate table** (`candidate_form_response`) with one nullable column per answer. The core `candidate` table is **never** changed by a public submission; the submission only fills the **empty** Additional Details fields (see "Notes on the boundaries" in `Docs/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md`), and a value already on record changes only through Confirm.
+5. The answers are stored in a **separate table** (`candidate_form_response`) with one nullable column per answer. The core `candidate` table is **never** changed by a public submission; the submission only fills the **empty** Additional Details fields (see "Notes on the boundaries" in `Docs/05-Candidate-Management/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md`), and a value already on record changes only through Confirm.
 
 Not built, on purpose:
 - job-group links (one link for many candidates); the schema leaves room (`kind`)

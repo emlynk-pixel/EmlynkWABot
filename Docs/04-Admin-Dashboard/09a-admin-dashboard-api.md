@@ -688,7 +688,7 @@ Full-stack confirmation (throwaway PostgreSQL, real Express server, real headles
 
 ## 4o. Candidate additional details
 
-Extra details of a candidate (Admin > Candidates > **Additional Details** tab), stored in `candidate_additional_details` (migration `20261009150000_candidate_additional_details`; see `Docs/03-database-design.md` Part 2, §2.12). Service: `src/services/candidateAdditionalDetailsService.js`. Roles: ADMIN, ANALYST, REGISTRATION_DESK.
+Extra details of a candidate (Admin > Candidates > **Additional Details** tab), stored in `candidate_additional_details` (migration `20261009150000_candidate_additional_details`; see `Docs/02-Architecture/03-database-design.md` Part 2, §2.12). Service: `src/services/candidateAdditionalDetailsService.js`. Roles: ADMIN, ANALYST, REGISTRATION_DESK.
 
 ### `GET /api/admin/candidates/:passportId/additional-details`
 
@@ -712,14 +712,14 @@ The body holds the fields `nameAsInPassport, permanentAddress, birthday, tshirtS
 - **Full replacement**: a field left out or blank is cleared. Unknown fields, including a `passportId` in the body, are ignored; the candidate is the one in the URL.
 - **Version check**: the body may carry `expectedUpdatedDate`, the `updatedDate` the form was loaded with (`null` when nothing was saved yet). If the stored version is different, the save is refused with **409** `{ code: "DETAILS_CHANGED" }` and nothing is written, so one person's save never silently undoes another's. A stale form whose values already equal the stored ones is accepted as a no-op. Omitting the field skips the check. The write is compare-and-swap on that version, so two saves at the same moment can't both win.
 - **Never creates a candidate** (404 for an unknown passport ID) and **never changes the candidate's own record**.
-- **400** `{ message, errors: [{ field, message }] }` for invalid values (rules in `Docs/20-candidate-management.md` §8.1). Nothing is written.
+- **400** `{ message, errors: [{ field, message }] }` for invalid values (rules in `Docs/05-Candidate-Management/20-candidate-management.md` §8.1). Nothing is written.
 - **Audit**: the first save that stores anything writes `CREATE_ADDITIONAL_DETAILS` (`NONE` → `CREATED`); later changes write `UPDATE_ADDITIONAL_DETAILS` (`CREATED` → `UPDATED`).
   - `previous_value` / `new_value` hold only the changed fields as JSON, and the actor is `req.user`.
   - A save that changes nothing (or an empty form with nothing saved) writes no row and no audit entry.
 
 ## 4q. Candidate Form share links
 
-Service: `src/services/candidateFormShareService.js`. Roles: ADMIN, ANALYST (allocated candidates only; others 404), REGISTRATION_DESK. Rules: `Docs/20-candidate-management.md` §4.6; design: `Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md`.
+Service: `src/services/candidateFormShareService.js`. Roles: ADMIN, ANALYST (allocated candidates only; others 404), REGISTRATION_DESK. Rules: `Docs/05-Candidate-Management/20-candidate-management.md` §4.6; design: `Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md`.
 
 ### `GET /api/admin/candidates/:passportId/form-share`
 
@@ -755,11 +755,11 @@ POST only, CORS for `CANDIDATE_FORM_ORIGIN` only, public rate limits, 503 when n
 
 ## 4p. Work Allocation
 
-ADMIN only (an OWNER too; `requireRole`): every other role gets 403. Rules: `Docs/20-candidate-management.md` §4.5.
+ADMIN only (an OWNER too; `requireRole`): every other role gets 403. Rules: `Docs/05-Candidate-Management/20-candidate-management.md` §4.5.
 
 ### `GET /api/admin/work-allocation/candidates?status=&analystId=&search=&page=`
 
-- `status`: `UNALLOCATED` (default), `ALLOCATED` or `COMPLETED`. `COMPLETED` lists the completed placements (outcome `CANCELLED` or `REJECTED`, or departed), allocated or not; `UNALLOCATED` and `ALLOCATED` leave them out (`Docs/20-candidate-management.md` §4.5). `analystId` (with `ALLOCATED` or `COMPLETED`; ignored on `UNALLOCATED`): one Analyst's candidates. `search`: as `GET /candidates`. `page`: 100 a page, newest registered first.
+- `status`: `UNALLOCATED` (default), `ALLOCATED` or `COMPLETED`. `COMPLETED` lists the completed placements (outcome `CANCELLED` or `REJECTED`, or departed), allocated or not; `UNALLOCATED` and `ALLOCATED` leave them out (`Docs/05-Candidate-Management/20-candidate-management.md` §4.5). `analystId` (with `ALLOCATED` or `COMPLETED`; ignored on `UNALLOCATED`): one Analyst's candidates. `search`: as `GET /candidates`. `page`: 100 a page, newest registered first.
 - Each item: `passportId, uniqueId, name, nic, jobTypes, whatsappNumber, contactNumber, registeredDate, stagesCompleted, stagesTotal, currentStage, analyst ({ analystId, name, active } or null), assignedDate`, plus `pagination` and `filters`.
 
 ### `GET /api/admin/work-allocation/analysts`
@@ -946,7 +946,7 @@ Authentication is Supabase Auth; authorization is the application's. The full de
 
 The role is `public."user".role`, read from the database on every request (never from the token). Hierarchy: `OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER` (who manages whom; TEAM_LEAD inherits no ADMIN permission). The former `MANAGER` role is retired (its permissions are ADMIN's): it is not a valid role, and an account still holding it gets 403 `ROLE_NOT_SUPPORTED` on every route (`ROLES_AND_PERMISSIONS.md` §6).
 
-- **`OWNER`**: the single system owner. Inherits every ADMIN permission (a tier that admits ADMIN admits OWNER: `hasRole()` in `src/middleware/requireRole.js` and `admin/src/auth/roles.ts`), plus managing ADMIN accounts. Set in the database only; see section 13 and [`OWNER_ROLE.md`](OWNER_ROLE.md).
+- **`OWNER`**: the single system owner. Inherits every ADMIN permission (a tier that admits ADMIN admits OWNER: `hasRole()` in `src/middleware/requireRole.js` and `admin/src/auth/roles.ts`), plus managing ADMIN accounts. Set in the database only; see section 13 and [`OWNER_ROLE.md`](../08-Security-and-Access/OWNER_ROLE.md).
 - **`ADMIN`**: everything, including Settings, Work Allocation, verification, police slip date corrections and user management of the roles below ADMIN (`/api/admin/users`); never another ADMIN's or the OWNER's account.
 - **`TEAM_LEAD`**: exactly seven areas: the Candidates area for every candidate (`CANDIDATE_STAFF`, `CANDIDATE_READERS`, `REGISTRATION_STAFF`), Need Attention (list, flag, complete), Work Allocation, Jobs (`JOB_READERS`, `JOB_MANAGERS`), Agents and Clients, and the standard Daily Report. Also the Overview, with its own figures or the full team's (`GET /overview?view=mine|full`). Every ADMIN-only action stays ADMIN only (verification, Candidate Form confirm / reject, follow-up delete, the job-group form link, Summary by Roles, Job Types); no other dashboards, review, police, Settings, Audit Logs or user management.
 - **`ANALYST`**: dashboard reads, review actions, corrections and candidate work; cannot correct police slip dates.
@@ -991,7 +991,7 @@ Every request authenticates with `Authorization: Bearer <Supabase access token>`
 
 ## 13. User management and invitations (OWNER and ADMIN)
 
-Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs the OWNER or ADMIN role. Which accounts and roles each may touch is decided by `src/services/userAccountService.js` on the database rows: an OWNER manages every account but an OWNER's; an ADMIN only accounts below ADMIN and gives only roles below ADMIN. Nobody gives the OWNER role or changes an OWNER account through the API (403 `OWNER_LOCKED`): the OWNER is set in the database only. The full model, and how the first OWNER is made, is in [`OWNER_ROLE.md`](OWNER_ROLE.md).
+Routes in `src/routes/users.js`, mounted at `/api/admin/users`; every one needs the OWNER or ADMIN role. Which accounts and roles each may touch is decided by `src/services/userAccountService.js` on the database rows: an OWNER manages every account but an OWNER's; an ADMIN only accounts below ADMIN and gives only roles below ADMIN. Nobody gives the OWNER role or changes an OWNER account through the API (403 `OWNER_LOCKED`): the OWNER is set in the database only. The full model, and how the first OWNER is made, is in [`OWNER_ROLE.md`](../08-Security-and-Access/OWNER_ROLE.md).
 
 Summary of the rules (all enforced server-side on the database rows, inside the transaction and with the rows locked; hiding controls in the UI is not the security boundary):
 

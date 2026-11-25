@@ -1,5 +1,5 @@
 // Google Sheet operational mirror: what the Admin Settings page shows
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 12.4 and 13).
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 12.4 and 13).
 //
 // Runs in the Admin API (Vercel), which holds NO Google credentials and never
 // calls Google: everything here is read from PostgreSQL (the state row the

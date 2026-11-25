@@ -1,6 +1,6 @@
 # EmlynkWABot — Project Issues, Errors, Blockers, Fixes & Lessons Learned
 
-> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](../08-Security-and-Access/ROLES_AND_PERMISSIONS.md).
 
 > **Purpose of this document**  
 > This document records the major technical issues, blockers, deployment problems, account/setup problems, database/authentication problems, Google Cloud issues, Google Sheet Sync issues, Git/branching problems, and other important debugging situations encountered while building **EmlynkWABot**.  
@@ -3389,7 +3389,7 @@ Omitting these flags causes Cloud Run to start the Express API backend instead o
 - Cloud Run worker (`emlynk-sheet-sync-worker`) running on Google Cloud Run with `--min-instances=1`
 - Sync Destination dropdown and validation protocol in Admin Settings (`/admin/settings/sheet-sync`)
 - Automated schedule design (06:00, 12:00, 18:00 Asia/Colombo)
-- Consolidated reference: [Docs/GOOGLE_SHEET_INTEGRATION.md](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/GOOGLE_SHEET_INTEGRATION.md)
+- Consolidated reference: [Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md](file:///c:/Users/Shamal%20Sathsara/OneDrive/Desktop/EmlynkWABot/Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md)
 
 ---
 

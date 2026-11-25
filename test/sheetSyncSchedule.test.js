@@ -63,7 +63,7 @@ describe("the schedule", () => {
     });
 
     test("the documented Cloud Scheduler command uses exactly this schedule", () => {
-        const docs = readFileSync(new URL("../Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+        const docs = readFileSync(new URL("../Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
         const create = docs.match(/gcloud scheduler jobs create http (\S+)[^\n]*\\\n[^\n]*\\\n[^\n]*/);
         assert.ok(create, "a scheduler create command is documented");
         const command = create[0];

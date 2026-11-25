@@ -5,7 +5,7 @@ import { JOB_STATUS } from "./jobAssignmentReader.js";
 
 // Share link + Passport + NIC verification for the public Candidate Form
 // (POST /api/public/candidate-details/verify).
-// Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
+// Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
 //
 // Strict input rules come FIRST, before any database lookup:
 //   - linkSecret: the 43-character base64url secret from the share link.

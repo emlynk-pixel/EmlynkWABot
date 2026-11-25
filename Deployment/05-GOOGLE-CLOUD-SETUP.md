@@ -53,8 +53,8 @@ gcloud services enable \
 | `run.googleapis.com` | Cloud Run services | Yes (`ocr-worker/README.md`) |
 | `artifactregistry.googleapis.com` | image repositories | Yes |
 | `cloudbuild.googleapis.com` | `gcloud builds submit` | Yes |
-| `secretmanager.googleapis.com` | secrets | Used in `Docs/08-cloud-deployment.md` Step 3; the enable command itself is not written down |
-| `cloudscheduler.googleapis.com` | Sheet Sync trigger | Yes (`Docs/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md`) |
+| `secretmanager.googleapis.com` | secrets | Used in `Docs/09-Deployment/08-cloud-deployment.md` Step 3; the enable command itself is not written down |
+| `cloudscheduler.googleapis.com` | Sheet Sync trigger | Yes (`Docs/History/EMLYNK_PROJECT_ISSUES_AND_SOLUTIONS_HISTORY.md`) |
 | `sheets.googleapis.com` | Google Sheets API calls from the worker | Not written down; the worker calls the Sheets API, so the API must be enabled in the project that issues the calls (**verify** with the read-only check in [08](08-GOOGLE-SHEET-SYNC-DEPLOYMENT.md)) |
 
 Nothing else (Compute, GKE, Pub/Sub, Cloud SQL, Drive) is needed for the base deployment.
@@ -139,7 +139,7 @@ Secrets that Cloud Run services read at start-up. Values that are not secret (UR
 | `DATABASE_URL` | submission worker, Sheet Sync worker, optional migrate job | `DATABASE_URL` |
 | `SUPABASE_SERVICE_ROLE_KEY` | submission worker | `SUPABASE_SERVICE_ROLE_KEY` |
 
-(`Docs/08-cloud-deployment.md` Step 3 also lists `META_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN` in Secret Manager. The submission worker does **not** read them, they live on Vercel for the API; see [10](10-ADMIN-AND-OPTIONAL-COMPONENTS.md#items-needing-confirmation).)
+(`Docs/09-Deployment/08-cloud-deployment.md` Step 3 also lists `META_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ACCESS_TOKEN` in Secret Manager. The submission worker does **not** read them, they live on Vercel for the API; see [10](10-ADMIN-AND-OPTIONAL-COMPONENTS.md#items-needing-confirmation).)
 
 Create a secret **without leaving the value in shell history or a file**:
 
@@ -197,7 +197,7 @@ Least-privilege rules for this project:
 - **The person deploying** needs permission to create and deploy services, build images, create secrets and bind IAM, plus `roles/iam.serviceAccountUser` on each runtime account (required to attach it to a service). Ask the project owner for the roles you need rather than asking for Owner.
 - Humans calling a private service (for health checks) use `gcloud auth print-identity-token`; the caller needs `roles/run.invoker` on that service.
 
-Reference table of the repository's own conventions: [`Docs/08-cloud-deployment.md`](../Docs/08-cloud-deployment.md) Part 2 Step 3 and [`ocr-worker/README.md`](../ocr-worker/README.md) §3.
+Reference table of the repository's own conventions: [`Docs/09-Deployment/08-cloud-deployment.md`](../Docs/09-Deployment/08-cloud-deployment.md) Part 2 Step 3 and [`ocr-worker/README.md`](../ocr-worker/README.md) §3.
 
 ## 8. Scheduler
 

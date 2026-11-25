@@ -1,6 +1,6 @@
 # Google Sheets Candidate Operational Mirror
 
-> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](../08-Security-and-Access/ROLES_AND_PERMISSIONS.md).
 ## Architecture & Project-Scope Specification
 
 - **Feature Name:** Google Sheets Candidate Operational Mirror (operational fallback)
@@ -111,8 +111,8 @@ Evidence column names the file inspected. Business/infrastructure items that the
 | 6 | Stage values | `PASS/FAIL/PENDING` on each stage | **Corrected.** Stages are `completed` booleans (automatic stages are derived, not stored); `PASS`/`FAIL` exist only as `test_result` on `TEST_DETAILS`. | `schema.prisma` (`CandidateStage`), `candidateService.js` |
 | 7 | One SCAN | one `SCAN` only | **Confirmed.** `CANDIDATE_DOCUMENT_TYPES` has `PASSPORT, NIC, SKILL_VIDEO, MEDICAL, POLICE_SLIP, POLICE_REPORT, SCAN`; only `POLICE_REPORT` accepts variants. The UI hint says the single scan file combines the agreement and affidavits; that is UI text, not separate types. A schema comment still mentions affidavit variants as history. | `candidateService.js`, `StagePanels.tsx`, `schema.prisma` |
 | 8 | Phone format | `+94...` | **Corrected.** Stored as digits only (E.164 without the plus), via `normalizePhoneNumber`. The Sheet mirrors the stored value. | `utils/phoneNumber.js` |
-| 9 | Hosting | one Cloud Run container runs the API and the worker from `src/app.js` | **Corrected.** The API and WhatsApp webhook run on Vercel (`api/index.js -> src/httpHandler.js`, `maxDuration` 60 s). The submission worker is a **separate Cloud Run service** (`emlynk-submission-worker`, `node src/worker.js`, min and max instances 1, CPU not throttled, private) exposing only `GET /health`. `src/app.js` is the local/Docker entry. The OCR worker is another private Cloud Run service. | `vercel.json`, `Dockerfile`, `Docs/08-cloud-deployment.md`, `src/worker.js`, `src/workerProcess.js` |
-| 10 | Database access | "Prisma Accelerate / Pooler" | **Corrected.** `@prisma/adapter-pg` over Supabase's Supavisor **session-mode** pooler (needed for interactive transactions and row locks); per-instance pool size defaults to 3 (`DATABASE_POOL_MAX`). | `config/prisma.js`, `Docs/08-cloud-deployment.md` |
+| 9 | Hosting | one Cloud Run container runs the API and the worker from `src/app.js` | **Corrected.** The API and WhatsApp webhook run on Vercel (`api/index.js -> src/httpHandler.js`, `maxDuration` 60 s). The submission worker is a **separate Cloud Run service** (`emlynk-submission-worker`, `node src/worker.js`, min and max instances 1, CPU not throttled, private) exposing only `GET /health`. `src/app.js` is the local/Docker entry. The OCR worker is another private Cloud Run service. | `vercel.json`, `Dockerfile`, `Docs/09-Deployment/08-cloud-deployment.md`, `src/worker.js`, `src/workerProcess.js` |
+| 10 | Database access | "Prisma Accelerate / Pooler" | **Corrected.** `@prisma/adapter-pg` over Supabase's Supavisor **session-mode** pooler (needed for interactive transactions and row locks); per-instance pool size defaults to 3 (`DATABASE_POOL_MAX`). | `config/prisma.js`, `Docs/09-Deployment/08-cloud-deployment.md` |
 | 11 | Cloud Scheduler | assumed | **Not present.** No Cloud Scheduler job or internal HTTP endpoint exists. The worker process serves only `/health`; Vercel rewrites only `/auth`, `/api`, `/whatsapp`, `/health`. Everything scheduler-related is **Proposed**. | repo-wide search, `workerProcess.js`, `vercel.json` |
 | 12 | Log redaction | `safeLog` redacts private keys, spreadsheet IDs | **Corrected.** `safeLog` redacts quoted values, storage paths, e-mail addresses, passport-like IDs and long digit runs only. It does not recognise PEM private keys, bearer tokens or spreadsheet IDs. Google credential redaction **must be added and verified during implementation**. | `src/utils/safeLog.js` |
 | 13 | Google quota | "300 requests per minute per project" | **Removed.** Not verified; the design relies on batching, backoff and configurable batch sizes. | n/a |
@@ -120,7 +120,7 @@ Evidence column names the file inspected. Business/infrastructure items that the
 | 15 | Settings page | hidden / standalone | **Superseded** by the confirmed requirement (Section 12). | n/a |
 | 16 | Branch base | develop from `stage` | **Corrected** (Section 19): development is on `dev`; `stage` is integration/Preview only. | team workflow |
 | 17 | Reconcile schedule | in-app `SHEET_SYNC_RECONCILE_SCHEDULE` cron | **Corrected.** The application must not schedule itself; the schedule belongs to Cloud Scheduler job configuration. | Section 11 |
-| 18 | Role documentation | n/a | Minor: `Docs/07-backend-development.md` still lists `REVIEWER`/`VIEWER`; the code defines `ADMIN, MANAGER, ANALYST, REGISTRATION_DESK`. | `requireRole.js` |
+| 18 | Role documentation | n/a | Minor: `Docs/03-Backend/07-backend-development.md` still lists `REVIEWER`/`VIEWER`; the code defines `ADMIN, MANAGER, ANALYST, REGISTRATION_DESK`. | `requireRole.js` |
 
 ---
 
@@ -340,7 +340,7 @@ The Google Sheet Candidate Operational Mirror resolves columns **dynamically by 
 
 ### 6.1 Final 41-Column Layout & Field Mapping
 
-> **Superseded column table (2026-10-28).** The live mirror now uses the latest approved *Emlynk Candidate Operational Mirror* headers and order (83 columns, `_SYSTEM_CANDIDATE_ID` in B, `SURNAME`/`OTHER NAME` by stored meaning, ONE `POLICE REP SRI LANKA` column: the duplicate SL Normal column was removed). The authoritative table, the deployment header renames and each column's kind are in [CANDIDATE_BULK_IMPORT.md](CANDIDATE_BULK_IMPORT.md) §3–§4 and in `src/services/sheetSchema.js`. The table below is kept as history.
+> **Superseded column table (2026-10-28).** The live mirror now uses the latest approved *Emlynk Candidate Operational Mirror* headers and order (83 columns, `_SYSTEM_CANDIDATE_ID` in B, `SURNAME`/`OTHER NAME` by stored meaning, ONE `POLICE REP SRI LANKA` column: the duplicate SL Normal column was removed). The authoritative table, the deployment header renames and each column's kind are in [CANDIDATE_BULK_IMPORT.md](../05-Candidate-Management/CANDIDATE_BULK_IMPORT.md) §3–§4 and in `src/services/sheetSchema.js`. The table below is kept as history.
 
 Kind legend: **Auth** = authoritative value copied from PostgreSQL; **Derived** = computed from authoritative records with the application's own logic (the same functions the Admin UI uses); **Gen** = generated by the sync system; **Blank** = intentionally emitted as `""` (no confirmed system mapping).
 
@@ -777,11 +777,11 @@ stateDiagram-v2
 
 | Component | Status | Evidence / note |
 | :--- | :--- | :--- |
-| Admin SPA + Admin API + WhatsApp webhook on Vercel (`api/index.js -> src/httpHandler.js`, region `hnd1`, `maxDuration` 60 s) | **Existing** | `vercel.json`, `Docs/08-cloud-deployment.md` |
-| `emlynk-submission-worker` on Cloud Run (`node src/worker.js`, asia-northeast1, private, min and max 1, CPU not throttled, `GET /health` only) | **Existing** | `Docs/08-cloud-deployment.md`, `src/workerProcess.js` |
-| `emlynk-ocr-worker` on Cloud Run (asia-south1, private, IAM invoker) | **Existing** | `Docs/08-cloud-deployment.md` |
-| Existing GCP service account `emlynk-backend@<GCP_PROJECT>` for the workers; no key files | **Existing** | `Docs/08-cloud-deployment.md` |
-| Supabase PostgreSQL via Supavisor session-mode pooler; Supabase Storage | **Existing** | `Docs/08-cloud-deployment.md` |
+| Admin SPA + Admin API + WhatsApp webhook on Vercel (`api/index.js -> src/httpHandler.js`, region `hnd1`, `maxDuration` 60 s) | **Existing** | `vercel.json`, `Docs/09-Deployment/08-cloud-deployment.md` |
+| `emlynk-submission-worker` on Cloud Run (`node src/worker.js`, asia-northeast1, private, min and max 1, CPU not throttled, `GET /health` only) | **Existing** | `Docs/09-Deployment/08-cloud-deployment.md`, `src/workerProcess.js` |
+| `emlynk-ocr-worker` on Cloud Run (asia-south1, private, IAM invoker) | **Existing** | `Docs/09-Deployment/08-cloud-deployment.md` |
+| Existing GCP service account `emlynk-backend@<GCP_PROJECT>` for the workers; no key files | **Existing** | `Docs/09-Deployment/08-cloud-deployment.md` |
+| Supabase PostgreSQL via Supavisor session-mode pooler; Supabase Storage | **Existing** | `Docs/09-Deployment/08-cloud-deployment.md` |
 | Target Google Spreadsheet (`1-11g-0tQruJbgVslH0nzCzG_JRr-4LahSCU8ZJirMpE`) | **Confirmed / Provisioned** | Real operational spreadsheet |
 | Dedicated Google service account (`emlynk-sheet-sync@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com`) | **Confirmed / Provisioned** | Has Editor access to the target operational spreadsheet |
 | `emlynk-sheet-sync-worker` Cloud Run service | **Proposed** | not created |

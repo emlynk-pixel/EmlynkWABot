@@ -62,7 +62,7 @@ flowchart TB
 
 Key facts, all verified in the repo:
 
-- The Vercel function **does not run the background worker** and never calls OCR. The webhook records each submission durably in PostgreSQL (`temporary_data`) and answers 200; the Cloud Run submission worker **polls PostgreSQL** and processes it. PostgreSQL is the queue ([`Docs/08-cloud-deployment.md`](../Docs/08-cloud-deployment.md) Part 2, Step 5).
+- The Vercel function **does not run the background worker** and never calls OCR. The webhook records each submission durably in PostgreSQL (`temporary_data`) and answers 200; the Cloud Run submission worker **polls PostgreSQL** and processes it. PostgreSQL is the queue ([`Docs/09-Deployment/08-cloud-deployment.md`](../Docs/09-Deployment/08-cloud-deployment.md) Part 2, Step 5).
 - Admin and API share **one origin** on Vercel, so there is no CORS between them. Only the Candidate Form is cross-origin.
 - Google authentication in the workers is **keyless** (Application Default Credentials from the Cloud Run service account). No Google key file is ever created.
 
@@ -142,15 +142,15 @@ Full detail in [10](10-ADMIN-AND-OPTIONAL-COMPONENTS.md#environment-separation).
 
 | Topic | Document |
 |---|---|
-| Local development and git workflow | [`Docs/11-development-guide.md`](../Docs/11-development-guide.md) |
-| Original deployment log (history of how production was built) | [`Docs/08-cloud-deployment.md`](../Docs/08-cloud-deployment.md) |
-| Supabase Auth design and project configuration | [`Docs/SUPABASE_AUTH.md`](../Docs/SUPABASE_AUTH.md) |
-| Roles and permissions matrix | [`Docs/ROLES_AND_PERMISSIONS.md`](../Docs/ROLES_AND_PERMISSIONS.md), [`Docs/OWNER_ROLE.md`](../Docs/OWNER_ROLE.md) |
+| Local development and git workflow | [`Docs/01-Getting-Started/11-development-guide.md`](../Docs/01-Getting-Started/11-development-guide.md) |
+| Original deployment log (history of how production was built) | [`Docs/09-Deployment/08-cloud-deployment.md`](../Docs/09-Deployment/08-cloud-deployment.md) |
+| Supabase Auth design and project configuration | [`Docs/08-Security-and-Access/SUPABASE_AUTH.md`](../Docs/08-Security-and-Access/SUPABASE_AUTH.md) |
+| Roles and permissions matrix | [`Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md`](../Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md), [`Docs/08-Security-and-Access/OWNER_ROLE.md`](../Docs/08-Security-and-Access/OWNER_ROLE.md) |
 | OCR service reference | [`ocr-worker/README.md`](../ocr-worker/README.md) |
-| Google Sheet Sync architecture and runbook | [`Docs/GOOGLE_SHEET_INTEGRATION.md`](../Docs/GOOGLE_SHEET_INTEGRATION.md), [`Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](../Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md) |
-| Candidate Form | [`candidate-form/README.md`](../candidate-form/README.md), [`Docs/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md`](../Docs/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md) |
-| Testing | [`Docs/12-testing-and-quality.md`](../Docs/12-testing-and-quality.md) |
-| Storage layout | [`Docs/06-storage-management.md`](../Docs/06-storage-management.md) |
+| Google Sheet Sync architecture and runbook | [`Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md`](../Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md), [`Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](../Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md) |
+| Candidate Form | [`candidate-form/README.md`](../candidate-form/README.md), [`Docs/05-Candidate-Management/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md`](../Docs/05-Candidate-Management/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md) |
+| Testing | [`Docs/10-Testing-and-Quality/12-testing-and-quality.md`](../Docs/10-Testing-and-Quality/12-testing-and-quality.md) |
+| Storage layout | [`Docs/02-Architecture/06-storage-management.md`](../Docs/02-Architecture/06-storage-management.md) |
 
 ## Things this guide deliberately does not assume
 

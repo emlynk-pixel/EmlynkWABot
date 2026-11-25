@@ -1,6 +1,6 @@
 // Candidate Form link architecture: job-bound GROUP links and passport-bound
 // SINGLE links, plus the attack / negative cases (GROUP-LINK-*, SINGLE-LINK-*,
-// SECURITY-*). Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md §13.
+// SECURITY-*). Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md §13.
 // On a REAL PostgreSQL (PGlite, every migration applied) through the real Prisma
 // client, the real admin router and the real public router. Synthetic data only.
 import { after, before, beforeEach, describe, test } from "node:test";

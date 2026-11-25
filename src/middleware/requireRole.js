@@ -44,7 +44,7 @@ export const ALL_ROLES = Object.freeze([ROLES.OWNER, ROLES.ADMIN, ROLES.TEAM_LEA
 export const isValidRole = (value) => ALL_ROLES.includes(value);
 
 // Roles no longer supported. Never valid (isValidRole), never in a tier; named here only so the
-// conversion script and the tests can find accounts that still hold one (Docs/ROLES_AND_PERMISSIONS.md).
+// conversion script and the tests can find accounts that still hold one (Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md).
 // MANAGER: retired, ADMIN holds everything it could do.
 export const RETIRED_ROLES = Object.freeze({ MANAGER: "MANAGER" });
 
@@ -56,7 +56,7 @@ export const hasRole = (role, allowedRoles) => allowedRoles.includes(role) || (r
 // User management (routes/users.js, services/userAccountService.js). An OWNER changes every
 // account and gives every role except the OWNER's; an ADMIN changes, and gives, only the roles
 // below ADMIN: never another ADMIN's account, never the ADMIN role. Nobody changes their own
-// account there. The OWNER is set in the database only (Docs/OWNER_ROLE.md): no one gives the
+// account there. The OWNER is set in the database only (Docs/08-Security-and-Access/OWNER_ROLE.md): no one gives the
 // OWNER role, or changes or deactivates an OWNER account, through the application. Inviting
 // (POST /api/admin/users/invite) follows the same lists: nobody invites an OWNER. TEAM_LEAD is
 // below ADMIN (an ADMIN may give it) and manages no account itself.

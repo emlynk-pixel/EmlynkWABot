@@ -8,7 +8,7 @@ import { findRomanianCity, ROMANIA_CITIES } from "../utils/romaniaCities.js";
 
 // The Candidate Form's data on the server: the field list, the prefill from
 // the existing records, the immutable prefill snapshot, and the one-time
-// submission. Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
+// submission. Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
 //
 // The public form NEVER writes the main candidate tables (candidate,
 // candidate_additional_details, candidate_stages). It reads them once, to

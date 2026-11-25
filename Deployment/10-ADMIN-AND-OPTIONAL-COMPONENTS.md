@@ -10,7 +10,7 @@ Staff accounts are **Supabase Auth identities** plus a row in `public."user"` ho
 OWNER  >  ADMIN  >  TEAM_LEAD  >  ANALYST / REGISTRATION_DESK / JOB_HANDLER
 ```
 
-The retired `MANAGER` role is refused. Full matrix: [`Docs/ROLES_AND_PERMISSIONS.md`](../Docs/ROLES_AND_PERMISSIONS.md); user-management rules: [`Docs/OWNER_ROLE.md`](../Docs/OWNER_ROLE.md).
+The retired `MANAGER` role is refused. Full matrix: [`Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md`](../Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md); user-management rules: [`Docs/08-Security-and-Access/OWNER_ROLE.md`](../Docs/08-Security-and-Access/OWNER_ROLE.md).
 
 | Rule | Effect |
 |---|---|
@@ -51,7 +51,7 @@ Precautions:
 
 ### Promote an existing ADMIN to OWNER
 
-If an environment already has ADMINs but no OWNER, an operator with database access runs one guarded SQL transaction once (it changes exactly one row, only for an ACTIVE ADMIN while no ACTIVE OWNER exists, and writes the audit entry). The exact SQL is in [`Docs/OWNER_ROLE.md`](../Docs/OWNER_ROLE.md) → "Existing environment: promote one existing ADMIN". Use it as written.
+If an environment already has ADMINs but no OWNER, an operator with database access runs one guarded SQL transaction once (it changes exactly one row, only for an ACTIVE ADMIN while no ACTIVE OWNER exists, and writes the audit entry). The exact SQL is in [`Docs/08-Security-and-Access/OWNER_ROLE.md`](../Docs/08-Security-and-Access/OWNER_ROLE.md) → "Existing environment: promote one existing ADMIN". Use it as written.
 
 ### Everyone else
 
@@ -72,7 +72,7 @@ Invite them from the Admin console (**Settings → Invite User**). The invitatio
 | External integrations | Meta test number; Sheet copy or `SHEET_SYNC_ENABLED=false` | same | Meta test app; **a separate Sheet copy** | Meta production app; the operational Sheet |
 | `APP_BASE_URL` | `http://localhost:5173` | its own | the Preview domain | the production Admin domain |
 
-Branch strategy and promotion flow: `Docs/08-cloud-deployment.md` Part 3 §2 and §10. In short: feature branch → `dev` (all test suites green) → `stage` (Vercel Preview; run `prisma migrate deploy` against the stage database; smoke test) → `main` (production only after sign-off).
+Branch strategy and promotion flow: `Docs/09-Deployment/08-cloud-deployment.md` Part 3 §2 and §10. In short: feature branch → `dev` (all test suites green) → `stage` (Vercel Preview; run `prisma migrate deploy` against the stage database; smoke test) → `main` (production only after sign-off).
 
 **Rules**
 
@@ -126,10 +126,10 @@ Everything below is **OPTIONAL / NOT REQUIRED FOR BASE DEPLOYMENT.**
 | **Google Drive document backup** (one-way, append-only backup of candidate documents to a Google Drive) | **Design only. Nothing is implemented, built or deployed.** There is no Drive code, migration, queue table or Cloud Run Job in the repository. The design and research exist as documents (`GOOGLE_DRIVE_DOCUMENT_BACKUP_RESEARCH.md`, `GOOGLE_DRIVE_BACKUP_IMPLEMENTATION_GUIDE.md`, `DOCUMENT_STORAGE_AND_BACKUP_PLATFORM_COMPARISON.md`) that live on the feature branch `version/Google-File-Sync`, not on `dev` at the time of writing | Do not deploy anything for it. Treat any mention of it in this guide's other documents as future work |
 | Load testing | No load-test tooling is documented or checked in | Not part of deployment |
 | Additional monitoring / alerting | Not implemented in code. Recommended manually: Cloud Monitoring alerts on Cloud Run 5xx and memory, Billing budget, Supabase usage alerts | Optional operations work |
-| Notification system | `Docs/NOTIFICATION_SYSTEM_AUDIT.md` is a research and proposal document; nothing is implemented | Not part of deployment |
+| Notification system | `Docs/07-Integrations/NOTIFICATION_SYSTEM_AUDIT.md` is a research and proposal document; nothing is implemented | Not part of deployment |
 | Cloud Run Job `emlynk-sheet-sync-check` | Optional read-only check ([08](08-GOOGLE-SHEET-SYNC-DEPLOYMENT.md)) | Optional |
 | Cloud Run Job `emlynk-db-migrate` | Optional way to run `prisma migrate deploy` from the backend image ([03](03-SUPABASE-SETUP.md)) | Optional alternative to migrating from a trusted machine |
-| Candidate bulk import | A product feature (Admin), documented in `Docs/CANDIDATE_BULK_IMPORT.md`; needs no extra deployment | n/a |
+| Candidate bulk import | A product feature (Admin), documented in `Docs/05-Candidate-Management/CANDIDATE_BULK_IMPORT.md`; needs no extra deployment | n/a |
 
 ## Items needing confirmation
 

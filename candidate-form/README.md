@@ -5,7 +5,7 @@ Public web form where an **existing** candidate opens the personal link staff se
 **Status**
 - **Task 1 (done):** app shell, configuration, API client, verification.
 - **Task 2 (done, then redesigned):** the candidate-facing UI. The first 19-field Additional Details screen was replaced by the guided Candidate Form below, in English / Sinhala, Light / Dark.
-- **Task 3 (done):** share links, Passport + NIC verification, prefill from the candidate's record, single submission. Design: [Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](../Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md).
+- **Task 3 (done):** share links, Passport + NIC verification, prefill from the candidate's record, single submission. Design: [Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](../Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md).
 
 ## UI flow
 

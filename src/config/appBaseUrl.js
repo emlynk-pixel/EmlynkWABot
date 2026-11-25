@@ -7,7 +7,7 @@
 // invitation is refused rather than sent with a link to a wrong place.
 //
 // Each address must also be in the Supabase project's allowed redirect URLs
-// (Docs/SUPABASE_AUTH.md); Supabase ignores a redirect it doesn't allow.
+// (Docs/08-Security-and-Access/SUPABASE_AUTH.md); Supabase ignores a redirect it doesn't allow.
 //
 // The password-recovery redirect (/admin/reset-password) is built by the admin
 // app itself from its own page origin (admin/src/auth/supabaseClient.ts), which

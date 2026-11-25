@@ -10,7 +10,7 @@ import { notifyNewJobs } from "./notificationEvents.js";
 
 export { JOB_STATUS, candidateMatchesJobTypes };
 
-// Job Management (Admin > Jobs). Docs/JOB_MANAGEMENT_IMPLEMENTATION.md.
+// Job Management (Admin > Jobs). Docs/06-Jobs-and-Clients/JOB_MANAGEMENT_IMPLEMENTATION.md.
 //
 // A Job belongs to one Client (the employer), one Job Type and one responsible
 // Agent. The Agent must be the Client's own Agent (checked on create and update). A

@@ -7,7 +7,7 @@
 //   - an OWNER changes any account but their own and an OWNER's; an ADMIN only accounts
 //     below ADMIN, and gives only roles below ADMIN (403 otherwise, never a lesser role instead);
 //   - nobody gives the OWNER role or changes an OWNER account here (403 OWNER_LOCKED): the
-//     OWNER is set in the database only (Docs/OWNER_ROLE.md);
+//     OWNER is set in the database only (Docs/08-Security-and-Access/OWNER_ROLE.md);
 //   - a retired role (requireRole.js RETIRED_ROLES, e.g. MANAGER) is never given (400
 //     INVALID_ROLE); an account still holding one is changed by an OWNER only.
 // Each change re-reads the actor and the target inside its transaction, with their rows

@@ -13,7 +13,7 @@ import {
 } from "./candidateFormShareService.js";
 
 // Candidate Form JOB_GROUP share links (Admin > Candidate > Share Form > "Share
-// link for the job group"). Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
+// link for the job group"). Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
 //
 // One link for everyone assigned to ONE job. It is bound to the immutable
 // job.id (never the job code, never the client's own Job ID, never the legacy

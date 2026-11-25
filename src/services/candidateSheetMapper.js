@@ -1,4 +1,4 @@
-// Candidate -> Google Sheet row (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
+// Candidate -> Google Sheet row (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
 // Sections 6.1-6.3). Pure: no database, no Google API, no clock, no logging.
 // The same input always gives the same SHEET_COLUMN_COUNT field-ordered strings
 // (canonical order, sheetSchema.js; the adapter places them by header name), so

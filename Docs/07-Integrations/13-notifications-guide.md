@@ -4,9 +4,9 @@ A beginner guide to the in-app notification system: what it does, how it works, 
 
 Related documents:
 
-- Test commands in general: [12-testing-and-quality.md](12-testing-and-quality.md)
-- Scheduler setup (Cloud Scheduler job and variables): section 8 of [../Deployment/04-VERCEL-DEPLOYMENT.md](../Deployment/04-VERCEL-DEPLOYMENT.md)
-- Database and migrations: [../Deployment/03-SUPABASE-SETUP.md](../Deployment/03-SUPABASE-SETUP.md)
+- Test commands in general: [12-testing-and-quality.md](../10-Testing-and-Quality/12-testing-and-quality.md)
+- Scheduler setup (Cloud Scheduler job and variables): section 8 of [../Deployment/04-VERCEL-DEPLOYMENT.md](../../Deployment/04-VERCEL-DEPLOYMENT.md)
+- Database and migrations: [../Deployment/03-SUPABASE-SETUP.md](../../Deployment/03-SUPABASE-SETUP.md)
 
 ## 1. What It Is
 
@@ -301,9 +301,9 @@ Cleanup:
 npx prisma migrate deploy
 ```
 
-Never use `npx prisma migrate dev` on a shared database. See [../Deployment/03-SUPABASE-SETUP.md](../Deployment/03-SUPABASE-SETUP.md).
+Never use `npx prisma migrate dev` on a shared database. See [../Deployment/03-SUPABASE-SETUP.md](../../Deployment/03-SUPABASE-SETUP.md).
 
-3. Scheduled notifications need a Cloud Scheduler job and two variables, `NOTIFICATION_SCAN_SCHEDULER_AUDIENCE` and `NOTIFICATION_SCAN_SCHEDULER_INVOKER`. Full steps: section 8 of [../Deployment/04-VERCEL-DEPLOYMENT.md](../Deployment/04-VERCEL-DEPLOYMENT.md).
+3. Scheduled notifications need a Cloud Scheduler job and two variables, `NOTIFICATION_SCAN_SCHEDULER_AUDIENCE` and `NOTIFICATION_SCAN_SCHEDULER_INVOKER`. Full steps: section 8 of [../Deployment/04-VERCEL-DEPLOYMENT.md](../../Deployment/04-VERCEL-DEPLOYMENT.md).
 4. Set them per Vercel project. The production site needs its own two variables and its own scheduler job. A job aimed at another deployment does nothing for this one.
 5. Redeploy the Cloud Run sheet sync worker so the E9 and F1 hooks run there. The worker needs no extra variable for notifications.
 6. Roll back:
@@ -318,7 +318,7 @@ DROP TABLE "notification";
 npx prisma migrate resolve --rolled-back 20261124120000_notifications
 ```
 
-Vercel rollback does not roll back the database. See the Rollback section of [../Deployment/04-VERCEL-DEPLOYMENT.md](../Deployment/04-VERCEL-DEPLOYMENT.md).
+Vercel rollback does not roll back the database. See the Rollback section of [../Deployment/04-VERCEL-DEPLOYMENT.md](../../Deployment/04-VERCEL-DEPLOYMENT.md).
 
 ## 7. Known Limitations
 

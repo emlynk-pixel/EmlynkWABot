@@ -18,7 +18,7 @@ import {
     statusOf,
 } from "./agentService.js";
 
-// Client Management (Admin > Client Management). Docs/AGENT_CLIENT_MANAGEMENT.md.
+// Client Management (Admin > Client Management). Docs/06-Jobs-and-Clients/AGENT_CLIENT_MANAGEMENT.md.
 //
 // A Client is the EMPLOYER / customer organisation (table "client", formerly
 // "company"; NOT the legacy candidate "client" of the Documents area). It works

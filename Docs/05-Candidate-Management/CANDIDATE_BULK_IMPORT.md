@@ -9,25 +9,25 @@ Legacy .xlsx ─▶ browser reads it (only allow-listed columns leave the machin
             ─▶ database ─▶ existing triggers ─▶ sheet_sync_queue ─▶ existing RECONCILE ─▶ mapper ─▶ mirror
 ```
 
-The database is the source of truth. A legacy row is never copied into the mirror; the mirror shows only what the mapper ([candidateSheetMapper.js](../src/services/candidateSheetMapper.js)) reads from the database.
+The database is the source of truth. A legacy row is never copied into the mirror; the mirror shows only what the mapper ([candidateSheetMapper.js](../../src/services/candidateSheetMapper.js)) reads from the database.
 
 ## 1. Code map
 
 | Concern | File |
 |---|---|
-| Mirror columns: approved headers, order, kind | [sheetSchema.js](../src/services/sheetSchema.js) |
-| Database → mirror values | [candidateSheetMapper.js](../src/services/candidateSheetMapper.js) |
-| Legacy column classification (the only place legacy headers are named) | [candidateImportSourceMapping.js](../src/services/candidateImportSourceMapping.js) |
-| Legacy value normalizers | [candidateImportNormalizers.js](../src/services/candidateImportNormalizers.js) |
-| Row validation, field → column targets | [candidateImportRowValidator.js](../src/services/candidateImportRowValidator.js) |
-| Database snapshot, duplicates and conflicts, fill-blanks merge, officer / Test / visa / Client / Agent plans | [candidateImportClassifier.js](../src/services/candidateImportClassifier.js) |
-| Error / warning severity and messages (one catalog) | [candidateImportIssues.js](../src/services/candidateImportIssues.js) |
-| Preview, chunk commit, unique IDs, Client / Agent / allocation / stage writes, finish | [candidateImportService.js](../src/services/candidateImportService.js) |
-| Officer allocation | [workAllocationService.js](../src/services/workAllocationService.js) `allocateImportedCandidates` |
-| Test ID (`T` + YYMMDD) | [testId.js](../src/services/testId.js) |
-| API (`/api/admin/settings/sheet-sync/import`) | [routes/candidateImport.js](../src/routes/candidateImport.js) |
+| Mirror columns: approved headers, order, kind | [sheetSchema.js](../../src/services/sheetSchema.js) |
+| Database → mirror values | [candidateSheetMapper.js](../../src/services/candidateSheetMapper.js) |
+| Legacy column classification (the only place legacy headers are named) | [candidateImportSourceMapping.js](../../src/services/candidateImportSourceMapping.js) |
+| Legacy value normalizers | [candidateImportNormalizers.js](../../src/services/candidateImportNormalizers.js) |
+| Row validation, field → column targets | [candidateImportRowValidator.js](../../src/services/candidateImportRowValidator.js) |
+| Database snapshot, duplicates and conflicts, fill-blanks merge, officer / Test / visa / Client / Agent plans | [candidateImportClassifier.js](../../src/services/candidateImportClassifier.js) |
+| Error / warning severity and messages (one catalog) | [candidateImportIssues.js](../../src/services/candidateImportIssues.js) |
+| Preview, chunk commit, unique IDs, Client / Agent / allocation / stage writes, finish | [candidateImportService.js](../../src/services/candidateImportService.js) |
+| Officer allocation | [workAllocationService.js](../../src/services/workAllocationService.js) `allocateImportedCandidates` |
+| Test ID (`T` + YYMMDD) | [testId.js](../../src/services/testId.js) |
+| API (`/api/admin/settings/sheet-sync/import`) | [routes/candidateImport.js](../../src/routes/candidateImport.js) |
 | Import tracking table; Company Number, country-less Agents | migrations `20261103120000_candidate_import`, `20261106120000_sheet_import_org_fields` |
-| UI | [SettingsPage.tsx](../admin/src/pages/SettingsPage.tsx), [CandidateImportDialog.tsx](../admin/src/components/CandidateImportDialog.tsx), [importWorkbook.ts](../admin/src/components/importWorkbook.ts), [validationWorkbook.ts](../admin/src/components/validationWorkbook.ts) |
+| UI | [SettingsPage.tsx](../../admin/src/pages/SettingsPage.tsx), [CandidateImportDialog.tsx](../../admin/src/components/CandidateImportDialog.tsx), [importWorkbook.ts](../../admin/src/components/importWorkbook.ts), [validationWorkbook.ts](../../admin/src/components/validationWorkbook.ts) |
 
 ## 2. Name semantics
 

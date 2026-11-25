@@ -11,7 +11,7 @@ Two separate Vercel projects are deployed from the **same GitHub repository**:
 | Holds secrets? | Yes (server env vars) | **No.** Only `VITE_API_*` public values |
 | Output | `public/` (Admin at `public/admin`) + serverless function `api/index.js` | `dist/` |
 
-Why two projects: different roots, different output folders, different public domains, and a hard security boundary. The public form must never share environment variables, secrets or the service-role key with the backend (`Docs/08-cloud-deployment.md` Part 3, §3.3).
+Why two projects: different roots, different output folders, different public domains, and a hard security boundary. The public form must never share environment variables, secrets or the service-role key with the backend (`Docs/09-Deployment/08-cloud-deployment.md` Part 3, §3.3).
 
 > Prerequisites: Supabase is ready ([03](03-SUPABASE-SETUP.md)); you have the OCR service URL ([06](06-OCR-WORKER-DEPLOYMENT.md)). Vercel needs no Google credentials: the API never calls OCR, workers, or Google APIs.
 
@@ -29,7 +29,7 @@ Vercel dashboard → **Add New → Project** → import the GitHub repository `E
 | `stage` | Preview (final QA before production) |
 | other branches | Preview |
 
-Settings → Git → Production Branch = `main`. Never push unreviewed commits to `main` (`Docs/08-cloud-deployment.md` Part 3, §2).
+Settings → Git → Production Branch = `main`. Never push unreviewed commits to `main` (`Docs/09-Deployment/08-cloud-deployment.md` Part 3, §2).
 
 ### 3. Project settings
 
@@ -64,7 +64,7 @@ Settings → Environment Variables. Mark secrets as **Sensitive**. Scope each va
 | `OCR_SERVICE_URL` | no | Required by the startup check even though the Vercel handler never calls OCR |
 | `APP_BASE_URL` | no | **This environment's** Admin origin, no path, no trailing slash. See below |
 | `TRUST_PROXY_HOPS` | no | Optional: defaults to `1` automatically on Vercel |
-| `NODEJS_HELPERS` | no | `0` (documented in `Docs/08-cloud-deployment.md`; keeps the raw body for webhook signature checking) |
+| `NODEJS_HELPERS` | no | `0` (documented in `Docs/09-Deployment/08-cloud-deployment.md`; keeps the raw body for webhook signature checking) |
 | `REQUIRED_DOCUMENT_TYPES` | no | Optional |
 | `CANDIDATE_FORM_ORIGIN` | no | Project B's origin; set after B exists |
 | `CANDIDATE_FORM_TOKEN_SECRET` | yes | Different value in each environment |
@@ -118,7 +118,7 @@ Because Admin and API share one origin there is no CORS between them, and `conne
 
 ### 7. Confirm the client IP handling
 
-On Vercel `TRUST_PROXY_HOPS` is `1` by default, so the rate limiters key each client by its real address. After the first deploy confirm that two clients on different networks do not share one allowance (`Docs/08-cloud-deployment.md` Step 7 asks for this check).
+On Vercel `TRUST_PROXY_HOPS` is `1` by default, so the rate limiters key each client by its real address. After the first deploy confirm that two clients on different networks do not share one allowance (`Docs/09-Deployment/08-cloud-deployment.md` Step 7 asks for this check).
 
 ### 8. Scheduled notifications (Cloud Scheduler)
 
@@ -197,7 +197,7 @@ Do this after Project A is live and healthy (or for stage, after the stage deplo
 4. Verify and save; then subscribe to the **`messages`** field.
 5. Send a test message from a **test** number. Do not send real candidate documents while testing.
 
-Every POST is HMAC-SHA256 verified with `META_APP_SECRET` before any processing (`Docs/04-whatsapp-integration.md`). A received message becomes a `temporary_data` row; the Cloud Run submission worker ([07](07-SUBMISSION-WORKER-DEPLOYMENT.md)) then processes it. If nothing is processing, check the worker's logs, not Vercel's.
+Every POST is HMAC-SHA256 verified with `META_APP_SECRET` before any processing (`Docs/07-Integrations/04-whatsapp-integration.md`). A received message becomes a `temporary_data` row; the Cloud Run submission worker ([07](07-SUBMISSION-WORKER-DEPLOYMENT.md)) then processes it. If nothing is processing, check the worker's logs, not Vercel's.
 
 ## Rollback
 

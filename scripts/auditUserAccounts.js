@@ -1,5 +1,5 @@
 // Read-only audit of the application accounts (public."user") against Supabase Auth, to find the
-// accounts hit by the old invitation bugs (Docs/SUPABASE_AUTH.md, "Invitation bugs fixed"). Run AFTER
+// accounts hit by the old invitation bugs (Docs/08-Security-and-Access/SUPABASE_AUTH.md, "Invitation bugs fixed"). Run AFTER
 // migration 20261110120000_user_activation_tracking. Never writes: a READ ONLY transaction (rolled
 // back) and Supabase Admin list calls only. Prints account IDs, names, roles and statuses only:
 // no email, token or password.

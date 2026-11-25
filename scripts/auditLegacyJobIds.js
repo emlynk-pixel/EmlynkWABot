@@ -1,5 +1,5 @@
 // Read-only audit of the legacy free-text candidate_stages.job_id values
-// (Docs/JOB_MANAGEMENT_IMPLEMENTATION.md, section "Migration"). Prints counts
+// (Docs/06-Jobs-and-Clients/JOB_MANAGEMENT_IMPLEMENTATION.md, section "Migration"). Prints counts
 // and the distinct values only (a job reference is not personal data); no
 // candidate is named. Never writes. Usage: node scripts/auditLegacyJobIds.js
 import "dotenv/config";

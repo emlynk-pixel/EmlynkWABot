@@ -70,7 +70,7 @@ Every item below is implemented in the current code.
 | Bulk Upload | Excel/Sheet import of candidates into the database (ADMIN) |
 | Auth and users | Supabase Auth, invitations, password recovery, role management |
 | Audit logging | Append-only audit trail with an admin-facing Audit Logs page |
-| Notifications | A notification bell in the header, sourced per role from data the role can already open: the Review Queue (OWNER, ADMIN) or open Need Attention follow-ups (TEAM_LEAD, ANALYST: their own); none for REGISTRATION_DESK and JOB_HANDLER ([roles](Docs/ROLES_AND_PERMISSIONS.md)). The full notification system is **research only**, not implemented ([audit](Docs/NOTIFICATION_SYSTEM_AUDIT.md)) |
+| Notifications | A notification bell in the header, sourced per role from data the role can already open: the Review Queue (OWNER, ADMIN) or open Need Attention follow-ups (TEAM_LEAD, ANALYST: their own); none for REGISTRATION_DESK and JOB_HANDLER ([roles](Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md)). The full notification system is **research only**, not implemented ([audit](Docs/07-Integrations/NOTIFICATION_SYSTEM_AUDIT.md)) |
 | UI | Light/dark theme, responsive layout, collapsible sidebar |
 
 ## Role-Based Access Control
@@ -92,7 +92,7 @@ The hierarchy shows **who manages whom**, not automatic permission inheritance. 
 
 > **MANAGER is retired and unsupported.** An account still holding it is refused everywhere until converted (`npm run user:migrate-manager`). ADMIN holds everything MANAGER could do.
 
-Roles are read from the database on every request. The dashboard hides what a role cannot use, but the server enforces every rule. Full matrix: [Docs/ROLES_AND_PERMISSIONS.md](Docs/ROLES_AND_PERMISSIONS.md).
+Roles are read from the database on every request. The dashboard hides what a role cannot use, but the server enforces every rule. Full matrix: [Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md](Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md).
 
 ## Candidate Workflow
 
@@ -115,7 +115,7 @@ The stages are **not strictly linear** in the code: staff can open and update an
 
 `Registered` < `Test Passed` < `Job Assigned` < `Form Submitted` < `Details Verified` < `Documents Verified` < `Visa Document Ready` < `Visa Submitted` < `Visa Approved` < `Departed`, with `Stopped with Test` overriding them while the Test result is FAIL, and a recorded final outcome (`Visa Not Going`, `Cancelled`, `Rejected`: from the uploaded sheet's VISA STATUS or an Admin) overriding everything.
 
-Details: [Docs/20-candidate-management.md](Docs/20-candidate-management.md).
+Details: [Docs/05-Candidate-Management/20-candidate-management.md](Docs/05-Candidate-Management/20-candidate-management.md).
 
 ## System Architecture
 
@@ -158,7 +158,7 @@ flowchart LR
 - WhatsApp webhooks are acknowledged only after the file is validated, stored in temporary storage and recorded in PostgreSQL; OCR, classification and placement then run asynchronously from a PostgreSQL-backed queue (`temporary_data`).
 - The Sheet Sync worker reads PostgreSQL and writes to Google Sheets. Sheets are a mirror, never a source of truth.
 
-More: [Docs/02-system-architecture.md](Docs/02-system-architecture.md). Per-feature flows are in [Data Flow Diagrams](#data-flow-diagrams); the infrastructure view is in [Deployment Architecture](#deployment-architecture).
+More: [Docs/02-Architecture/02-system-architecture.md](Docs/02-Architecture/02-system-architecture.md). Per-feature flows are in [Data Flow Diagrams](#data-flow-diagrams); the infrastructure view is in [Deployment Architecture](#deployment-architecture).
 
 ## Application Components
 
@@ -346,7 +346,7 @@ There are 32 tables in all. Foreign-key delete rules below are the ones in the m
 | `sheet_sync_state` | A single row (`sheet-sync`): integration state, worker heartbeat, active/requested destination, and the **writer lease** that allows one writer to the Sheet at a time. |
 | `candidate_import` | Coordinates a bulk Upload's preview and chunked commit: counts, reason codes, chunk hashes; **no candidate data**. FK `admin_id` → `user` (`RESTRICT`). `sync_run_id` is a plain text reference with no FK. |
 
-Details: [Docs/03-database-design.md](Docs/03-database-design.md).
+Details: [Docs/02-Architecture/03-database-design.md](Docs/02-Architecture/03-database-design.md).
 
 ## Entity Relationship Diagrams
 
@@ -726,7 +726,7 @@ Order, as implemented:
 3. The worker claims rows by compare-and-swap (a lease; 3 attempts, then FAILED). It sends the file to the OCR worker with a Google identity token, then classifies the document, extracts passport (MRZ) and police-slip fields, scores confidence and resolves identity.
 4. A placement decision copies the file to `clients/{passport_id}/…` (and inserts `documents` in a fenced transaction), or to `pending/…`, or stores nothing for an exact duplicate. A document needing a person lands in the Review Queue with a stored review reason.
 
-Detail: [Docs/04](Docs/04-whatsapp-integration.md), [Docs/05](Docs/05-ocr-document-processing.md), [Docs/06](Docs/06-storage-management.md).
+Detail: [Docs/04](Docs/07-Integrations/04-whatsapp-integration.md), [Docs/05](Docs/07-Integrations/05-ocr-document-processing.md), [Docs/06](Docs/02-Architecture/06-storage-management.md).
 
 ### C. Candidate Form submission
 
@@ -761,7 +761,7 @@ flowchart TD
 - **Single successful submission.** The submit transaction updates the access row only if it is still UNLOCKED at the token's version. A second attempt is rejected with 409; a retry of the *same* request (same idempotency key) receives the original success.
 - **Field-by-field review.** Staff confirm or reject each field; a decision is final. Confirming writes only that value into the candidate's own record and is audited. The public form never writes `candidate`, `candidate_additional_details` or `candidate_stages`.
 
-Design and security: [CANDIDATE_FORM_FEATURE_ARCHITECTURE.md](Docs/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md), [share links design](Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md), [security risks](Docs/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md).
+Design and security: [CANDIDATE_FORM_FEATURE_ARCHITECTURE.md](Docs/05-Candidate-Management/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md), [share links design](Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md), [security risks](Docs/08-Security-and-Access/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md).
 
 ### D. Google Sheets synchronization
 
@@ -799,7 +799,7 @@ flowchart LR
 - **Retry.** Retryable Google errors (429, 5xx, network) are recorded and the next run tries again; configuration and data-integrity errors halt the mirror until a successful Test Connection or reconciliation.
 - **Candidate Form submissions are different:** they use their own outbox, are drained **every worker tick** (near real time, only while `SHEET_SYNC_ENABLED` is `true`) with exponential backoff, and are written by `_SUBMISSION_ID` (an existing row is rewritten, never appended twice). A Google outage never affects the candidate's submission.
 
-Docs: [GOOGLE_SHEET_INTEGRATION.md](Docs/GOOGLE_SHEET_INTEGRATION.md), [GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md).
+Docs: [GOOGLE_SHEET_INTEGRATION.md](Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md), [GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md).
 
 ### E. Candidate allocation
 
@@ -905,7 +905,7 @@ npm start               # backend + submission worker (http://localhost:3000)
 npm run admin:dev       # admin dev server (http://localhost:5173)
 ```
 
-Other commands: `npm run worker` (submission worker only), `npm run sheet:worker` (Sheet Sync worker), `npm run db:check`, `npm run admin:build`, `npm run ocr:install` / `npm run ocr:start`. The Candidate Form has its own scripts (`npm --prefix candidate-form run dev`). Full guide: [Docs/11-development-guide.md](Docs/11-development-guide.md).
+Other commands: `npm run worker` (submission worker only), `npm run sheet:worker` (Sheet Sync worker), `npm run db:check`, `npm run admin:build`, `npm run ocr:install` / `npm run ocr:start`. The Candidate Form has its own scripts (`npm --prefix candidate-form run dev`). Full guide: [Docs/01-Getting-Started/11-development-guide.md](Docs/01-Getting-Started/11-development-guide.md).
 
 ## Environment Configuration
 
@@ -922,7 +922,7 @@ Copy [.env.example](.env.example) to `.env`; the admin app uses `admin/.env.exam
 | Candidate Form | Allowed form origin and token-signing secret (backend only) |
 | App | Public base URL (`APP_BASE_URL`) |
 
-Google access uses the runtime service identity (Application Default Credentials); **no key files**. Details: [Docs/08-cloud-deployment.md](Docs/08-cloud-deployment.md) and [Docs/07-backend-development.md](Docs/07-backend-development.md).
+Google access uses the runtime service identity (Application Default Credentials); **no key files**. Details: [Docs/09-Deployment/08-cloud-deployment.md](Docs/09-Deployment/08-cloud-deployment.md) and [Docs/03-Backend/07-backend-development.md](Docs/03-Backend/07-backend-development.md).
 
 ## Deployment Architecture
 
@@ -996,7 +996,7 @@ The Submission worker and the Sheet Sync worker are **two Cloud Run services bui
 
 **Local development services (not deployed):** `docker compose` PostgreSQL (`emlynk-postgres`), `npm start` (API **and** submission worker in one process), `npm run admin:dev`, `npm run ocr:start`, `npm run sheet:worker`. Locally the OCR service is called without an identity token.
 
-**Branches:** feature branches → `dev` → `stage` (Vercel preview and staging validation) → `main` (production). Migrations are forward-only (`npx prisma migrate deploy`) and are never run by the server itself. See [Docs/08-cloud-deployment.md](Docs/08-cloud-deployment.md).
+**Branches:** feature branches → `dev` → `stage` (Vercel preview and staging validation) → `main` (production). Migrations are forward-only (`npx prisma migrate deploy`) and are never run by the server itself. See [Docs/09-Deployment/08-cloud-deployment.md](Docs/09-Deployment/08-cloud-deployment.md).
 
 ### Planned, not implemented
 
@@ -1028,7 +1028,7 @@ An **operational mirror**: PostgreSQL stays the source of truth and the spreadsh
 - **Settings > Google Sheet Sync** (ADMIN): status, *Test Connection*, *Sync Now*, and bulk **Upload** of candidates.
 - Writing is off unless `SHEET_SYNC_ENABLED` is exactly `true`.
 
-Docs: [GOOGLE_SHEET_INTEGRATION.md](Docs/GOOGLE_SHEET_INTEGRATION.md), [GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md), [CANDIDATE_BULK_IMPORT.md](Docs/CANDIDATE_BULK_IMPORT.md).
+Docs: [GOOGLE_SHEET_INTEGRATION.md](Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md), [GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md), [CANDIDATE_BULK_IMPORT.md](Docs/05-Candidate-Management/CANDIDATE_BULK_IMPORT.md).
 
 ## OCR and Document Processing
 
@@ -1042,7 +1042,7 @@ WhatsApp message → webhook (HMAC signature checked first)
   → low confidence, conflicts or unidentified sender → Review Queue (manual review)
 ```
 
-The OCR worker is stateless: it receives a file, returns text and keeps nothing. The full diagram is in [Data Flow B](#b-whatsapp-document-processing). Docs: [04-whatsapp-integration.md](Docs/04-whatsapp-integration.md), [05-ocr-document-processing.md](Docs/05-ocr-document-processing.md), [06-storage-management.md](Docs/06-storage-management.md), [ocr-worker/README.md](ocr-worker/README.md).
+The OCR worker is stateless: it receives a file, returns text and keeps nothing. The full diagram is in [Data Flow B](#b-whatsapp-document-processing). Docs: [04-whatsapp-integration.md](Docs/07-Integrations/04-whatsapp-integration.md), [05-ocr-document-processing.md](Docs/07-Integrations/05-ocr-document-processing.md), [06-storage-management.md](Docs/02-Architecture/06-storage-management.md), [ocr-worker/README.md](ocr-worker/README.md).
 
 ## Testing and Quality
 
@@ -1056,7 +1056,7 @@ The OCR worker is stateless: it receives a file, returns text and keeps nothing.
 | Candidate Form | `npm --prefix candidate-form run typecheck` / `test` / `build` | The public form |
 | Prisma | `npx prisma validate`, `npx prisma migrate status` | Schema and migration ledger |
 
-Details and the definition of done: [Docs/12-testing-and-quality.md](Docs/12-testing-and-quality.md).
+Details and the definition of done: [Docs/10-Testing-and-Quality/12-testing-and-quality.md](Docs/10-Testing-and-Quality/12-testing-and-quality.md).
 
 ## Security Overview
 
@@ -1069,37 +1069,37 @@ Details and the definition of done: [Docs/12-testing-and-quality.md](Docs/12-tes
 - **Candidate Form:** isolated project; identity verification, short-lived signed token, single submission.
 - **Secrets:** environment variables and Secret Manager; Google services use service identities, not key files.
 
-See [Docs/10-security.md](Docs/10-security.md) and [Docs/SUPABASE_AUTH.md](Docs/SUPABASE_AUTH.md).
+See [Docs/08-Security-and-Access/10-security.md](Docs/08-Security-and-Access/10-security.md) and [Docs/08-Security-and-Access/SUPABASE_AUTH.md](Docs/08-Security-and-Access/SUPABASE_AUTH.md).
 
 ## Documentation Index
 
 | Document | Purpose |
 |---|---|
 | [Docs/README.md](Docs/README.md) | Full documentation index |
-| [Docs/01-project-overview.md](Docs/01-project-overview.md) | What the system is and why |
-| [Docs/02-system-architecture.md](Docs/02-system-architecture.md) | Components and topology |
-| [Docs/03-database-design.md](Docs/03-database-design.md) | Schema, identity rules, migrations |
-| [Docs/07-backend-development.md](Docs/07-backend-development.md) | Backend layout, API route map, env vars |
-| [Docs/11-development-guide.md](Docs/11-development-guide.md) | Local setup and workflow |
-| [Docs/CODING_STANDARDS.md](Docs/CODING_STANDARDS.md) | Coding rules |
-| [Docs/ROLES_AND_PERMISSIONS.md](Docs/ROLES_AND_PERMISSIONS.md) | RBAC matrix |
-| [Docs/OWNER_ROLE.md](Docs/OWNER_ROLE.md) | OWNER role |
-| [Docs/09a-admin-dashboard-api.md](Docs/09a-admin-dashboard-api.md) / [09b](Docs/09b-admin-dashboard-guide.md) | Admin API reference / operator guide |
-| [Docs/20-candidate-management.md](Docs/20-candidate-management.md) | Candidate stages and Status |
-| [Docs/JOB_MANAGEMENT_IMPLEMENTATION.md](Docs/JOB_MANAGEMENT_IMPLEMENTATION.md) | Jobs |
-| [Docs/AGENT_CLIENT_MANAGEMENT.md](Docs/AGENT_CLIENT_MANAGEMENT.md) | Agents and Clients |
-| [Docs/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md](Docs/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md) | Candidate Form |
-| [Docs/CANDIDATE_BULK_IMPORT.md](Docs/CANDIDATE_BULK_IMPORT.md) | Bulk Upload |
-| [Docs/GOOGLE_SHEET_INTEGRATION.md](Docs/GOOGLE_SHEET_INTEGRATION.md) | Google Sheet Sync |
-| [Docs/05-ocr-document-processing.md](Docs/05-ocr-document-processing.md) | OCR pipeline |
-| [Docs/08-cloud-deployment.md](Docs/08-cloud-deployment.md) | Deployment and release process |
-| [Docs/10-security.md](Docs/10-security.md) | Security |
-| [Docs/12-testing-and-quality.md](Docs/12-testing-and-quality.md) | Testing |
-| [Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md) | Sheet Sync design (parts describe the original real-time design) |
-| [Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md) / [SECURITY_RISKS](Docs/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md) | Candidate Form share links and threat model |
-| [Docs/04-whatsapp-integration.md](Docs/04-whatsapp-integration.md) / [06-storage-management.md](Docs/06-storage-management.md) | WhatsApp intake / storage placement |
-| [Docs/SUPABASE_AUTH.md](Docs/SUPABASE_AUTH.md) | Supabase Auth |
-| [Docs/NOTIFICATION_SYSTEM_AUDIT.md](Docs/NOTIFICATION_SYSTEM_AUDIT.md) | Notification research (not implemented) |
+| [Docs/01-Getting-Started/01-project-overview.md](Docs/01-Getting-Started/01-project-overview.md) | What the system is and why |
+| [Docs/02-Architecture/02-system-architecture.md](Docs/02-Architecture/02-system-architecture.md) | Components and topology |
+| [Docs/02-Architecture/03-database-design.md](Docs/02-Architecture/03-database-design.md) | Schema, identity rules, migrations |
+| [Docs/03-Backend/07-backend-development.md](Docs/03-Backend/07-backend-development.md) | Backend layout, API route map, env vars |
+| [Docs/01-Getting-Started/11-development-guide.md](Docs/01-Getting-Started/11-development-guide.md) | Local setup and workflow |
+| [Docs/01-Getting-Started/CODING_STANDARDS.md](Docs/01-Getting-Started/CODING_STANDARDS.md) | Coding rules |
+| [Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md](Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md) | RBAC matrix |
+| [Docs/08-Security-and-Access/OWNER_ROLE.md](Docs/08-Security-and-Access/OWNER_ROLE.md) | OWNER role |
+| [Docs/04-Admin-Dashboard/09a-admin-dashboard-api.md](Docs/04-Admin-Dashboard/09a-admin-dashboard-api.md) / [09b](Docs/04-Admin-Dashboard/09b-admin-dashboard-guide.md) | Admin API reference / operator guide |
+| [Docs/05-Candidate-Management/20-candidate-management.md](Docs/05-Candidate-Management/20-candidate-management.md) | Candidate stages and Status |
+| [Docs/06-Jobs-and-Clients/JOB_MANAGEMENT_IMPLEMENTATION.md](Docs/06-Jobs-and-Clients/JOB_MANAGEMENT_IMPLEMENTATION.md) | Jobs |
+| [Docs/06-Jobs-and-Clients/AGENT_CLIENT_MANAGEMENT.md](Docs/06-Jobs-and-Clients/AGENT_CLIENT_MANAGEMENT.md) | Agents and Clients |
+| [Docs/05-Candidate-Management/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md](Docs/05-Candidate-Management/CANDIDATE_FORM_FEATURE_ARCHITECTURE.md) | Candidate Form |
+| [Docs/05-Candidate-Management/CANDIDATE_BULK_IMPORT.md](Docs/05-Candidate-Management/CANDIDATE_BULK_IMPORT.md) | Bulk Upload |
+| [Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md](Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md) | Google Sheet Sync |
+| [Docs/07-Integrations/05-ocr-document-processing.md](Docs/07-Integrations/05-ocr-document-processing.md) | OCR pipeline |
+| [Docs/09-Deployment/08-cloud-deployment.md](Docs/09-Deployment/08-cloud-deployment.md) | Deployment and release process |
+| [Docs/08-Security-and-Access/10-security.md](Docs/08-Security-and-Access/10-security.md) | Security |
+| [Docs/10-Testing-and-Quality/12-testing-and-quality.md](Docs/10-Testing-and-Quality/12-testing-and-quality.md) | Testing |
+| [Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md](Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md) | Sheet Sync design (parts describe the original real-time design) |
+| [Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md) / [SECURITY_RISKS](Docs/08-Security-and-Access/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md) | Candidate Form share links and threat model |
+| [Docs/07-Integrations/04-whatsapp-integration.md](Docs/07-Integrations/04-whatsapp-integration.md) / [06-storage-management.md](Docs/02-Architecture/06-storage-management.md) | WhatsApp intake / storage placement |
+| [Docs/08-Security-and-Access/SUPABASE_AUTH.md](Docs/08-Security-and-Access/SUPABASE_AUTH.md) | Supabase Auth |
+| [Docs/07-Integrations/NOTIFICATION_SYSTEM_AUDIT.md](Docs/07-Integrations/NOTIFICATION_SYSTEM_AUDIT.md) | Notification research (not implemented) |
 
 ## Current Development Notes
 
@@ -1112,9 +1112,9 @@ See [Docs/10-security.md](Docs/10-security.md) and [Docs/SUPABASE_AUTH.md](Docs/
 
 Differences between existing documents and the code, noted here rather than silently resolved. The code was treated as authoritative for this README.
 
-- **One active job per candidate.** The comment on `JobCandidate` in `prisma/schema.prisma`, [Docs/JOB_MANAGEMENT_IMPLEMENTATION.md](Docs/JOB_MANAGEMENT_IMPLEMENTATION.md) and [Docs/09b-admin-dashboard-guide.md](Docs/09b-admin-dashboard-guide.md) still describe a one-active-job rule and a `CANDIDATE_ON_ACTIVE_JOB` error. Migration `20261029120000_job_candidate_multiple_active` dropped that unique index and `assignCandidate()` in `src/services/jobService.js` allows assignments to several jobs.
-- **Sheet Sync is not real-time.** Parts of the Sheet Sync architecture document still describe incremental real-time draining of the queue. The worker's own header and [GOOGLE_SHEET_INTEGRATION.md](Docs/GOOGLE_SHEET_INTEGRATION.md) state that only scheduled reconciliations and Sync Now write to the mirror tab. (This README previously said the worker "drains the queue".)
+- **One active job per candidate.** The comment on `JobCandidate` in `prisma/schema.prisma`, [Docs/06-Jobs-and-Clients/JOB_MANAGEMENT_IMPLEMENTATION.md](Docs/06-Jobs-and-Clients/JOB_MANAGEMENT_IMPLEMENTATION.md) and [Docs/04-Admin-Dashboard/09b-admin-dashboard-guide.md](Docs/04-Admin-Dashboard/09b-admin-dashboard-guide.md) still describe a one-active-job rule and a `CANDIDATE_ON_ACTIVE_JOB` error. Migration `20261029120000_job_candidate_multiple_active` dropped that unique index and `assignCandidate()` in `src/services/jobService.js` allows assignments to several jobs.
+- **Sheet Sync is not real-time.** Parts of the Sheet Sync architecture document still describe incremental real-time draining of the queue. The worker's own header and [GOOGLE_SHEET_INTEGRATION.md](Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md) state that only scheduled reconciliations and Sync Now write to the mirror tab. (This README previously said the worker "drains the queue".)
 - **Webhook acknowledgement.** The webhook answers Meta only after the file is validated, stored and recorded, not "immediately".
-- **Row-level security.** [Docs/10-security.md](Docs/10-security.md) says every table has RLS enabled; the migration for `candidate_allocation` contains no `ENABLE ROW LEVEL SECURITY` statement. Privileges for `anon` / `authenticated` are revoked by default for later tables, but the RLS flag itself could not be confirmed from the repository.
+- **Row-level security.** [Docs/08-Security-and-Access/10-security.md](Docs/08-Security-and-Access/10-security.md) says every table has RLS enabled; the migration for `candidate_allocation` contains no `ENABLE ROW LEVEL SECURITY` statement. Privileges for `anon` / `authenticated` are revoked by default for later tables, but the RLS flag itself could not be confirmed from the repository.
 - **Candidate stages.** "Eight stage records per candidate" is a maximum: rows are created when something is saved, and a missing row means an incomplete stage.
 - **Role list comment.** The `User` model comment in the Prisma schema omits TEAM_LEAD; the application accepts it.

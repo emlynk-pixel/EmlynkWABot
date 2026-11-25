@@ -7,7 +7,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 // Each Vercel function instance runs this module fresh and gets its own
 // pg.Pool, on top of Supabase's own Supavisor session-mode pooler
 // (DATABASE_URL already points at the pooler, not the direct host - see
-// Docs/08-cloud-deployment.md). pg.Pool's default `max` is 10 per instance;
+// Docs/09-Deployment/08-cloud-deployment.md). pg.Pool's default `max` is 10 per instance;
 // under concurrent invocations that can exhaust Supavisor's own, separately
 // limited pool of server-side connections, surfacing as Prisma errors
 // (e.g. P2024) on any query - including the admin login lookup. A small

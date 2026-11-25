@@ -1,5 +1,5 @@
 // Settings -> Google Sheet Sync API, mounted at /api/admin/settings/sheet-sync
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 13).
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 13).
 //
 //   GET  /status          integration state, queue counts, last runs
 //   POST /test            Test Connection: durable TEST_CONNECTION run -> 202
@@ -13,7 +13,7 @@
 // Roles, enforced here by requireRole (the role is re-read from the database
 // for every request by requireActiveUser), on top of the admin router's
 // Supabase-session authentication and rate limiting (no cookie authenticates a
-// request, so CSRF does not apply; Docs/SUPABASE_AUTH.md):
+// request, so CSRF does not apply; Docs/08-Security-and-Access/SUPABASE_AUTH.md):
 //   ADMIN    everything (an OWNER too); no other role opens this area
 // Hiding the sidebar item is not the security boundary; this is.
 //

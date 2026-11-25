@@ -4,7 +4,7 @@ Service name: **`emlynk-submission-worker`**. Entry point: `src/worker.js` (`npm
 
 ## Architecture: why this is a separate service
 
-A Vercel function runs only while a request is in flight; it cannot host a polling loop. So the work is split (`Docs/08-cloud-deployment.md` Part 2, Steps 4–5):
+A Vercel function runs only while a request is in flight; it cannot host a polling loop. So the work is split (`Docs/09-Deployment/08-cloud-deployment.md` Part 2, Steps 4–5):
 
 | Step | Where | What happens |
 |---|---|---|

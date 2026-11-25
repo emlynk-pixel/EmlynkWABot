@@ -1,5 +1,5 @@
 // Google Sheet operational mirror: the one definition of the Sheet's columns
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 6).
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 6).
 //
 // Columns are found by their HEADER TEXT, not by their position. The live
 // Sheet may hold the system columns in any order, interleaved with any

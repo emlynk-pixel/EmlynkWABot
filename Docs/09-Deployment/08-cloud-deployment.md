@@ -34,7 +34,7 @@ Region choice: the submission worker and backend sit in `asia-northeast1` (Tokyo
 
 ## Part 1 — OCR Worker (`emlynk-ocr-worker`)
 
-Full service reference (API contract, Docker, deployment commands, cost, rollback): [`ocr-worker/README.md`](../ocr-worker/README.md).
+Full service reference (API contract, Docker, deployment commands, cost, rollback): [`ocr-worker/README.md`](../../ocr-worker/README.md).
 
 **What it is.** The CPU-heavy Tesseract.js OCR, extracted out of the Express app into its own Cloud Run service, so the backend's process stays free of OCR's memory/CPU spikes. Nothing else moved: the webhook, queue, Supabase storage, Prisma, classification, identity, reconciliation, placement and admin dashboard stay in the backend, with unchanged behavior (`05-ocr-document-processing.md`).
 
@@ -66,7 +66,7 @@ WhatsApp → Express webhook → Supabase temporary/ + temporary_data → HTTP 2
 
 **Current status.** Deployed: service `emlynk-ocr-worker`, region `asia-south1`, private (no `--allow-unauthenticated`). The backend service account `emlynk-backend@project-aa11e15e-a951-4e1b-a65.iam.gserviceaccount.com` has been granted `roles/run.invoker` on it directly (see Part 2, Backend service account). Verified end to end from the deployed submission worker in production (Part 2, Step 5F): a real OCR call succeeded using the worker's own Cloud Run identity, no key file.
 
-**Local development, testing, and the full from-scratch deployment recipe (project setup, Artifact Registry, service accounts, `gcloud run deploy` flags, budget alerts, rollback)** are all in [`ocr-worker/README.md`](../ocr-worker/README.md) and are not repeated here.
+**Local development, testing, and the full from-scratch deployment recipe (project setup, Artifact Registry, service accounts, `gcloud run deploy` flags, budget alerts, rollback)** are all in [`ocr-worker/README.md`](../../ocr-worker/README.md) and are not repeated here.
 
 ---
 

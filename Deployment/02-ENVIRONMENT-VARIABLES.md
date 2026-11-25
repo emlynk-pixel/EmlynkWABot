@@ -52,10 +52,10 @@ Every variable the code reads, where it is set, and where its value comes from. 
 | `IMPORT_RECOVERY_HEARTBEAT_GRACE_MS`, `IMPORT_RECOVERY_MAX_IDLE_MS`, `IMPORT_RECOVERY_MAX_ATTEMPTS` | OPTIONAL | How long the dialog's heartbeat may hold an import whose commit lease ran out (default 90 000 ms, min 45 000), the longest it may do so (default 600 000 ms), and consecutive failures before an import needs attention (default 8) | defaults | You |
 | `IMPORT_LEDGER_HMAC_SECRET_PREVIOUS`, `IMPORT_LEDGER_HMAC_KEY_ID_PREVIOUS` | OPTIONAL (rotation), SECRET | The key that was current before a rotation, with its id (both, a different id and secret). Entries signed with it stay verifiable; re-sign them with `rekeyImportLedger`, then remove these. Rotation: set the new secret and id as current, move the old pair here | `old` | You |
 | `PORT` | OPTIONAL, LOCAL ONLY | Listen port (default 3000 locally). Do not set on Vercel | `3000` | n/a |
-| `NODEJS_HELPERS` | PRODUCTION ONLY (Vercel) | Set to `0` so only Express reads the request body (webhook signature needs raw bytes). This is a Vercel platform setting documented in `Docs/08-cloud-deployment.md` Step 7; it is not read by the app code | `0` | n/a |
+| `NODEJS_HELPERS` | PRODUCTION ONLY (Vercel) | Set to `0` so only Express reads the request body (webhook signature needs raw bytes). This is a Vercel platform setting documented in `Docs/09-Deployment/08-cloud-deployment.md` Step 7; it is not read by the app code | `0` | n/a |
 | `VERCEL` | automatic | Set to `1` by Vercel. Selects the `TRUST_PROXY_HOPS` default | `1` | Vercel sets it. Do not set it yourself |
 
-Not used any more (remove if you find them): `JWT_SECRET`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`, `ADMIN_SETUP_URL_BASE`. Authentication and email are Supabase Auth's ([`Docs/SUPABASE_AUTH.md`](../Docs/SUPABASE_AUTH.md)).
+Not used any more (remove if you find them): `JWT_SECRET`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`, `ADMIN_SETUP_URL_BASE`. Authentication and email are Supabase Auth's ([`Docs/08-Security-and-Access/SUPABASE_AUTH.md`](../Docs/08-Security-and-Access/SUPABASE_AUTH.md)).
 
 **Never set on Vercel:** `GOOGLE_APPLICATION_CREDENTIALS` or any Google key file, and `PORT`.
 
@@ -115,7 +115,7 @@ Required: `DATABASE_URL`, `SHEET_SPREADSHEET_ID`, `SHEET_TAB_NAME` (`SHEET_SYNC_
 | `SHEET_TAB_NAME` | REQUIRED | Tab holding the operational mirror | `<SHEET_TAB_NAME>` | The tab's exact name in the spreadsheet |
 | `SHEET_SYNC_ENABLED` | OPTIONAL | **Write gate.** Only exactly `"true"` allows writing. Anything else (default `false`) runs read-only | `false` | Change only through the activation procedure ([08](08-GOOGLE-SHEET-SYNC-DEPLOYMENT.md)) |
 | `SHEET_FORM_SUBMISSIONS_TAB_NAME` | OPTIONAL | Tab for Candidate Form submissions (same spreadsheet). Default `Candidate Form Submissions` | `Candidate Form Submissions` | Spreadsheet |
-| `SHEET_SYNC_DESTINATIONS` | OPTIONAL | JSON list of several destinations instead of the two variables above | see `Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §25.2 | n/a |
+| `SHEET_SYNC_DESTINATIONS` | OPTIONAL | JSON list of several destinations instead of the two variables above | see `Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §25.2 | n/a |
 | `SHEET_SYNC_POLL_INTERVAL_MS` | OPTIONAL | Worker poll interval, default `10000` | `10000` | n/a |
 | `SHEET_SYNC_DELETION_GUARD_MAX` / `_FRACTION` | OPTIONAL | Reconciliation safety limits, defaults `10` / `0.05` | | n/a |
 | `SHEET_SYNC_BATCH_SIZE`, `SHEET_SYNC_MAX_RETRIES` | OPTIONAL | Accepted but **no effect** (belonged to the removed real-time path) | | |

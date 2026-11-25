@@ -8,7 +8,7 @@ Do this once per environment (dev, stage, production). **Use a separate Supabase
 
 1. Sign in at the Supabase dashboard and create a project (or ask the owner to add you to the existing organisation).
 2. Choose a **strong database password** and store it in a password manager. You will need it for `DATABASE_URL`. If you lose it, reset it in Project Settings → Database.
-3. **Region.** The current system runs Vercel functions in `hnd1` (Tokyo, `vercel.json`) and the submission worker in `asia-northeast1` (Tokyo), and the production database pooler is `aws-0-ap-northeast-1` (Tokyo) (`Docs/08-cloud-deployment.md`). Pick the Supabase region **closest to the Vercel function region and the submission worker**, because the backend calls the database far more often than anything else. For a new environment mirroring production, choose Northeast Asia (Tokyo). The region cannot be changed after creation.
+3. **Region.** The current system runs Vercel functions in `hnd1` (Tokyo, `vercel.json`) and the submission worker in `asia-northeast1` (Tokyo), and the production database pooler is `aws-0-ap-northeast-1` (Tokyo) (`Docs/09-Deployment/08-cloud-deployment.md`). Pick the Supabase region **closest to the Vercel function region and the submission worker**, because the backend calls the database far more often than anything else. For a new environment mirroring production, choose Northeast Asia (Tokyo). The region cannot be changed after creation.
 4. Plan: the Free plan has 1 GB file storage, 5 GB egress, a 500 MB database, no daily backups and pauses after a week of inactivity. It is unsuitable for real candidate data. Check the current limits on the Supabase pricing page; for any production environment use a paid plan (a storage-platform comparison research document exists on the `version/Google-File-Sync` branch and is not part of `dev`).
 
 Collect these values (Project Settings → API / Database) and keep them in your password manager, not in files in the repo:
@@ -36,7 +36,7 @@ Why the session pooler and not another:
 |---|---|---|
 | **Session pooler**, port 5432 | **Yes** | The backend uses interactive Prisma transactions and `SELECT … FOR UPDATE` row locks (`adminReviewActionService.js`), which need one connection for the whole transaction. It has IPv4, so Cloud Run and Vercel can reach it |
 | Direct connection (`db.<ref>.supabase.co`) | No | IPv6 only; unreachable from Cloud Run's default IPv4 egress |
-| Transaction pooler (port 6543) | No | Transaction mode breaks interactive transactions and row locks. (`Docs/08-cloud-deployment.md` mentions 6543 as an alternative; the explanation in Step 2 says session mode is required, and the guide follows that) |
+| Transaction pooler (port 6543) | No | Transaction mode breaks interactive transactions and row locks. (`Docs/09-Deployment/08-cloud-deployment.md` mentions 6543 as an alternative; the explanation in Step 2 says session mode is required, and the guide follows that) |
 
 Special characters in the password must be URL-encoded in `DATABASE_URL`.
 
@@ -59,7 +59,7 @@ There are 49 forward-only migrations in `prisma/migrations/` at the time of writ
 
 1. **Never run `prisma migrate dev` against Supabase, stage or production.** It is interactive, can propose resets, and can create unexpected migration files.
 2. **Never edit a migration that has been applied anywhere.** It breaks the checksum (`P3009` / checksum mismatch). Write a new forward-only migration instead.
-3. **Do not use `prisma db pull` or `prisma migrate diff` against the live Supabase database.** They fail with `P4002` because `"user".auth_user_id` references Supabase's `auth` schema, which Prisma does not manage (`Docs/SUPABASE_AUTH.md`, "Prisma tooling limitation"). This is accepted.
+3. **Do not use `prisma db pull` or `prisma migrate diff` against the live Supabase database.** They fail with `P4002` because `"user".auth_user_id` references Supabase's `auth` schema, which Prisma does not manage (`Docs/08-Security-and-Access/SUPABASE_AUTH.md`, "Prisma tooling limitation"). This is accepted.
 
 | Command | Safe on shared DB? | Purpose |
 |---|---|---|
@@ -100,17 +100,17 @@ gcloud run jobs create emlynk-db-migrate --project=<PROJECT_ID> --region=<REGION
 gcloud run jobs execute emlynk-db-migrate --project=<PROJECT_ID> --region=<REGION> --wait
 ```
 
-This pattern is documented in `Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §24.9. Its prerequisites (the image, the service account, the secret) are created in [05](05-GOOGLE-CLOUD-SETUP.md) and [07](07-SUBMISSION-WORKER-DEPLOYMENT.md).
+This pattern is documented in `Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §24.9. Its prerequisites (the image, the service account, the secret) are created in [05](05-GOOGLE-CLOUD-SETUP.md) and [07](07-SUBMISSION-WORKER-DEPLOYMENT.md).
 
 **Order for a release:** migrate first (additive, backwards compatible), then deploy code. Take a database backup/snapshot first in production.
 
 ### Upgrading an old database that predates Supabase Auth
 
-Only relevant if you inherit a database from before the Supabase Auth restructure. It needs a manual sequence (rename migration, create auth identities, link rows, then the cutover). Follow `Docs/SUPABASE_AUTH.md` → "B. Existing database from before the restructure" exactly. Do not improvise.
+Only relevant if you inherit a database from before the Supabase Auth restructure. It needs a manual sequence (rename migration, create auth identities, link rows, then the cutover). Follow `Docs/08-Security-and-Access/SUPABASE_AUTH.md` → "B. Existing database from before the restructure" exactly. Do not improvise.
 
 ## Auth
 
-The application has no JWT secret, no SMTP settings and stores no passwords. Supabase Auth owns identities and sessions; the application owns the profile, role and status in `public."user"` (`Docs/SUPABASE_AUTH.md`).
+The application has no JWT secret, no SMTP settings and stores no passwords. Supabase Auth owns identities and sessions; the application owns the profile, role and status in `public."user"` (`Docs/08-Security-and-Access/SUPABASE_AUTH.md`).
 
 How it works at runtime:
 
@@ -129,7 +129,7 @@ sequenceDiagram
     A-->>B: response (403 if role or status not allowed)
 ```
 
-Dashboard configuration (**manual, per project, before go-live**), from `Docs/SUPABASE_AUTH.md`:
+Dashboard configuration (**manual, per project, before go-live**), from `Docs/08-Security-and-Access/SUPABASE_AUTH.md`:
 
 1. **Authentication → URL Configuration**
    - Site URL: the Admin site, `https://<your-admin-domain>/admin`.
@@ -151,14 +151,14 @@ No script in the repo creates the bucket. Create it in the dashboard:
 
 1. **Storage → New bucket**.
 2. Name: anything; this exact name goes into `SUPABASE_BUCKET`. Keep a different name per environment (for example `<env>-documents`).
-3. **Public bucket: OFF.** The bucket must be private. No public or signed *download* URLs are created anywhere in the code; admin previews stream through the API (`Docs/06-storage-management.md`).
+3. **Public bucket: OFF.** The bucket must be private. No public or signed *download* URLs are created anywhere in the code; admin previews stream through the API (`Docs/02-Architecture/06-storage-management.md`).
 4. Do **not** add Storage policies for `anon` or `authenticated`. The backend uses the service-role key, which does not need them, and no migration in the repo creates any. With no policy, private buckets are unreachable from the browser. Verify in Storage → Policies that there is none for this bucket.
 
 ### Behaviour the code relies on
 
 | Behaviour | Detail |
 |---|---|
-| Layout | `temporary/<uuid>.<ext>` on upload, then copied to `clients/{passport_id}/{type}/…` or `pending/…` (`Docs/06-storage-management.md`) |
+| Layout | `temporary/<uuid>.<ext>` on upload, then copied to `clients/{passport_id}/{type}/…` or `pending/…` (`Docs/02-Architecture/06-storage-management.md`) |
 | Methods used | `upload`, `download`, `copy`, `exists`, `info`, `list`, `remove`, `createSignedUploadUrl` (via `supabase.storage.from(SUPABASE_BUCKET)`) |
 | Admin uploads | The browser uploads **directly** to storage through a **signed upload URL** for one new object (2-hour expiry, set by Supabase), because a Vercel request body is capped far below file size. The server then verifies and moves the file (`candidateService.js` `createUploadTarget` / `finalizeUpload`) |
 | Size limits in code | 10 MB for documents (`MAX_FILE_SIZE`), 50 MB for skill videos and for the signed Visa Submission PDF (`VISA_SUBMISSION_MAX_FILE_SIZE`). Supabase's own global per-file limit is 50 MB on Free; on paid plans it is configurable. If you raise limits in the dashboard, keep them at or above the app's limits |

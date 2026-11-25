@@ -6,7 +6,7 @@
 // answers Cloud Scheduler's authenticated reconcile trigger (06:00, 12:00 and
 // 18:00 Asia/Colombo, SHEET_SYNC_SCHEDULE). Nothing is synced in real time:
 // the Sheet is written only by those scheduled runs and by Sync Now. See
-// src/services/sheetSyncWorker.js and Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md.
+// src/services/sheetSyncWorker.js and Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md.
 //
 // Google authentication is keyless (Application Default Credentials: the
 // Cloud Run service's runtime identity emlynk-sheet-sync@...). No key file;

@@ -1,5 +1,5 @@
 // Google Sheet operational mirror: READ-ONLY connection and schema check.
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 11.6 and 13.2.)
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 11.6 and 13.2.)
 //
 // Proves that the runtime identity can reach the configured spreadsheet and
 // tab, and that row 1 has every system header exactly once (twice for POLICE

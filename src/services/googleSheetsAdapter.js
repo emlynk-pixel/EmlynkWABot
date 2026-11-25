@@ -1,5 +1,5 @@
 // Google Sheets adapter for the candidate operational mirror
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 6.4, 8.6, 11.6).
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 6.4, 8.6, 11.6).
 //
 // The only module that talks to Google, and the only one that knows live
 // column positions. Columns are found by header name (sheetSchema.js

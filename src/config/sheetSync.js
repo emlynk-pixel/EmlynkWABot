@@ -1,5 +1,5 @@
 // Google Sheet operational mirror: configuration and the write safety gate
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 11.6).
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 11.6).
 //
 // The target is the real operational Sheet; there is no test copy. Writing
 // is therefore OFF unless SHEET_SYNC_ENABLED is explicitly "true":
@@ -206,7 +206,7 @@ export function readSheetSyncTuning(env = process.env) {
 // next scheduled run or a manual Sync Now. Asia/Colombo is the project's
 // operational time zone (src/utils/businessDay.js); Cloud Scheduler applies
 // it, so the server's own time zone never matters.
-// The deployment commands (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
+// The deployment commands (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
 // Section 24.9) use exactly these values; a test keeps them in step.
 export const SHEET_SYNC_SCHEDULE = Object.freeze({
     jobName: "emlynk-sheet-sync-reconcile",
@@ -218,7 +218,7 @@ export const SHEET_SYNC_SCHEDULE = Object.freeze({
 });
 
 // SHEET_SYNC_PILOT_CANDIDATE_IDS: the controlled first-write pilot
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 24.10). A comma-
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Section 24.10). A comma-
 // separated list of candidate unique IDs. While it is set, a reconciliation
 // writes ONLY these candidates (every other candidate is compared but not
 // written, and no row is marked inactive), so enabling writes can't mirror

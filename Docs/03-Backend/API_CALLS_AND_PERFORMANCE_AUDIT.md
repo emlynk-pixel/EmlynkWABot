@@ -591,7 +591,7 @@ All review routes run `router.param("reviewId")` first, which for a candidate-sc
 **#35 GET `/candidates`** (`:586`, `candidateService.js:734` `listCandidates`). Purpose: the paged Candidates list with derived Status.
 - Request: `page` (≤10 000), `pageSize` (≤100), `search` (≤100 chars), advanced filters (`candidateListFilters.js`).
 - Flow without a derived filter: `count` ∥ `findMany(take 100)` with `WORKFLOW_STATUS_SELECT` (relations `stages`, `documents`, `jobAssignments`, `verification` → **4 extra statements**) → `submittedFormPassportIds` (**2 raw statements**: `to_regclass` check, then `candidate_form_access`) → in the route, `pendingConflictsByCandidate` (`candidateFormSubmissionService.js:90`: responses read, then 3 parallel reads when any page candidate has submitted).
-- About **9-12 statements** per page, not the "4 queries" documented in `Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md:185` (that document predates the Status, verification and form-conflict columns).
+- About **9-12 statements** per page, not the "4 queries" documented in `Docs/05-Candidate-Management/CANDIDATE_PAGINATION_AND_PERFORMANCE.md:185` (that document predates the Status, verification and form-conflict columns).
 - **With a derived filter** (`jobType`, `workflowStatus`, `stage`; `needsDerivedFilter`, `candidateListFilters.js:240`): `count`, then **`findMany` of every matching candidate** (up to `MAX_DERIVED_FILTER_CANDIDATES = 20 000`, else 422) with relations, `candidateWorkflowStatuses` over all of them, in-memory filter, then the page re-read.
 - Search: `contains … mode: insensitive` over passport, unique ID, names, phones, NIC (`candidateSearchWhere`, `:624`). No trigram/`lower()` index exists for these columns, so a search is a sequential scan of `candidate` (source evidence; scale-dependent).
 - Response: up to 100 items with summary, Status, 8 stage flags, `formConflicts`; `pagination`; `filters`.
@@ -1160,7 +1160,7 @@ All endpoints not listed are **LOW**: single-row reads, short transactions with 
 | Request-duration instrumentation (middleware, `Server-Timing`, `pino-http`, `morgan`) | **None** in `src/` |
 | Timing logs | Only `sheet_sync.reconcile_completed` logs `durationMs` for the background reconcile (`src/services/sheetSyncWorker.js:318`), not an API |
 | Performance tests | `test/candidateImportPerformance.test.js`: asserts on PGlite (no network) that the import preview uses ≤12 Prisma operations, each chunk ≤15, and each chunk <10 s; results are not stored. `test/webhookResponseTiming.test.js`: asserts the webhook does not wait for OCR (behavioural, not a latency number) |
-| Existing performance documentation | `Docs/CANDIDATE_PAGINATION_AND_PERFORMANCE.md` §6: query counts and row counts (no times); its "4 queries per request" is now outdated (F-10) |
+| Existing performance documentation | `Docs/05-Candidate-Management/CANDIDATE_PAGINATION_AND_PERFORMANCE.md` §6: query counts and row counts (no times); its "4 queries per request" is now outdated (F-10) |
 
 Therefore:
 

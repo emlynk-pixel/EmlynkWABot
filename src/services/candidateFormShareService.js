@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { CandidateError } from "./candidateService.js";
 
 // Candidate Form share links (Admin > Candidate > Additional details > Share
-// Form). Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
+// Form). Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md.
 //
 // A link opens the public Candidate Form for ONE candidate. It carries a
 // 256-bit random secret (crypto.randomBytes) in the URL fragment

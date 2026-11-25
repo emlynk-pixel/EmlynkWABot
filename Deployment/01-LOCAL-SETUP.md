@@ -106,7 +106,7 @@ npx prisma migrate deploy
 npm run db:check              # prints only "Database connection successful." or a failure type
 ```
 
-`Docs/11-development-guide.md` shows `npx prisma migrate dev` for the local Docker database. `migrate dev` is interactive and can reset schemas; **never run it against a Supabase project or any shared database**. `migrate deploy` is safe everywhere because it only applies pending migrations. Details in [03](03-SUPABASE-SETUP.md#schema-and-migrations).
+`Docs/01-Getting-Started/11-development-guide.md` shows `npx prisma migrate dev` for the local Docker database. `migrate dev` is interactive and can reset schemas; **never run it against a Supabase project or any shared database**. `migrate deploy` is safe everywhere because it only applies pending migrations. Details in [03](03-SUPABASE-SETUP.md#schema-and-migrations).
 
 There is no seed step to follow: `package.json` has no `prisma.seed` entry and `prisma/seed.js` is git-ignored.
 

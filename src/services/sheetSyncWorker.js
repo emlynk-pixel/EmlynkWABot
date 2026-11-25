@@ -1,5 +1,5 @@
 // Google Sheet operational mirror: the background WORKER (Phase 3/4).
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 8.5-8.7, 9, 11.5.)
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 8.5-8.7, 9, 11.5.)
 //
 // Runs only in the dedicated sheet-sync process (src/sheetSyncWorker.js, the
 // Cloud Run service emlynk-sheet-sync-worker). Never on Vercel, never in the

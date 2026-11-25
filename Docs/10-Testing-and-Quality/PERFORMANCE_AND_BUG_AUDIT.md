@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-06 · **Branch:** `dev` (commit `0fe6723`) · **Code changed:** none
 
-This audit runs every test suite, measures every important admin API against a seeded database at two sizes, and lists the bugs and the reasons the system slows down. It builds on the earlier static audit, [API_CALLS_AND_PERFORMANCE_AUDIT.md](API_CALLS_AND_PERFORMANCE_AUDIT.md). That document maps every endpoint but has no measurements. This one adds the numbers.
+This audit runs every test suite, measures every important admin API against a seeded database at two sizes, and lists the bugs and the reasons the system slows down. It builds on the earlier static audit, [API_CALLS_AND_PERFORMANCE_AUDIT.md](../03-Backend/API_CALLS_AND_PERFORMANCE_AUDIT.md). That document maps every endpoint but has no measurements. This one adds the numbers.
 
 ---
 

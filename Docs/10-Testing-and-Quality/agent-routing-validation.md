@@ -152,4 +152,4 @@ The instruction-level fix has now been tried twice for frontend and gives no eff
 - Analysis-only prompts do not show whether specialists would be invoked for implementation in the real tree.
 - Sandboxes were untrusted, so project permission allow-lists did not apply. Agents and tools were still available.
 - Test 3's timeout came from load and the test run, not from the routing decision itself.
-- `Docs/agent-routing-validation.md` is untracked. Nothing was staged, committed or pushed.
+- `Docs/10-Testing-and-Quality/agent-routing-validation.md` is untracked. Nothing was staged, committed or pushed.

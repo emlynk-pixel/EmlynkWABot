@@ -2,7 +2,7 @@
 
 Service: **`emlynk-sheet-sync-worker`** (Cloud Run) plus one Cloud Scheduler job. Entry point `src/sheetSyncWorker.js` (`npm run sheet:worker`).
 
-Design, column layout, safety invariants and the full runbook live in [`Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](../Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md) (§24 "As Built") and [`Docs/GOOGLE_SHEET_INTEGRATION.md`](../Docs/GOOGLE_SHEET_INTEGRATION.md). This page is the new-developer deployment path.
+Design, column layout, safety invariants and the full runbook live in [`Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md`](../Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md) (§24 "As Built") and [`Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md`](../Docs/07-Integrations/GOOGLE_SHEET_INTEGRATION.md). This page is the new-developer deployment path.
 
 > **This feature writes to a real operational spreadsheet that people work in.** Deploy it with writes **disabled** (`SHEET_SYNC_ENABLED=false`, the default), test read-only, and enable writing only through the controlled activation procedure with the business owner's approval. Do not point a test deployment at the production spreadsheet.
 
@@ -37,7 +37,7 @@ flowchart LR
 ## 1. The spreadsheet
 
 1. Spreadsheet ID: the part of its URL between `/d/` and `/edit`: `https://docs.google.com/spreadsheets/d/<GOOGLE_SPREADSHEET_ID>/edit`.
-2. Mirror tab: its exact name is `SHEET_TAB_NAME`. **Row 1 must already contain the exact required header row** (83 columns for the current layout; `Docs/CANDIDATE_BULK_IMPORT.md` §3–§4 and `src/services/sheetSchema.js` are the authority). The worker never invents the mirror's headers: it validates them by name (any order, extra operator columns tolerated; a missing, renamed or duplicated required header gives `SCHEMA_INVALID`).
+2. Mirror tab: its exact name is `SHEET_TAB_NAME`. **Row 1 must already contain the exact required header row** (83 columns for the current layout; `Docs/05-Candidate-Management/CANDIDATE_BULK_IMPORT.md` §3–§4 and `src/services/sheetSchema.js` are the authority). The worker never invents the mirror's headers: it validates them by name (any order, extra operator columns tolerated; a missing, renamed or duplicated required header gives `SCHEMA_INVALID`).
 3. Form Submissions tab (`SHEET_FORM_SUBMISSIONS_TAB_NAME`, default `Candidate Form Submissions`): the worker writes its headers automatically **only if the tab is completely blank**.
 4. **Use a separate spreadsheet (a copy) for every non-production environment.** There is no "test mode" for a real spreadsheet other than `SHEET_SYNC_ENABLED=false`.
 5. Before ever enabling writes, the Sheet owner makes a dated copy and downloads an `.xlsx` as a backup.
@@ -93,7 +93,7 @@ IMAGE=asia-northeast1-docker.pkg.dev/$PROJECT/emlynk-backend/sheet-sync:$TAG
 gcloud builds submit --project=$PROJECT --tag=$IMAGE .
 ```
 
-**Redeploy the worker with every change to Sheet Sync code.** The API (Vercel) and the worker (Cloud Run) deploy separately; code that the worker runs takes effect only after the image is rebuilt and the service updated (symptoms of an old worker: `Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §25.9).
+**Redeploy the worker with every change to Sheet Sync code.** The API (Vercel) and the worker (Cloud Run) deploy separately; code that the worker runs takes effect only after the image is rebuilt and the service updated (symptoms of an old worker: `Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §25.9).
 
 ## 5. Optional: read-only connection check as a Cloud Run Job
 
@@ -182,7 +182,7 @@ Behaviour: the call returns 202 quickly (it only records a run; `--attempt-deadl
 
 ## Enabling writes (controlled; not part of the base deployment)
 
-Do not do this on your own. The procedure has prerequisites (schema health, correct spreadsheet and tab, dedicated identity, authoritative database, duplicate-ID scan, Sheet backup, one-candidate pilot plan) and a one-candidate pilot with `SHEET_SYNC_PILOT_CANDIDATE_IDS`. Follow `Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §24.10 exactly, with the Sheet owner and the senior.
+Do not do this on your own. The procedure has prerequisites (schema health, correct spreadsheet and tab, dedicated identity, authoritative database, duplicate-ID scan, Sheet backup, one-candidate pilot plan) and a one-candidate pilot with `SHEET_SYNC_PILOT_CANDIDATE_IDS`. Follow `Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md` §24.10 exactly, with the Sheet owner and the senior.
 
 Emergency stop (also §24.11):
 

@@ -4,7 +4,7 @@
 
 **Status:** Pre-implementation security planning, updated on 2026-10-15 with the completed repository audit (static review of the route table, raw SQL, services, migrations, Vite / Vercel configuration, plus four executed read-only checks). Documentation only: nothing in this document is implemented, and no application, schema, migration or deployment file was changed.
 **Branch:** `version/candidate-extra-details-form`
-**Companion documents:** [MASTER_DATABASE_ARCHITECTURE.md](MASTER_DATABASE_ARCHITECTURE.md) (design, section 6), [README.md](../README.md).
+**Companion documents:** [MASTER_DATABASE_ARCHITECTURE.md](MASTER_DATABASE_ARCHITECTURE.md) (design, section 6), [README.md](../../README.md).
 
 Language used in this document: "designed to prevent" means a control is specified but not yet built; "requires verification" means it must be proven by a test before release; "no issue found in audited path" means the code was read and nothing was found, which is **not** proof that no issue exists. No risk is considered closed until the control is implemented and its test passes.
 
@@ -104,7 +104,7 @@ Using one GitHub repository for Admin, backend and the Candidate Form is **not i
 
 ## 4. Data access matrix
 
-Current staff rules are taken from `src/routes/admin.js` and `Docs/20-candidate-management.md`: `CANDIDATE_STAFF` = ADMIN, MANAGER, ANALYST, REGISTRATION_DESK; an ANALYST is limited to allocated candidates; ADMIN-only routes are users, audit logs and settings.
+Current staff rules are taken from `src/routes/admin.js` and `Docs/05-Candidate-Management/20-candidate-management.md`: `CANDIDATE_STAFF` = ADMIN, MANAGER, ANALYST, REGISTRATION_DESK; an ANALYST is limited to allocated candidates; ADMIN-only routes are users, audit logs and settings.
 
 | Resource | Candidate Public Form | Staff / Admin |
 |---|---|---|
@@ -950,7 +950,7 @@ The Candidate Form must **not** be released until **all** of these pass (test ID
 
 ## 29. Task 3 update (2026-10-16): share links, Passport + NIC, single submission
 
-Task 3 changed the design described in section 1. Verification now needs a personal **share link** created by staff (a 256-bit secret in the URL fragment), plus the candidate's **Passport Number and NIC Number** (NIC replaces WhatsApp). The candidate submits once; answers go to the new `candidate_form_response` table and never to `candidate`, `candidate_additional_details` or `candidate_stages`. The full design, sources and field mapping are in [CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md).
+Task 3 changed the design described in section 1. Verification now needs a personal **share link** created by staff (a 256-bit secret in the URL fragment), plus the candidate's **Passport Number and NIC Number** (NIC replaces WhatsApp). The candidate submits once; answers go to the new `candidate_form_response` table and never to `candidate`, `candidate_additional_details` or `candidate_stages`. The full design, sources and field mapping are in [CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](../05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md).
 
 Effect on the earlier register: R-028 / R-029 (knowledge-only verification) are reduced, because a guess now also needs the link secret. R-001 / R-082 (IDOR) stay controlled: the candidate comes only from the token, which now also carries the link ID and the access version. R-047 / R-046 (full replacement, concurrent edits) no longer apply to the public path: it never writes the staff tables.
 

@@ -1,6 +1,6 @@
 # Candidate Form Feature Architecture
 
-> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](ROLES_AND_PERMISSIONS.md).
+> **Role note (2026-10-30):** the `MANAGER` role has been retired; ADMIN holds everything it could do, and the roles are now `OWNER > ADMIN > ANALYST / REGISTRATION_DESK / JOB_HANDLER`. Where this document names MANAGER it describes the role as it was when this was written (historical). Current permissions: [`ROLES_AND_PERMISSIONS.md`](../08-Security-and-Access/ROLES_AND_PERMISSIONS.md).
 >
 > **Role note (2026-11-01):** the `TEAM_LEAD` role was added (`OWNER > ADMIN > TEAM_LEAD > ANALYST / REGISTRATION_DESK / JOB_HANDLER`). A TEAM_LEAD shares and revokes a candidate's form link and views submissions like the other Candidates roles; everything this document calls ADMIN only (confirming or rejecting submitted values, the job-group link) stays ADMIN only.
 
@@ -713,10 +713,10 @@ flowchart TB
 
 | Document | Use it for |
 |---|---|
-| [CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md](CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md) | Threat model, risk register, abuse test plan, acceptance criteria |
+| [CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md](../08-Security-and-Access/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md) | Threat model, risk register, abuse test plan, acceptance criteria |
 | [CANDIDATE_EXTRA_DETAILS_FORM_ISSUES_AND_SOLUTIONS.md](CANDIDATE_EXTRA_DETAILS_FORM_ISSUES_AND_SOLUTIONS.md) | Every issue found, its fix and status (ISS-001 onward) |
 | [CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md](CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md) | Detailed link, verification, prefill mapping and group-link design |
-| [JOB_MANAGEMENT_IMPLEMENTATION.md](JOB_MANAGEMENT_IMPLEMENTATION.md) | Job model, Job Code, assignment rules, migration from the legacy job field |
-| [03-database-design.md](03-database-design.md) | Table and migration reference (Part 2: detailed schema) |
+| [JOB_MANAGEMENT_IMPLEMENTATION.md](../06-Jobs-and-Clients/JOB_MANAGEMENT_IMPLEMENTATION.md) | Job model, Job Code, assignment rules, migration from the legacy job field |
+| [03-database-design.md](../02-Architecture/03-database-design.md) | Table and migration reference (Part 2: detailed schema) |
 | [20-candidate-management.md](20-candidate-management.md) | Admin candidate screens and API reference |
-| [../candidate-form/README.md](../candidate-form/README.md) | The public frontend (commands, configuration) |
+| [../candidate-form/README.md](../../candidate-form/README.md) | The public frontend (commands, configuration) |

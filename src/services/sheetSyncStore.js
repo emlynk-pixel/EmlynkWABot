@@ -1,5 +1,5 @@
 // Google Sheet operational mirror: the durable PostgreSQL side (Phase 3/4).
-// (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 8.2-8.5, 9.5, 11.5.)
+// (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md, Sections 8.2-8.5, 9.5, 11.5.)
 //
 //   queue  sheet_sync_queue  "candidate X changed since the last sync" (rows
 //          are written by database triggers, see migration

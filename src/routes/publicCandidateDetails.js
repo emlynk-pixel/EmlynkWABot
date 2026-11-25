@@ -21,7 +21,7 @@ import { resolveDb } from "../utils/resolveClients.js";
 //                  Not candidate data, so it needs no token, and it never fails:
 //                  on any error the form gets the EMLYNK defaults
 //   POST /verify   share-link secret + Passport + NIC -> short-lived candidate
-//                  token (Docs/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md)
+//                  token (Docs/05-Candidate-Management/CANDIDATE_EXTRA_DETAILS_FORM_SHARE_LINKS_DESIGN.md)
 //   POST /form     the candidate's identity (read-only) and the prefill
 //   POST /draft    one step's answers, saved when the candidate clicks Next
 //   POST /submit   the answers, once; then the form is locked for good
@@ -29,7 +29,7 @@ import { resolveDb } from "../utils/resolveClients.js";
 // (middleware/requireCandidateFormToken.js). Everything is POST, so CORS
 // grants exactly POST and OPTIONS.
 //
-// Controls (Docs/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md):
+// Controls (Docs/08-Security-and-Access/CANDIDATE_EXTRA_DETAILS_FORM_SECURITY_RISKS.md):
 //   - CORS for exactly CANDIDATE_FORM_ORIGIN; any other Origin gets 403 and
 //     no CORS grant. CORS is not authorization: requests without an Origin
 //     (curl, servers) are still subject to every check below.

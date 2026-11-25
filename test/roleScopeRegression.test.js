@@ -1,4 +1,4 @@
-// Candidate scope and the narrowed operational roles, end to end (Docs/ROLES_AND_PERMISSIONS.md):
+// Candidate scope and the narrowed operational roles, end to end (Docs/08-Security-and-Access/ROLES_AND_PERMISSIONS.md):
 //   ANALYST            only the candidates allocated to them: list, search, paging, filters, the
 //                      candidate page and everything under it, and Need Attention; nothing else.
 //   TEAM_LEAD          every candidate; Need Attention is its notification source (never the review queue).

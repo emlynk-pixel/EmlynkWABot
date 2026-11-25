@@ -612,7 +612,7 @@ model CandidateAllocation {
 }
 
 // ---------------------------------------------------------------- Job Management
-// jobService.js. Migration 20261018120000_job_management. Docs/JOB_MANAGEMENT_IMPLEMENTATION.md.
+// jobService.js. Migration 20261018120000_job_management. Docs/06-Jobs-and-Clients/JOB_MANAGEMENT_IMPLEMENTATION.md.
 // CHECK constraints, partial unique indexes and triggers are in that
 // migration's SQL (not expressible here): maintain them through a SQL migration.
 
@@ -1130,7 +1130,7 @@ model RateLimit {
   @@map("rate_limits")
 }
 
-// Google Sheet operational mirror (Docs/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
+// Google Sheet operational mirror (Docs/07-Integrations/GOOGLE_SHEET_CANDIDATE_SYNC_ARCHITECTURE.md,
 // Section 8): the durable outbox. A row means "candidate <unique_id> needs to
 // be mirrored", never a data snapshot (no PII): the worker re-reads the
 // candidate when it processes the row. Rows are written by database triggers
