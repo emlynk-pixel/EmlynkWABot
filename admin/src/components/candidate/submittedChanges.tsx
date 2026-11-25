@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../../api/client";
-import { confirmAllFormFields, confirmFormField, rejectAllFormFields, rejectFormField, type PendingChange } from "../../api/candidates";
+import { confirmAllFormFields, confirmFormField, rejectAllFormFields, rejectFormField, type PendingChange, englishLevelLabel } from "../../api/candidates";
 import { ActionDialog, DialogError, dangerSolidButton, primaryButton, secondaryButton } from "../Dialog";
 import { formatDay, humanize } from "../format";
 
@@ -107,6 +107,7 @@ export function mergeRefreshed<T extends Record<string, unknown>>(current: T, pr
 
 export function display(field: string, value: string | null): string {
     if (value === null || value === "") return "Not recorded";
+    if (field === "qualifications.englishKnowledge") return englishLevelLabel(value);
     const kind = CONFIRMABLE_LABELS[field]?.kind ?? "text";
     return kind === "date" ? formatDay(value) : kind === "code" ? humanize(value) : value;
 }

@@ -338,7 +338,7 @@ describe("Excel", () => {
             details: { tshirtSize: "L", pantSize: "32", shoeSize: "42", englishKnowledge: "GOOD", canReadDrawings: true, teamLeadingSkills: true, otherLanguages: "Tamil, Hindi" },
         });
         await candidate(job, "P0000052", { firstName: "=cmd", otherName: null, document: { minutesAgo: 20 } });
-        await candidate(job, "P0000053", { firstName: "Sunil", otherName: "Fernando", document: { minutesAgo: 10 }, details: { teamLeadingSkills: false, canReadDrawings: true, englishKnowledge: "ENGLISH 9" } });
+        await candidate(job, "P0000053", { firstName: "Sunil", otherName: "Fernando", document: { minutesAgo: 10 }, details: { teamLeadingSkills: false, canReadDrawings: true, englishKnowledge: "VERY GOOD" } });
         ok(await extract(USERS.ADMIN, job, ["P0000053", "P0000051", "P0000052"]));
 
         const details = await readSheet(candidatePath());

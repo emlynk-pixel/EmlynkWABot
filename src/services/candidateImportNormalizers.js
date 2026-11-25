@@ -12,7 +12,7 @@
 import { CANDIDATE_PASSPORT_PATTERN } from "../utils/passportId.js";
 import { parseHeight, parseWeight } from "../utils/bodyMeasurements.js";
 import { canonicalPhoneNumber } from "../utils/phoneNumber.js";
-import { resolveEnglishKnowledge } from "./englishKnowledgeLevels.js";
+import { codeOf } from "./englishKnowledgeLevels.js";
 
 export const NIC_PATTERN = /^(\d{9}[VX]|\d{12})$/;
 // A legacy passport accepted with a warning: P or N + 8 digits (registration takes 7).
@@ -20,6 +20,7 @@ export const LEGACY_PASSPORT_PATTERN = /^[PN][0-9]{8}$/;
 export const MARITAL_STATUSES = Object.freeze(["SINGLE", "MARRIED", "DIVORCED", "WIDOWED", "SEPARATED"]);
 export const BLOOD_GROUPS = Object.freeze(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]);
 export const SHIRT_SIZES = Object.freeze(["XS", "S", "M", "L", "XL", "XXL"]);
+export const ENGLISH_LEVELS = Object.freeze(["NO KNOWLEDGE", "BASIC", "FAIR", "GOOD", "VERY GOOD", "FLUENT"]);
 
 // Collapse spaces, trim; null/undefined -> "".
 export const clean = (value) => (value === null || value === undefined ? "" : String(value).replace(/\s+/g, " ").trim());
@@ -224,13 +225,11 @@ export function normalizeWeight(raw) {
     return kg === null ? drop("INVALID_WEIGHT") : { value: kg };
 }
 
-// The record's English knowledge (englishKnowledgeLevels.js): an older answer ("Good", "<Sinhala> (Good)")
-// is translated to ENGLISH 6..10; NO KNOWLEDGE and ENGLISH 6..10 are kept.
 export function normalizeEnglishKnowledge(raw) {
     if (blank(raw)) return none();
-    const { value, recognised } = resolveEnglishKnowledge(englishAnswer(raw));
-    if (!recognised) return drop("INVALID_ENGLISH_LEVEL");
-    return value ? { value } : none();
+    // An old answer or an ENGLISH n label: stored as the code.
+    const value = codeOf(englishAnswer(raw));
+    return value ? { value } : drop("INVALID_ENGLISH_LEVEL");
 }
 
 export function normalizeEmail(raw) {

@@ -332,7 +332,7 @@ All core application tables reside in the `public` schema.
   - `father_alive` (`BOOLEAN`), `father_full_name` (`TEXT`), `father_birthday` (`DATE`); `mother_alive`, `mother_full_name`, `mother_birthday` likewise.
   - `marital_status` (`TEXT`: `SINGLE`, `MARRIED`, `DIVORCED`, `WIDOWED`, `SEPARATED`), `wife_full_name` (`TEXT`), `wife_birthday` (`DATE`).
   - `child_1_name`, `child_2_name`, `child_3_name`, `other_job_skills` (`TEXT`).
-  - `english_knowledge` (`TEXT`, CHECK): `NO KNOWLEDGE`, or `ENGLISH 6` (Basic, lowest) to `ENGLISH 10` (Fluent, highest). The older levels `BASIC`, `FAIR`, `GOOD`, `VERY GOOD`, `FLUENT` stay allowed for rows saved before that scale and are read as `ENGLISH 6`..`ENGLISH 10` by `src/services/englishKnowledgeLevels.js`; new writes store only `NO KNOWLEDGE` or `ENGLISH 6`..`ENGLISH 10` (migration `20261124130000_english_knowledge_levels`).
+  - `english_knowledge` (`TEXT`: `NO KNOWLEDGE`, `BASIC`, `FAIR`, `GOOD`, `VERY GOOD`, `FLUENT`): admins see the stored codes as `ENGLISH 6` (`BASIC`) to `ENGLISH 10` (`FLUENT`), `NO KNOWLEDGE` unchanged, via `src/services/englishKnowledgeLevels.js`; display only, no migration is involved.
   - `created_date` (`TIMESTAMP(3)`), `updated_date` (`TIMESTAMP(3)`).
 - **Rules** (enforced by `src/services/candidateAdditionalDetailsService.js`, not by database constraints):
   - Father/mother details are kept only when that parent is alive, and the name is then required. The wife's details are kept only when married, and her name is then required.
@@ -360,7 +360,6 @@ All core application tables reside in the `public` schema.
 #### 2.16 `public.candidate_form_response`
 - **Purpose**: The candidate's submitted answers, once. PK `passport_id`. **Never** merged automatically into `candidate` or `candidate_additional_details`.
 - **Columns** (all nullable, typed): `full_name`, `surname`, `other_names`, `nic` (copied from the record, not an answer), `sex` (`MALE`/`FEMALE`/`OTHER`), `civil_status` (`SINGLE`/`MARRIED`/`DIVORCED`/`WIDOWED`), `birth_date` (`DATE`), `birth_place`, `address`, `city`, `district`, `ds_division`, `gn_division`, `alternative_phone`, `email`, `passport_issue_date`, `passport_expiry_date`, `job_category`, `job_category_other`, `experience`, `other_skills_1`, `other_skills_2`, `english_knowledge`, `shirt_size`, `waist_size`, `shoe_size`, `father_/mother_/spouse_` `name`, `surname`, `passport_number`, `birth_date`, `child_1_name` … `child_3_name`, `guardian_name`, `guardian_relationship`, `guardian_nic`, `guardian_birth_date`, `guardian_phone`, `guardian_address`; `submitted_at`, `submitted_via_link_id`.
-- `english_knowledge` here (and in 2.15) keeps the form's own answers `NO KNOWLEDGE`, `BASIC`, `FAIR`, `GOOD`, `VERY GOOD`, `FLUENT`; `BASIC`..`FLUENT` are translated to `ENGLISH 6`..`ENGLISH 10` (`NO KNOWLEDGE` kept) only when written into `candidate_additional_details` (2.12).
 - **Rules**: CHECKs on the code columns; values immutable by trigger (the cascading `passport_id` and the link IDs may still change).
 - **Security (2.13–2.16)**: RLS enabled, all privileges revoked from `anon` and `authenticated`. Not mirrored to the Google Sheet.
 
@@ -534,10 +533,6 @@ Migrations 6.1 and 6.2 are applied and active on the shared database.
 #### 6.7 `20261018140000_candidate_form_field_review`
 - **Status**: written 2026-10-17; **not applied to any shared database yet**. Apply after the two earlier `20261018*` migrations with `prisma migrate deploy`.
 - Additive only: the `candidate_form_field_review` table, its CHECKs, foreign keys, the "decision is final" trigger, RLS and revokes. No existing row or table changes.
-
-#### 6.9 `20261124130000_english_knowledge_levels`
-- DDL only: replaces `candidate_additional_details_english_knowledge_check` with one that allows `ENGLISH 6`..`ENGLISH 10` as well as the older six levels. No row is rewritten or backfilled; `candidate_form_response` / `candidate_form_prefill_snapshot` are unchanged. Read-only check before / after deploying: `npm run db:audit-english-knowledge` (counts only).
-- Optional data backfill after the migration: `npm run db:backfill-english-knowledge` (dry run) then `-- --apply`: `BASIC`..`FLUENT` → `ENGLISH 6`..`ENGLISH 10` in `candidate_additional_details` only, one transaction, idempotent; `NO KNOWLEDGE`, NULL and `ENGLISH n` untouched; no audit entry and `updated_date` unchanged (the meaning of the value does not change).
 
 
 #### 6.10 `20261124140000_visa_submission_extractions`

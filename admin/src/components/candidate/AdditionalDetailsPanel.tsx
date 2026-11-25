@@ -4,7 +4,7 @@ import { ApiError } from "../../api/client";
 import {
     BLOOD_GROUPS,
     ENGLISH_LEVELS,
-    normalizeEnglishLevel,
+    ENGLISH_LEVEL_LABELS,
     MARITAL_STATUS_OPTIONS,
     PANT_SIZE_PRESETS,
     SHOE_SIZE_PRESETS,
@@ -13,7 +13,7 @@ import {
     type AdditionalDetails,
     type AdditionalDetailsView,
 } from "../../api/candidates";
-import { humanize, todayInSriLanka } from "../format";
+import { todayInSriLanka } from "../format";
 import { DatePicker } from "../DatePicker";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
 import { ErrorState, LoadingState } from "../States";
@@ -56,7 +56,6 @@ function formFrom(details: AdditionalDetails): Form {
         const value = details[key];
         form[key] = typeof value === "boolean" ? (value ? "yes" : "no") : value ?? "";
     }
-    form.englishKnowledge = normalizeEnglishLevel(form.englishKnowledge);
     return form;
 }
 
@@ -275,7 +274,7 @@ function AdditionalDetailsForm({ view, canEdit, notice, onSaved, currentJob, act
                 {yesNo("canReadDrawings", "Can Read Drawings", "basic.canReadDrawings")}
                 {yesNo("teamLeadingSkills", "Team Leading Skills", "basic.teamLeadingSkills")}
                 {text("otherLanguages", "Other Languages", { submitted: "basic.otherLanguages" })}
-                {choice("englishKnowledge", "English Knowledge", ENGLISH_LEVELS.map((level) => ({ value: level, label: humanize(level) })), "qualifications.englishKnowledge")}
+                {choice("englishKnowledge", "English Knowledge", ENGLISH_LEVELS.map((level) => ({ value: level, label: ENGLISH_LEVEL_LABELS[level] })), "qualifications.englishKnowledge")}
             </Section>
 
             <Section title="Contact & location">

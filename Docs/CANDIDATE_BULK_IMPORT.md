@@ -143,7 +143,7 @@ Headers match after trimming, collapsing spaces and upper-casing. **Required hea
 | BLOOD GROUP | | `blood_group` | TRANSFORM | `B Positive (B+)` → `B+` |
 | HEIGHT / WEIGHT | | `height` / `weight_kg` | TRANSFORM | the Candidate Form parsers |
 | SHIRT SIZE / HIP SIZE / SHOE SIZE | | `tshirt_size` / `pant_size` / `shoe_size` | TRANSFORM | `2XL` → `XXL`; `W32` → `32` (the legacy values are waist sizes); `… size 8` → `8` (UK) |
-| ENGLISH KNOWLEDGE, EMAIL | | details | TRANSFORM | English knowledge: `Basic`..`Fluent` (also `<text> (Good)`) stored as `ENGLISH 6`..`ENGLISH 10`, `NO KNOWLEDGE` and `ENGLISH 6`..`ENGLISH 10` kept, anything else dropped (`INVALID_ENGLISH_LEVEL`); email format |
+| ENGLISH KNOWLEDGE, EMAIL | | details | TRANSFORM | code list (an `ENGLISH 6`..`ENGLISH 10` value is stored as its code; the stored codes are shown to admins as `ENGLISH 6` (`BASIC`) to `ENGLISH 10` (`FLUENT`), no migration is involved); email format |
 | CITY, DISTRICT, DS DIVISION, GN DIVISION, OTHER SKILLS 1, OTHER SKILLS 2 | | details | IMPORT | length limits |
 | FATHER DOB, MOTHER DOB, FATHER ALIVE, MOTHER ALIVE, FATHER PASSPORT, MOTHER PASSPORT | | details | TRANSFORM | dates; Yes / No (`<text> (Yes)`); a NIC-shaped value is not a passport |
 | SPOUSE DOB, SPOUSE PASSPORT | | `wife_birthday`, `spouse_passport_number` | TRANSFORM | kept only when the record is Married |

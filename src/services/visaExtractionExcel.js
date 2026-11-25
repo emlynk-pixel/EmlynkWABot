@@ -7,7 +7,10 @@
 // never duplicates a row. Every text cell passes spreadsheetSafe (no formula injection).
 
 import { spreadsheetSafe } from "./auditLogExportWriters.js";
-import { mapEnglishKnowledge } from "./englishKnowledgeLevels.js";
+import { codeOf, labelOf } from "./englishKnowledgeLevels.js";
+
+// The ENGLISH 6..10 label of a stored English Knowledge code (or label); blank when none. Same output as before.
+const mapEnglishKnowledge = (raw) => labelOf(codeOf(raw));
 
 export const CANDIDATE_DETAILS_HEADERS = Object.freeze(["First name", "Last name", "Passport number", "Profession"]);
 export const EXTRA_DETAILS_HEADERS = Object.freeze([

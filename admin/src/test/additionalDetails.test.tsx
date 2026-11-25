@@ -55,7 +55,7 @@ const SAVED_VIEW: AdditionalDetailsView = { passportId: "N0000002", details: SAV
 // Every field the form shows filled (father alive, mother not, single): the step is completed.
 const COMPLETE: AdditionalDetails = {
     ...EMPTY, nameAsInPassport: "SAMAN K SILVA", permanentAddress: "1 Main Street", birthday: "1990-03-12",
-    bloodGroup: "O+", height: "175 cm", weightKg: "70.5", drivingLicence: true, canReadDrawings: false, teamLeadingSkills: false, otherLanguages: "Tamil", englishKnowledge: "ENGLISH 8",
+    bloodGroup: "O+", height: "175 cm", weightKg: "70.5", drivingLicence: true, canReadDrawings: false, teamLeadingSkills: false, otherLanguages: "Tamil", englishKnowledge: "GOOD",
     email: "saman@example.invalid", city: "Kandy", district: "Kandy", dsDivision: "Gangawata Korale", gnDivision: "Mahaiyawa", cityInRomania: "Bucharest",
     tshirtSize: "L", pantSize: "31", shoeSize: "42",
     fatherAlive: true, fatherFullName: "Sunil Silva", fatherBirthday: "1960-01-01", fatherPassportNumber: "N1111111", motherAlive: false,
@@ -256,7 +256,7 @@ describe("Additional Details", () => {
     test("FORM-FIELDS-001 every other Candidate Form answer has its own field here, shown from the record and saved with the rest", async () => {
         const answers: Partial<AdditionalDetails> = {
             bloodGroup: "O+", height: "175 cm", weightKg: "70.5", drivingLicence: true, canReadDrawings: false, teamLeadingSkills: true, otherLanguages: "ENGLISH, ROMANIAN",
-            email: "saman@example.com", city: "NEGOMBO", district: "GAMPAHA", dsDivision: "NEGOMBO", gnDivision: "KURANA", cityInRomania: "CLUJ-NAPOCA", englishKnowledge: "ENGLISH 8",
+            email: "saman@example.com", city: "NEGOMBO", district: "GAMPAHA", dsDivision: "NEGOMBO", gnDivision: "KURANA", cityInRomania: "CLUJ-NAPOCA", englishKnowledge: "GOOD",
             otherJobCategory: "SCAFFOLDER", otherJobSkills2: "FORKLIFT", fatherPassportNumber: "N1234567", motherPassportNumber: "N7654321",
             guardianName: "KAMAL PERERA", guardianRelationship: "UNCLE", guardianNic: "901234567V", guardianBirthday: "1960-01-01", guardianPhone: "+94771234567", guardianAddress: "45 LAKE ROAD",
         };
@@ -267,7 +267,7 @@ describe("Additional Details", () => {
         for (const title of ["Physical details & skills", "Contact & location", "Guardian details"]) expect(screen.getByRole("group", { name: title })).toBeInTheDocument();
         const shown: Record<string, string> = {
             "Blood Group": "O+", Height: "175 cm", "Weight (kg)": "70.5", "Driving Licence": "yes", "Can Read Drawings": "no", "Team Leading Skills": "yes", "Other Languages": "ENGLISH, ROMANIAN",
-            "English Knowledge": "ENGLISH 8", Email: "saman@example.com", City: "NEGOMBO", District: "GAMPAHA", "DS Division": "NEGOMBO", "GN Division": "KURANA", "City in Romania": "CLUJ-NAPOCA",
+            "English Knowledge": "GOOD", Email: "saman@example.com", City: "NEGOMBO", District: "GAMPAHA", "DS Division": "NEGOMBO", "GN Division": "KURANA", "City in Romania": "CLUJ-NAPOCA",
             "Other Skills 2": "FORKLIFT", "Other Job Category": "SCAFFOLDER", "Father Passport Number": "N1234567", "Mother Passport Number": "N7654321",
             "Guardian Name": "KAMAL PERERA", "Guardian Relationship": "UNCLE", "Guardian NIC": "901234567V", "Guardian Birth Date": "1960-01-01", "Guardian Phone": "+94771234567", "Guardian Address": "45 LAKE ROAD",
         };
@@ -284,38 +284,59 @@ describe("Additional Details", () => {
         expect(puts(calls)[0].body).toMatchObject({ ...answers, bloodGroup: "A-", drivingLicence: false, guardianName: "NIMAL PERERA", spousePassportNumber: null });
     });
 
-    test("ENGLISH-001 the English Knowledge dropdown offers only Not recorded, No knowledge and ENGLISH 6 to 10, in order", async () => {
-        backend(SAVED_VIEW);
-        renderApp("/candidates/N0000002?tab=additional");
-        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
-        const options = Array.from((screen.getByLabelText("English Knowledge") as HTMLSelectElement).options);
-        expect(options.map((o) => o.value)).toEqual(["", "NO KNOWLEDGE", "ENGLISH 6", "ENGLISH 7", "ENGLISH 8", "ENGLISH 9", "ENGLISH 10"]);
-        expect(options[0].textContent).toBe("Not recorded");
-    });
-
-    test("ENGLISH-002 a legacy raw level shows as its new level and is saved as that code", async () => {
-        const view = { ...SAVED_VIEW, details: { ...SAVED, englishKnowledge: " very  good " } };
+    test("ENGLISH-LABELS the English Knowledge dropdown shows NO KNOWLEDGE and ENGLISH 6..10 over the stored codes; a stored GOOD shows ENGLISH 8; saving sends the code", async () => {
+        const view = { ...SAVED_VIEW, details: { ...SAVED, englishKnowledge: "GOOD" } };
         const { calls } = backend(view, { [`PUT ${PATH}`]: { status: 200, body: view } });
         renderApp("/candidates/N0000002?tab=additional");
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
         const select = screen.getByLabelText("English Knowledge") as HTMLSelectElement;
-        expect(select).toHaveValue("ENGLISH 9");
-        expect(select.options).toHaveLength(7);
+        const options = within(select).getAllByRole("option").filter((o) => (o as HTMLOptionElement).value !== "");
+        expect(options.map((o) => [(o as HTMLOptionElement).value, o.textContent])).toEqual([
+            ["NO KNOWLEDGE", "NO KNOWLEDGE"], ["BASIC", "ENGLISH 6"], ["FAIR", "ENGLISH 7"], ["GOOD", "ENGLISH 8"], ["VERY GOOD", "ENGLISH 9"], ["FLUENT", "ENGLISH 10"],
+        ]);
+        expect(select).toHaveValue("GOOD");
+        expect(select.options[select.selectedIndex].textContent).toBe("ENGLISH 8");
         const user = userEvent.setup();
         await user.selectOptions(select, "ENGLISH 10");
         await user.click(screen.getByRole("button", { name: "Save additional details" }));
         await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
-        expect(puts(calls)[0].body).toMatchObject({ englishKnowledge: "ENGLISH 10" });
+        expect(puts(calls)[0].body).toMatchObject({ englishKnowledge: "FLUENT" });
     });
 
-    test("ENGLISH-003 legacy 'No knowledge' stays selected as No knowledge", async () => {
-        backend({ ...SAVED_VIEW, details: { ...SAVED, englishKnowledge: "No  knowledge" } });
+    test("ENGLISH-LABELS choosing ENGLISH 8 saves the code GOOD", async () => {
+        const { calls } = backend(SAVED_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
         renderApp("/candidates/N0000002?tab=additional");
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
-        expect(screen.getByLabelText("English Knowledge")).toHaveValue("NO KNOWLEDGE");
+        const user = userEvent.setup();
+        await user.selectOptions(screen.getByLabelText("English Knowledge"), "ENGLISH 8");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        expect(puts(calls)[0].body).toMatchObject({ englishKnowledge: "GOOD" });
     });
 
-    test("FORM-FIELDS-002the new fields are checked before sending (weight, email, NIC, passport numbers, guardian birth date)", async () => {
+    test("ENGLISH-LABELS a pending English Knowledge change shows labels, but Confirm sends the codes", async () => {
+        const view = { ...SAVED_VIEW, details: { ...SAVED, englishKnowledge: "BASIC" } };
+        const pending = [{ field: "qualifications.englishKnowledge", current: "BASIC", submitted: "GOOD" }];
+        const { calls } = backend(view, {
+            "GET /api/admin/candidates/N0000002/form-submission": { status: 200, body: {
+                passportId: "N0000002", formStatus: "SUBMITTED", submittedAt: "2026-10-17T06:30:00.000Z", submitted: { "qualifications.englishKnowledge": "GOOD" }, original: null, changed: [], pending,
+            } },
+            "POST /api/admin/candidates/N0000002/form-submission/confirm-field": { status: 200, body: { passportId: "N0000002", formStatus: "SUBMITTED", submittedAt: null, submitted: null, original: null, changed: [], pending: [] } },
+        }, { ...ADMIN, role: "OWNER" });
+        renderApp("/candidates/N0000002?tab=additional");
+        const hint = await screen.findByTestId("submitted-hint-qualifications.englishKnowledge", undefined, RENDER_STEP);
+        expect(hint).toHaveTextContent("Candidate submitted: ENGLISH 8");
+        const user = userEvent.setup();
+        await user.click(within(hint).getByRole("button", { name: "Confirm English Knowledge" }));
+        const dialog = await screen.findByRole("dialog", { name: "Update English Knowledge?" });
+        expect(within(dialog).getByText("ENGLISH 6")).toBeInTheDocument();
+        expect(within(dialog).getByText("ENGLISH 8")).toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: "Confirm change" }));
+        await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
+        expect(calls.filter((c) => c.method === "POST")[0].body).toEqual({ field: "qualifications.englishKnowledge", expectedCurrentValue: "BASIC", expectedSubmittedValue: "GOOD" });
+    });
+
+    test("FORM-FIELDS-002 the new fields are checked before sending (weight, email, NIC, passport numbers, guardian birth date)", async () => {
         const { calls } = backend(SAVED_VIEW);
         renderApp("/candidates/N0000002?tab=additional");
         await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);

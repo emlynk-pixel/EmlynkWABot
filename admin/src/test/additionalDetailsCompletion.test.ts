@@ -15,7 +15,7 @@ const EMPTY = {
 
 const COMPLETE: AdditionalDetails = {
     ...EMPTY, nameAsInPassport: "SAMAN K SILVA", permanentAddress: "1 Main Street", birthday: "1990-03-12",
-    bloodGroup: "O+", height: "175 cm", weightKg: "70.5", drivingLicence: true, canReadDrawings: false, teamLeadingSkills: false, otherLanguages: "Tamil", englishKnowledge: "ENGLISH 8",
+    bloodGroup: "O+", height: "175 cm", weightKg: "70.5", drivingLicence: true, canReadDrawings: false, teamLeadingSkills: false, otherLanguages: "Tamil", englishKnowledge: "GOOD",
     email: "saman@example.invalid", city: "Kandy", district: "Kandy", dsDivision: "Gangawata Korale", gnDivision: "Mahaiyawa", cityInRomania: "Bucharest",
     tshirtSize: "L", pantSize: "31", shoeSize: "42",
     fatherAlive: false, motherAlive: false,
@@ -35,11 +35,6 @@ describe("additionalDetailsComplete", () => {
 
     test("every shown field filled: completed; No answers (false) count as answered; child names are never required", () => {
         expect(additionalDetailsComplete(COMPLETE)).toBe(true);
-    });
-
-    test("English Knowledge NO KNOWLEDGE counts as filled", () => {
-        expect(additionalDetailsComplete({ ...COMPLETE, englishKnowledge: "NO KNOWLEDGE" })).toBe(true);
-        expect(additionalDetailsComplete({ ...COMPLETE, englishKnowledge: null })).toBe(false);
     });
 
     test("one blank or whitespace-only field: incomplete", () => {
