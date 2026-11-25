@@ -383,6 +383,14 @@ export const MARITAL_STATUS_OPTIONS = [
 // The Candidate Form's choices (candidateFormDataService.js), stored as these codes.
 export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
 export const ENGLISH_LEVELS = ["NO KNOWLEDGE", "BASIC", "FAIR", "GOOD", "VERY GOOD", "FLUENT"] as const;
+// Stored codes stay as they are; admins see these labels (display only, the API takes codes).
+export const ENGLISH_LEVEL_LABELS: Record<string, string> = {
+    "NO KNOWLEDGE": "NO KNOWLEDGE", BASIC: "ENGLISH 6", FAIR: "ENGLISH 7", GOOD: "ENGLISH 8", "VERY GOOD": "ENGLISH 9", FLUENT: "ENGLISH 10",
+};
+export function englishLevelLabel(code: string | null | undefined): string {
+    const value = (code ?? "").trim();
+    return value === "" ? "" : ENGLISH_LEVEL_LABELS[value] ?? value;
+}
 
 // Dates as YYYY-MM-DD; every field may be null (collected over time).
 export type AdditionalDetails = {

@@ -332,6 +332,7 @@ All core application tables reside in the `public` schema.
   - `father_alive` (`BOOLEAN`), `father_full_name` (`TEXT`), `father_birthday` (`DATE`); `mother_alive`, `mother_full_name`, `mother_birthday` likewise.
   - `marital_status` (`TEXT`: `SINGLE`, `MARRIED`, `DIVORCED`, `WIDOWED`, `SEPARATED`), `wife_full_name` (`TEXT`), `wife_birthday` (`DATE`).
   - `child_1_name`, `child_2_name`, `child_3_name`, `other_job_skills` (`TEXT`).
+  - `english_knowledge` (`TEXT`: `NO KNOWLEDGE`, `BASIC`, `FAIR`, `GOOD`, `VERY GOOD`, `FLUENT`): admins see the stored codes as `ENGLISH 6` (`BASIC`) to `ENGLISH 10` (`FLUENT`), `NO KNOWLEDGE` unchanged, via `src/services/englishKnowledgeLevels.js`; display only, no migration is involved.
   - `created_date` (`TIMESTAMP(3)`), `updated_date` (`TIMESTAMP(3)`).
 - **Rules** (enforced by `src/services/candidateAdditionalDetailsService.js`, not by database constraints):
   - Father/mother details are kept only when that parent is alive, and the name is then required. The wife's details are kept only when married, and her name is then required.

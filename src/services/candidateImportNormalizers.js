@@ -12,6 +12,7 @@
 import { CANDIDATE_PASSPORT_PATTERN } from "../utils/passportId.js";
 import { parseHeight, parseWeight } from "../utils/bodyMeasurements.js";
 import { canonicalPhoneNumber } from "../utils/phoneNumber.js";
+import { codeOf } from "./englishKnowledgeLevels.js";
 
 export const NIC_PATTERN = /^(\d{9}[VX]|\d{12})$/;
 // A legacy passport accepted with a warning: P or N + 8 digits (registration takes 7).
@@ -226,8 +227,9 @@ export function normalizeWeight(raw) {
 
 export function normalizeEnglishKnowledge(raw) {
     if (blank(raw)) return none();
-    const value = englishAnswer(raw);
-    return ENGLISH_LEVELS.includes(value) ? { value } : drop("INVALID_ENGLISH_LEVEL");
+    // An old answer or an ENGLISH n label: stored as the code.
+    const value = codeOf(englishAnswer(raw));
+    return value ? { value } : drop("INVALID_ENGLISH_LEVEL");
 }
 
 export function normalizeEmail(raw) {
