@@ -535,7 +535,7 @@ Migrations 6.1 and 6.2 are applied and active on the shared database.
 - Additive only: the `candidate_form_field_review` table, its CHECKs, foreign keys, the "decision is final" trigger, RLS and revokes. No existing row or table changes.
 
 
-#### 6.10 `20261124140000_visa_submission_extractions`
+#### 6.9 `20261124140000_visa_submission_extractions`
 - Additive: creates `visa_submission_extraction` and `visa_submission_extraction_lock` (see "Visa submission extraction tables" above) with RLS on and no access for `anon` / `authenticated`. No existing table or row is changed.
 
 ---
