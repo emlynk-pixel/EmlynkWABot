@@ -471,6 +471,44 @@ describe("lock and retries", () => {
         assert.equal(await prisma.visaSubmissionExtraction.count(), 2);
     });
 
+    test("a failed Excel update logs the storage cause, but the user message stays generic", async () => {
+        const job = await createJob();
+        await candidate(job, "P0000094");
+        bucket.failUpload.add("Candidate_Details_");
+        const logged = [];
+        const warn = console.warn;
+        console.warn = (...args) => logged.push(args);
+        let failed;
+        try { failed = await extract(USERS.ADMIN, job, ["P0000094"]); } finally { console.warn = warn; }
+        assert.deepEqual([failed.status, failed.body.code], [502, "EXCEL_UPDATE_FAILED"]);
+        assert.doesNotMatch(failed.body.message, /storage unavailable|500/);
+        const line = logged.find(([message]) => message === "Visa extraction: Excel update failed");
+        assert.ok(line, "the failure is logged");
+        assert.equal(line[1].error, "upload failed");
+        assert.equal(line[1].cause, "storage unavailable");
+        assert.equal(line[1].causeStatus, "500");
+        assert.doesNotMatch(JSON.stringify(line), /P0000094/);
+    });
+
+    test("the Excel files written but the extraction rows not committed: the retry adds nobody twice and keeps Running No.", async () => {
+        const job = await createJob();
+        await candidate(job, "P0000095", { document: { minutesAgo: 30 } });
+        await candidate(job, "P0000096", { document: { minutesAgo: 20 } });
+        const transaction = prisma.$transaction;
+        prisma.$transaction = async () => { throw new Error("connection lost"); };
+        let failed;
+        try { failed = await extract(USERS.ADMIN, job, ["P0000095", "P0000096"]); } finally { prisma.$transaction = transaction; }
+        assert.ok(failed.status >= 500);
+        assert.equal(await prisma.visaSubmissionExtraction.count(), 0);
+        assert.equal(await prisma.visaSubmissionExtractionLock.count(), 0);
+
+        const retried = ok(await extract(USERS.ADMIN, job, ["P0000095", "P0000096"]));
+        assert.equal(retried.extracted.length, 2);
+        assert.equal(await prisma.visaSubmissionExtraction.count(), 2);
+        assert.deepEqual(dataRows(await readSheet(`${folderOf()}/Candidate_Details_Acme Builders.xlsx`), 2).map((r) => r[2]), ["P0000095", "P0000096"]);
+        assert.deepEqual(dataRows(await readSheet(`${folderOf()}/Extra_Details_Acme Builders.xlsx`), 3).map((r) => [r[1], r[6]]), [[1, "P0000095"], [2, "P0000096"]]);
+    });
+
     test("names not eligible are skipped, never processed; the body is validated", async () => {
         const job = await createJob();
         await candidate(job, "P0000086", { released: true });

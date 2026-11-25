@@ -39,6 +39,7 @@ Under **Files**, open the date folder, then `Plan B`. Download a file, or **Down
 ## Good to know
 - Two people extracting for the same client on the same day cannot overlap: the second gets "Extraction in progress, try again" and the page retries automatically.
 - Closing the tab during a run stops it. Finished batches stay; run it again to continue.
+- If the Excel files cannot be updated, the page stops and says so; no candidate of that batch is marked as extracted, so **Retry** adds them to both files exactly once (no duplicate rows, Running No. stays in order). The storage bucket must allow `.xlsx` files (MIME type `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`) in every environment. The server log names the underlying cause.
 - Every extraction, file download and ZIP download is written to the Audit Logs.
 - The folder names with spaces were checked against the Supabase client library only. If a bucket rejects them, change `VISA_SUBMISSION_ROOT` and `VISA_SUBMISSION_PLAN_FOLDER` in `src/config/visaSubmission.js`.
 

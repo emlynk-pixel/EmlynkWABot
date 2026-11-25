@@ -101,6 +101,7 @@ Do not copy the list anywhere else. Phase 2 (the tab and all its routes) uses th
 | Eligibility is tied to the document id | A re-uploaded signed document is a new document, so the candidate becomes eligible again without any reset step. |
 | The folder date uses the Asia/Colombo time zone | The business day in Sri Lanka, not UTC, decides the folder. Sri Lanka midnight is 18:30 UTC the day before. |
 | The browser only reaches `VISA SUBMISSION/` | Every path is checked and rebuilt on the server; `..`, `%`, backslashes and other roots (such as `clients/`) are refused. |
+| Extraction rows are written only after both Excel files are updated | If the Excel step fails, no candidate is marked as extracted, so a retry adds them to the files. Excel rows are matched by passport number, so a retry never duplicates a row and keeps the Running No. The server logs the cause; the user sees a generic message. |
 | Files and ZIPs are streamed, with no signed URLs | Role checks run on every request. |
 | The vacancy count never blocks an extraction | Vacancies are managed elsewhere; extraction only follows the eligibility rules. |
 | Downloads and extractions are audited | `VISA_SUBMISSION_EXTRACTION`, `VISA_SUBMISSION_FILE_DOWNLOAD` and `VISA_SUBMISSION_ZIP_DOWNLOAD`. |
@@ -181,6 +182,11 @@ Same-day extractions use the same folder. A PDF with the same name is replaced. 
 | cloths / Pant / Shoe size | T-shirt, pant and shoe size from Additional Details |
 
 **Append rules:** if the file exists it is downloaded, new rows are added in completed order, and it is uploaded again. If the passport number already has a row (a re-extraction after a re-upload), that row is updated instead of adding a duplicate; it keeps its Running No. Cells starting with `=`, `+`, `-` or `@` are escaped so they cannot run as formulas.
+
+### Storage bucket requirements
+
+- The bucket's **allowed MIME types** MUST include `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` (`.xlsx`), in dev, stage and production. If it does not, the Excel upload is refused by Supabase and extraction fails with "The Excel files could not be updated" (the server log names the storage error).
+- The Supabase project and bucket **file size limit** MUST be at least **50 MB** (the signed Visa Submission upload).
 
 ### Limitations
 - **ZIP limit:** at most 300 files and 200 MB per ZIP, checked before streaming starts. Over the limit the page says to download files one by one (413 `ZIP_TOO_LARGE`). This keeps the stream inside Vercel's 60 s limit.

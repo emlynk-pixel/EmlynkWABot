@@ -254,16 +254,32 @@ export function parseExtractBody(body) {
 // replaced by a new one (that would lose its rows).
 async function updateWorkbook(storage, folder, fileName, update) {
     const found = await fileExists(storage, folder, fileName, EXTRACTION_STORAGE_TIMEOUT_MS);
-    if (found.error) throw new Error("listing failed");
+    if (found.error) throw storageFailure("listing failed", found.error);
     let existing = null;
     if (found.exists) {
         const downloaded = await downloadBuffer(storage, `${folder}/${fileName}`, EXTRACTION_STORAGE_TIMEOUT_MS);
-        if (downloaded.error) throw new Error("download failed");
+        if (downloaded.error) throw storageFailure("download failed", downloaded.error);
         existing = downloaded.buffer;
     }
     const buffer = await update(existing);
     const { error } = await storage.upload(`${folder}/${fileName}`, buffer, { contentType: XLSX_CONTENT_TYPE, upsert: true });
-    if (error) throw new Error("upload failed");
+    if (error) throw storageFailure("upload failed", error);
+}
+
+// The step that failed, with the storage error kept as `cause` so the server log shows why (a bucket that
+// refuses .xlsx, a missing bucket, a timeout), not only which step.
+function storageFailure(step, cause) {
+    return Object.assign(new Error(step), { cause });
+}
+
+// Log fields for a failed Excel step: no secrets, values redacted (safeErrorInfo). A workbook that exceljs
+// can't read has no `cause`; its own message is logged.
+function excelFailureInfo(error) {
+    const cause = error?.cause;
+    return {
+        ...safeErrorInfo(error),
+        ...(cause ? { cause: safeErrorInfo(cause).error, causeStatus: String(cause.statusCode ?? cause.status ?? "") || undefined } : {}),
+    };
 }
 
 // One batch: { date, folder, processed, extracted, skipped, failed, deferred, remaining }.
@@ -274,7 +290,10 @@ async function updateWorkbook(storage, folder, fileName, update) {
 //   remaining: eligible candidates of the job after this batch (failed and deferred included)
 // The extraction rows are written only after the PDF copies AND both Excel files succeeded, so a retry
 // redoes the same work: copies replace, Excel rows are matched by passport number, rows are unique per
-// document. A failed Excel update is 502 EXCEL_UPDATE_FAILED and records nothing.
+// document. A failed Excel update is 502 EXCEL_UPDATE_FAILED and records nothing, so every candidate of the
+// batch stays eligible. Excel is written first and the rows second: if the rows then fail to commit, the
+// retry finds the candidates already in the files (matched by passport number) and only updates their rows,
+// keeping Running No., so a file is never left with a candidate twice or a recorded candidate missing.
 export async function extractBatch({ db, bucket, actor, jobId, passportIds, now = new Date(), clock = () => Date.now() }) {
     const started = clock();
     const job = await loadJob(db, jobId);
@@ -321,8 +340,8 @@ export async function extractBatch({ db, bucket, actor, jobId, passportIds, now 
                 await updateWorkbook(storage, folder, candidateDetailsFileName(clientFileName), (existing) => upsertCandidateDetails(existing, copied));
                 await updateWorkbook(storage, folder, extraDetailsFileName(clientFileName), (existing) => upsertExtraDetails(existing, { clientName, primaryTrade, candidates: copied }));
             } catch (error) {
-                console.warn("Visa extraction: Excel update failed", { jobId, ...safeErrorInfo(error) });
-                throw new CandidateError(502, "EXCEL_UPDATE_FAILED", "The Excel files could not be updated. Nothing was recorded; try again.");
+                console.warn("Visa extraction: Excel update failed", { jobId, ...excelFailureInfo(error) });
+                throw new CandidateError(502, "EXCEL_UPDATE_FAILED", "The Excel files could not be updated. These candidates were not recorded as extracted; try again.");
             }
         }
 

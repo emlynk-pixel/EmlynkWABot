@@ -132,7 +132,13 @@ Audit actions (category `DOCUMENT`): `VISA_SUBMISSION_EXTRACTION` (one per batch
    3. Download, update and re-upload the two Excel files (rows matched by passport number, case-insensitive).
    4. In one short transaction insert the extraction rows (`createMany` with `skipDuplicates`) and one audit row.
    5. Release the lock.
-   A candidate whose PDF copy failed gets no extraction row. If an Excel update fails, nothing is recorded and the answer is 502, so a retry is safe. An unreadable existing Excel file is never replaced by a fresh one.
+   A candidate whose PDF copy failed gets no extraction row. An unreadable existing Excel file is never replaced by a fresh one.
+
+   **Failure and retry flow.** The extraction rows are written last (copy PDFs, update both Excel files, then one DB transaction), so a row exists only for a candidate who is already in both files. The Excel files are therefore the safe side of any failure:
+   - *An Excel step fails* (502 `EXCEL_UPDATE_FAILED`, for example the bucket refuses `.xlsx`, or Candidate_Details was uploaded and Extra_Details was not): no rows are recorded, so every candidate of the batch stays eligible. The retry copies the PDFs again (replacing), and Excel rows are matched by passport number, so a candidate already written by the half-finished attempt is updated in place and keeps their Running No.; the others are appended with the next Running No. Nobody appears twice.
+   - *The Excel files are written but the rows fail to commit* (database error): same recovery, because the retry finds them in the files and only updates their rows.
+   - The server logs the failed step and the underlying storage or exceljs cause (`Visa extraction: Excel update failed`, with `error`, `cause`, `causeStatus`; values redacted, no secrets). The user sees only the generic message.
+   - The copied PDFs of a failed batch stay in the folder and are overwritten on retry. A transaction was not used because the files are in storage, not in the database, so no transaction can span both; ordering the writes gives the same guarantee without a rollback.
 4. **Time budget:** every storage call times out after 15 s, and no new copy starts after 30 s. Those candidates are returned as `deferred`.
 5. **Folder date:** `Asia/Colombo`, so 18:29:59 UTC is still the same day and 18:30:00 UTC is the next one.
 
