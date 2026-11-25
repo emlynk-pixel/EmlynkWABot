@@ -382,20 +382,7 @@ export const MARITAL_STATUS_OPTIONS = [
 ] as const;
 // The Candidate Form's choices (candidateFormDataService.js), stored as these codes.
 export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
-// ENGLISH 6 is the lowest (Basic), ENGLISH 10 the highest (Fluent).
-export const ENGLISH_LEVELS = ["NO KNOWLEDGE", "ENGLISH 6", "ENGLISH 7", "ENGLISH 8", "ENGLISH 9", "ENGLISH 10"] as const;
-
-const LEGACY_ENGLISH_LEVELS: Record<string, string> = {
-    BASIC: "ENGLISH 6", FAIR: "ENGLISH 7", GOOD: "ENGLISH 8", "VERY GOOD": "ENGLISH 9", FLUENT: "ENGLISH 10",
-};
-
-// The server maps old values on read; this is the safety net for a raw legacy value
-// (it must never show blank or be sent back, which the server would refuse).
-export function normalizeEnglishLevel(value: string | null | undefined): string {
-    const text = (value ?? "").trim().replace(/\s+/g, " ").toUpperCase();
-    if (!text) return "";
-    return LEGACY_ENGLISH_LEVELS[text] ?? text;
-}
+export const ENGLISH_LEVELS = ["NO KNOWLEDGE", "BASIC", "FAIR", "GOOD", "VERY GOOD", "FLUENT"] as const;
 
 // Dates as YYYY-MM-DD; every field may be null (collected over time).
 export type AdditionalDetails = {

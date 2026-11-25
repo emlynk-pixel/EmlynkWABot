@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
 
 import { CandidateError } from "./candidateService.js";
-import { ANSWER_FIELDS, BLOOD_GROUPS, CIVIL_STATUS_CODES, OTHER_JOB_CATEGORY, answerValue, isNotApplicable } from "./candidateFormDataService.js";
-import { mapEnglishKnowledge } from "./englishKnowledgeLevels.js";
+import { ANSWER_FIELDS, BLOOD_GROUPS, CIVIL_STATUS_CODES, ENGLISH_LEVELS, OTHER_JOB_CATEGORY, answerValue, isNotApplicable } from "./candidateFormDataService.js";
 import { NO_PREFERRED_JOB_TYPE, isNoPreference } from "./jobTypeCatalog.js";
 import { canonicalPhoneNumber, phoneKey } from "../utils/phoneNumber.js";
 
@@ -104,16 +103,6 @@ const code = (codes) => ({
     toDb: (value) => (codes.includes(value) ? { value } : { error: "is not one of the choices" }),
     fromDb: storedText,
 });
-// The form answers with the older six levels; the record keeps NO KNOWLEDGE or ENGLISH 6..10
-// (englishKnowledgeLevels.js). A record saved before the new scale reads in it too, so a stored GOOD and
-// a submitted GOOD are the same.
-const englishKnowledge = {
-    toDb: (value) => {
-        const level = mapEnglishKnowledge(value);
-        return level ? { value: level } : { error: "is not an English knowledge level" };
-    },
-    fromDb: (stored) => mapEnglishKnowledge(stored),
-};
 const pattern = (regex, message, max) => ({
     toDb: (value) => {
         const trimmed = String(value).trim();
@@ -230,7 +219,7 @@ export const CONFIRMABLE_FIELDS = Object.freeze({
     "qualifications.jobCategoryOther": { table: "details", column: "otherJobCategory", ...text(150) },
     "qualifications.otherSkills1": { table: "details", column: "otherJobSkills", ...text(1000) },
     "qualifications.otherSkills2": { table: "details", column: "otherJobSkills2", ...text(150) },
-    "qualifications.englishKnowledge": { table: "details", column: "englishKnowledge", ...englishKnowledge },
+    "qualifications.englishKnowledge": { table: "details", column: "englishKnowledge", ...code(ENGLISH_LEVELS) },
     "family.father.fullName": { table: "details", column: "fatherFullName", ...text(150) },
     "family.father.passportNumber": { table: "details", column: "fatherPassportNumber", ...passportNumber },
     "family.mother.fullName": { table: "details", column: "motherFullName", ...text(150) },

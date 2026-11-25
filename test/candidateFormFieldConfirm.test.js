@@ -411,33 +411,4 @@ describe("automatic fill of empty Additional Details at submission (AUTOFILL-001
         assert.deepEqual(data, { maritalStatus: "SINGLE", guardianName: "KAMAL" });
         assert.deepEqual(autoFillChanges({ details: null, response: null }), { data: {}, fields: [] });
     });
-
-    test("AUTOFILL-010 English Knowledge: the submitted GOOD is filled as ENGLISH 8; a stored GOOD is the same value; a stored level is never overwritten", async () => {
-        const FIELD = "qualifications.englishKnowledge";
-        await submitForm();
-        assert.equal((await detailsRow()).englishKnowledge, "ENGLISH 8");
-        assert.equal(pendingOf(await view())[FIELD], undefined);
-
-        await pg.exec(`UPDATE "candidate_additional_details" SET "english_knowledge" = 'GOOD'`);
-        assert.equal(pendingOf(await view())[FIELD], undefined, "a stored older GOOD reads as ENGLISH 8: not a change");
-
-        await pg.exec(`UPDATE "candidate_additional_details" SET "english_knowledge" = 'ENGLISH 6'`);
-        assert.deepEqual(pendingOf(await view())[FIELD], { field: FIELD, current: "ENGLISH 6", submitted: "ENGLISH 8" });
-        const confirmed = await confirm(USERS.ADMIN, { field: FIELD, expectedCurrentValue: "ENGLISH 6", expectedSubmittedValue: "ENGLISH 8" });
-        assert.equal(confirmed.status, 200, JSON.stringify(confirmed.body));
-        assert.equal((await detailsRow()).englishKnowledge, "ENGLISH 8");
-    });
-
-    test("AUTOFILL-012 a submitted No knowledge is filled as NO KNOWLEDGE into an empty record", async () => {
-        await submitForm(answers({ qualifications: { ...answers().qualifications, englishKnowledge: "NO KNOWLEDGE" } }));
-        assert.equal((await detailsRow()).englishKnowledge, "NO KNOWLEDGE");
-        assert.equal(pendingOf(await view())["qualifications.englishKnowledge"], undefined);
-    });
-
-    test("AUTOFILL-011 English Knowledge already on the record (new or older level) is never overwritten by the submission", async () => {
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, englishKnowledge: "FAIR" } });
-        await submitForm();
-        assert.equal((await detailsRow()).englishKnowledge, "FAIR", "never overwritten, never rewritten");
-        assert.deepEqual(pendingOf(await view())["qualifications.englishKnowledge"], { field: "qualifications.englishKnowledge", current: "ENGLISH 7", submitted: "ENGLISH 8" });
-    });
 });

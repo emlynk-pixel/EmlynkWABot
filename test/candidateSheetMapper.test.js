@@ -234,11 +234,6 @@ describe("candidate -> Sheet row", () => {
         assert.equal(map({ user: user() }).at(SHEET_COLUMNS.find((c) => c.header === "FULL NAME").index), "", "no details: blank, never derived from the two names");
     });
 
-    test("ENGLISH KNOWLEDGE is mirrored as NO KNOWLEDGE or ENGLISH 6..10, an older stored level included", () => {
-        const english = (englishKnowledge) => map({ user: user(), details: { englishKnowledge } })[SHEET_COLUMNS.find((c) => c.header === "ENGLISH KNOWLEDGE").index];
-        assert.deepEqual(["ENGLISH 7", "GOOD", "FLUENT", "NO KNOWLEDGE", null].map(english), ["ENGLISH 7", "ENGLISH 8", "ENGLISH 10", "NO KNOWLEDGE", ""]);
-    });
-
     test("stage statuses: stored stages as saved, automatic stages from the record", () => {
         const complete = [
             doc("PASSPORT"), doc("MEDICAL"), doc("SCAN"),

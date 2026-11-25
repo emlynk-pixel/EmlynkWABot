@@ -29,8 +29,7 @@ import crypto from "node:crypto";
 import { businessDateOf } from "../utils/businessDay.js";
 import { clientName } from "../utils/clientName.js";
 import { CandidateError } from "./candidateService.js";
-import { BLOOD_GROUPS } from "./candidateFormDataService.js";
-import { ENGLISH_KNOWLEDGE_VALUES, mapEnglishKnowledge, resolveEnglishKnowledge } from "./englishKnowledgeLevels.js";
+import { BLOOD_GROUPS, ENGLISH_LEVELS } from "./candidateFormDataService.js";
 import { canonicalPhoneNumber } from "../utils/phoneNumber.js";
 
 export const TSHIRT_SIZES = Object.freeze(["XS", "S", "M", "L", "XL", "XXL"]);
@@ -171,13 +170,9 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
             case "bloodGroup":
                 values[field] = BLOOD_GROUPS.includes(value.toUpperCase()) ? value.toUpperCase() : fail(field, `must be one of: ${BLOOD_GROUPS.join(", ")}`);
                 break;
-            case "english": {
-                // NO KNOWLEDGE or ENGLISH 6..10; an older level (GOOD, ...) from a page loaded before the
-                // new scale is translated.
-                const { value: level, recognised } = resolveEnglishKnowledge(value);
-                values[field] = recognised ? level : fail(field, `must be one of: ${ENGLISH_KNOWLEDGE_VALUES.join(", ")}`);
+            case "english":
+                values[field] = ENGLISH_LEVELS.includes(value.toUpperCase()) ? value.toUpperCase() : fail(field, `must be one of: ${ENGLISH_LEVELS.join(", ")}`);
                 break;
-            }
             case "weight": {
                 // kg, as the record keeps it (DECIMAL(5,2)).
                 const kg = Number(value);
@@ -255,11 +250,7 @@ function toResponse(row) {
     const details = {};
     for (const [field, kind] of Object.entries(FIELDS)) {
         const value = row[field] ?? null;
-        details[field] = kind === "date" ? isoDate(value)
-            : kind === "weight" && value !== null ? String(Number(value))
-            // A level saved before the ENGLISH 6..10 scale is shown in it; the row is not rewritten.
-            : kind === "english" ? mapEnglishKnowledge(value)
-            : value;
+        details[field] = kind === "date" ? isoDate(value) : kind === "weight" && value !== null ? String(Number(value)) : value;
     }
     return details;
 }
@@ -277,10 +268,8 @@ function changedFields(previous, next) {
     const before = {};
     const after = {};
     for (const field of ADDITIONAL_DETAILS_FIELDS) {
-        // A stored older level and its ENGLISH n are the same value, not a change.
-        const comparable = (value) => (FIELDS[field] === "english" ? mapEnglishKnowledge(value) : value);
-        const from = auditValue(comparable(previous?.[field] ?? null));
-        const to = auditValue(comparable(next[field]));
+        const from = auditValue(previous?.[field] ?? null);
+        const to = auditValue(next[field]);
         if (from === to) continue;
         before[field] = from;
         after[field] = to;

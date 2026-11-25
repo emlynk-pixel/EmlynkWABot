@@ -206,7 +206,7 @@ describe("the Candidate Form's other answers on the Additional Details form", ()
             assert.equal(status, 200, JSON.stringify(body));
             assert.deepEqual(
                 [body.details.bloodGroup, body.details.weightKg, body.details.englishKnowledge, body.details.fatherPassportNumber, body.details.guardianNic, body.details.guardianPhone, body.details.guardianBirthday, body.details.drivingLicence],
-                ["O+", "70.5", "ENGLISH 8", "N1234567", "901234567V", "+94771234567", "1960-01-01", true],
+                ["O+", "70.5", "GOOD", "N1234567", "901234567V", "+94771234567", "1960-01-01", true],
             );
             assert.deepEqual((await call("/N1023757/additional-details")).body.details, body.details);
         });
@@ -240,58 +240,6 @@ describe("the Candidate Form's other answers on the Additional Details form", ()
             assert.equal((await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, ...bad } })).status, 400);
         });
         assert.equal(await prisma.candidateAdditionalDetails.count(), 0);
-    });
-});
-
-describe("English Knowledge on the ENGLISH 6..10 scale", () => {
-    const LEVELS_MIGRATION = "20261124130000_english_knowledge_levels";
-
-    test("the migration only replaces the check: ENGLISH 6..10 and the older six (NO KNOWLEDGE included) pass, NULL passes, anything else is refused", async () => {
-        assert.ok(migrationNames().includes(LEVELS_MIGRATION), "the migration is applied");
-        const statements = fs.readFileSync(path.join("prisma", "migrations", LEVELS_MIGRATION, "migration.sql"), "utf8").replace(/--.*$/gm, "");
-        assert.doesNotMatch(statements, /\b(UPDATE|DELETE|INSERT|TRUNCATE|DROP\s+(TABLE|COLUMN))\b/i, "DDL only, no data change");
-        assert.doesNotMatch(statements, /candidate_form_response|candidate_form_prefill_snapshot/, "the form's tables keep the older six");
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: "N1023757" } });
-        const set = (value) => pg.query(`UPDATE "candidate_additional_details" SET "english_knowledge" = $1 WHERE "passport_id" = 'N1023757'`, [value]);
-        for (const value of ["ENGLISH 6", "ENGLISH 7", "ENGLISH 8", "ENGLISH 9", "ENGLISH 10", "NO KNOWLEDGE", "BASIC", "FAIR", "GOOD", "VERY GOOD", "FLUENT", null]) await set(value);
-        for (const value of ["PERFECT", "ENGLISH 5", "ENGLISH 11", "english 8"]) {
-            await assert.rejects(set(value), /candidate_additional_details_english_knowledge_check/, value);
-        }
-    });
-
-    test("ENGLISH 7 is saved and returned as it is; an older level or spacing from the page is saved as its ENGLISH n", async () => {
-        await withServer("ADMIN", async (call) => {
-            const saved = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, englishKnowledge: "ENGLISH 7" } });
-            assert.equal(saved.status, 200, JSON.stringify(saved.body));
-            assert.equal(saved.body.details.englishKnowledge, "ENGLISH 7");
-            assert.equal((await prisma.candidateAdditionalDetails.findUnique({ where: { passportId: "N1023757" } })).englishKnowledge, "ENGLISH 7");
-            const legacy = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, englishKnowledge: " very  good ", expectedUpdatedDate: saved.body.updatedDate } });
-            assert.equal(legacy.status, 200, JSON.stringify(legacy.body));
-            assert.equal((await prisma.candidateAdditionalDetails.findUnique({ where: { passportId: "N1023757" } })).englishKnowledge, "ENGLISH 9");
-        });
-        assert.equal(parseAdditionalDetailsBody({ ...FULL, englishKnowledge: " no knowledge " }).values.englishKnowledge, "NO KNOWLEDGE");
-        assert.equal(parseAdditionalDetailsBody({ ...FULL, englishKnowledge: "Not recorded" }).values.englishKnowledge, null);
-        assert.equal(parseAdditionalDetailsBody({ ...FULL, englishKnowledge: "english   10" }).values.englishKnowledge, "ENGLISH 10");
-    });
-
-    test("a stored older level reads as its ENGLISH n without rewriting the row, and saving it back is not a change", async () => {
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: "N1023757", ...FULL, birthday: new Date(`${FULL.birthday}T00:00:00Z`), fatherBirthday: new Date(`${FULL.fatherBirthday}T00:00:00Z`), wifeBirthday: new Date(`${FULL.wifeBirthday}T00:00:00Z`), englishKnowledge: "GOOD" } });
-        await withServer("ADMIN", async (call) => {
-            const view = (await call("/N1023757/additional-details")).body;
-            assert.equal(view.details.englishKnowledge, "ENGLISH 8");
-            const again = await call("/N1023757/additional-details", { method: "PUT", body: { ...view.details, expectedUpdatedDate: view.updatedDate } });
-            assert.equal(again.status, 200, JSON.stringify(again.body));
-        });
-        assert.equal((await prisma.candidateAdditionalDetails.findUnique({ where: { passportId: "N1023757" } })).englishKnowledge, "GOOD", "not rewritten");
-        assert.equal((await auditRows()).length, 0, "nothing audited");
-        await pg.query(`UPDATE "candidate_additional_details" SET "english_knowledge" = 'NO KNOWLEDGE'`);
-        await withServer("ADMIN", async (call) => {
-            const view = (await call("/N1023757/additional-details")).body;
-            assert.equal(view.details.englishKnowledge, "NO KNOWLEDGE");
-            const saved = await call("/N1023757/additional-details", { method: "PUT", body: { ...view.details, expectedUpdatedDate: view.updatedDate } });
-            assert.equal(saved.status, 200, JSON.stringify(saved.body));
-        });
-        assert.equal((await prisma.candidateAdditionalDetails.findUnique({ where: { passportId: "N1023757" } })).englishKnowledge, "NO KNOWLEDGE");
     });
 });
 

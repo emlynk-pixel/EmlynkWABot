@@ -4,7 +4,6 @@ import { ApiError } from "../../api/client";
 import {
     BLOOD_GROUPS,
     ENGLISH_LEVELS,
-    normalizeEnglishLevel,
     MARITAL_STATUS_OPTIONS,
     PANT_SIZE_PRESETS,
     SHOE_SIZE_PRESETS,
@@ -56,7 +55,6 @@ function formFrom(details: AdditionalDetails): Form {
         const value = details[key];
         form[key] = typeof value === "boolean" ? (value ? "yes" : "no") : value ?? "";
     }
-    form.englishKnowledge = normalizeEnglishLevel(form.englishKnowledge);
     return form;
 }
 
