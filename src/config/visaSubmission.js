@@ -11,6 +11,12 @@ export const VISA_SUBMISSION_ROLES = Object.freeze([ROLES.ADMIN, ROLES.TEAM_LEAD
 
 export const VISA_SUBMISSION_DOCUMENT_TYPE = "VISA_SUBMISSION";
 
+// The signed submission is the merge of up to six documents, rescanned after signing, so it may be larger
+// than the 10 MB limit of every other document (utils/fileValidation.js MAX_FILE_SIZE). The storage
+// bucket's own file size limit must be at least this. Enforced by candidateService.js maxFileSizeFor
+// (upload-target and finalize); the browser sends no size check of its own, it shows the server's message.
+export const VISA_SUBMISSION_MAX_FILE_SIZE = 50 * 1024 * 1024;
+
 // The merge order. `key` is stable (the audit entry and the frontend use it);
 // `variant` null: the document type has no variants. The police slip is not
 // part of the submission.

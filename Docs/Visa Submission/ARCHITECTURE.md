@@ -39,7 +39,7 @@ All under `/api/admin`. Roles: `VISA_SUBMISSION_ROLES` (ADMIN, TEAM_LEAD; OWNER 
 | GET | `/candidates/:passportId/visa-submission/manifest` | `{ passportId, slots: [{ order, key, label, documentType, variant, status, document }] }`. `document` is `{ documentId, mimeType, size, fileUrl }` only when `VERIFIED` |
 | GET | `/candidates/:passportId/visa-submission/files/:documentId` | Streams the file. 404 `DOCUMENT_NOT_FOUND` unless it is the current VERIFIED document of one of the 6 slots for that candidate. 502 on storage error |
 | POST | `/candidates/:passportId/visa-submission/merged-download` | Body `{ includedSlots: [key] }`. 201 `{ auditId, passportId, includedSlots, excludedSlots }`. 409 `SLOT_NOT_VERIFIED` if a slot changed. 400 on a bad body |
-| POST | `/candidates/:passportId/documents/upload-target` | For type `VISA_SUBMISSION`: `VISA_SUBMISSION_ROLES` only (403 `VISA_SUBMISSION_FORBIDDEN`), PDF only (422 `FILE_REJECTED`) |
+| POST | `/candidates/:passportId/documents/upload-target` | For type `VISA_SUBMISSION`: `VISA_SUBMISSION_ROLES` only (403 `VISA_SUBMISSION_FORBIDDEN`), PDF only, up to 50 MB (`VISA_SUBMISSION_MAX_FILE_SIZE`; every other type 10 MB) (422 `FILE_REJECTED`) |
 | POST | `/candidates/:passportId/documents/finalize` | Same rules, plus `stageCompletion` in the response |
 | POST | `/candidates/:passportId/documents/:documentId/remove` | For `VISA_SUBMISSION`: role check in the service; reopens the stage |
 
@@ -71,7 +71,7 @@ One list in `src/config/visaSubmission.js`, exposed to the frontend only through
 
 Only for document type `VISA_SUBMISSION`:
 
-1. `upload-target` and `finalize` check the role and require a PDF (declared type and `%PDF` header; a bad file is removed from staging).
+1. `upload-target` and `finalize` check the role and require a PDF (declared type and `%PDF` header; a bad file is removed from staging) of at most 50 MB (`VISA_SUBMISSION_MAX_FILE_SIZE`, via `maxFileSizeFor`; other types keep 10 MB). The Supabase project and bucket file size limits must be at least 50 MB.
 2. In the finalize transaction the document is saved (the previous VERIFIED one is superseded).
 3. The existing `requireVisaPrerequisites` runs (test PASS, active Job).
    - Pass: `CandidateStage(VISA_SUBMISSION)` becomes `completed=true`, `completedAt=now`, with an `UPDATE_STAGE` audit entry. If it was already completed, nothing changes.
@@ -89,7 +89,7 @@ Only for document type `VISA_SUBMISSION`:
 | File | Change |
 |---|---|
 | `prisma/schema.prisma`, `prisma/migrations/20261124140000_visa_submission_extractions/` | Models `VisaSubmissionExtraction` and `VisaSubmissionExtractionLock` |
-| `src/config/visaSubmission.js` | Shared constants: `VISA_SUBMISSION_ROOT`, `VISA_SUBMISSION_PLAN_FOLDER`, batch sizes, ZIP limits |
+| `src/config/visaSubmission.js` | Shared constants: `VISA_SUBMISSION_ROOT`, `VISA_SUBMISSION_PLAN_FOLDER`, batch sizes, ZIP limits, `VISA_SUBMISSION_MAX_FILE_SIZE` (50 MB signed upload) |
 | `src/services/visaExtractionService.js` | Eligibility, jobs list, preview, lock, batch |
 | `src/services/visaExtractionExcel.js` | Creates and appends the two Excel files |
 | `src/services/visaSubmissionStorage.js` | Path validation, folder list, file and ZIP streaming, download audit |

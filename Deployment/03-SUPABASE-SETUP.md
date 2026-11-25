@@ -161,7 +161,7 @@ No script in the repo creates the bucket. Create it in the dashboard:
 | Layout | `temporary/<uuid>.<ext>` on upload, then copied to `clients/{passport_id}/{type}/…` or `pending/…` (`Docs/06-storage-management.md`) |
 | Methods used | `upload`, `download`, `copy`, `exists`, `info`, `list`, `remove`, `createSignedUploadUrl` (via `supabase.storage.from(SUPABASE_BUCKET)`) |
 | Admin uploads | The browser uploads **directly** to storage through a **signed upload URL** for one new object (2-hour expiry, set by Supabase), because a Vercel request body is capped far below file size. The server then verifies and moves the file (`candidateService.js` `createUploadTarget` / `finalizeUpload`) |
-| Size limits in code | 10 MB for documents (`MAX_FILE_SIZE`), 50 MB for skill videos. Supabase's own global per-file limit is 50 MB on Free; on paid plans it is configurable. If you raise limits in the dashboard, keep them at or above the app's limits |
+| Size limits in code | 10 MB for documents (`MAX_FILE_SIZE`), 50 MB for skill videos and for the signed Visa Submission PDF (`VISA_SUBMISSION_MAX_FILE_SIZE`). Supabase's own global per-file limit is 50 MB on Free; on paid plans it is configurable. If you raise limits in the dashboard, keep them at or above the app's limits |
 | Allowed types | Validated by the application: PDF, JPEG, PNG for documents; MP4, QuickTime, WebM for skill videos |
 | Checksums | SHA-256 of every file is stored in the database (`documents.file_sha256`) |
 

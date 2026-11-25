@@ -37,6 +37,7 @@ export function validateDocumentFile({
     mimeType,
     fileSize,
     fileBuffer,
+    maxFileSize = MAX_FILE_SIZE,
 }) {
     if (!mimeType) {
         return {
@@ -59,7 +60,7 @@ export function validateDocumentFile({
         };
     }
 
-    if (fileSize > MAX_FILE_SIZE) {
+    if (fileSize > maxFileSize) {
         return {
             valid: false,
             reason: "FILE_TOO_LARGE",

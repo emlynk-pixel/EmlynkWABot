@@ -1196,9 +1196,9 @@ describe("candidate routes: roles", () => {
             // An image declared as an image is refused at finalize too (no target needed to reach it).
             const finalizeImage = await call("ADMIN", "POST", "/api/admin/candidates/N1023757/documents/finalize", { type: "VISA_SUBMISSION", mimeType: "image/png", uploadId: "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b" }, db, { bucket });
             assert.deepEqual([finalizeImage.status, finalizeImage.body.code], [422, "FILE_REJECTED"]);
-            const tooBig = await target("ADMIN", { fileSize: 10 * 1024 * 1024 + 1 }, db, bucket);
+            const tooBig = await target("ADMIN", { fileSize: 50 * 1024 * 1024 + 1 }, db, bucket);
             assert.deepEqual([tooBig.status, tooBig.body.code], [422, "FILE_REJECTED"]);
-            assert.match(tooBig.body.message, /10 MB/);
+            assert.match(tooBig.body.message, /50 MB/);
             // Declared a PDF, but the bytes are a PNG: refused at finalize, and the staged file is removed.
             const disguised = await directUpload("ADMIN", "N1023757", db, bucket, { type: "VISA_SUBMISSION", mimeType: "application/pdf", buffer: PNG });
             assert.equal(disguised.status, 422);
@@ -1650,6 +1650,38 @@ describe("file size limits: 50 MB for a skill video, 10 MB for documents", () =>
         assert.equal(downloaded, false);
         assert.equal(bucket.objects.size, 0);
         assert.equal(db.state.documents.length, 0);
+    });
+});
+
+describe("file size limits: 50 MB for the signed Visa Submission", () => {
+    const MB = 1024 * 1024;
+    const pdfOf = (bytes) => Buffer.concat([PDF, Buffer.alloc(bytes - PDF.length)]);
+
+    test("VISA_SUBMISSION accepts 10-50 MB and rejects over 50 MB; other types still reject over 10 MB", () => {
+        assert.equal(checkDeclaredFile({ documentType: "VISA_SUBMISSION", mimeType: "application/pdf", fileSize: 10 * MB + 1 }), null);
+        assert.equal(checkDeclaredFile({ documentType: "VISA_SUBMISSION", mimeType: "application/pdf", fileSize: 50 * MB }), null);
+        assert.match(checkDeclaredFile({ documentType: "VISA_SUBMISSION", mimeType: "application/pdf", fileSize: 50 * MB + 1 }), /larger than 50 MB/);
+        assert.equal(validateCandidateUpload({ documentType: "VISA_SUBMISSION", mimeType: "application/pdf", buffer: pdfOf(12 * MB) }), null);
+        assert.equal(validateCandidateUpload({ documentType: "VISA_SUBMISSION", mimeType: "application/pdf", buffer: pdfOf(50 * MB) }), null);
+        assert.match(validateCandidateUpload({ documentType: "VISA_SUBMISSION", mimeType: "application/pdf", buffer: pdfOf(50 * MB + 1) }), /larger than 50 MB/);
+        for (const documentType of ["PASSPORT", "NIC", "MEDICAL", "POLICE_REPORT", "SCAN"]) {
+            assert.match(checkDeclaredFile({ documentType, mimeType: "application/pdf", fileSize: 10 * MB + 1 }), /larger than 10 MB/, documentType);
+            assert.match(validateCandidateUpload({ documentType, mimeType: "application/pdf", buffer: pdfOf(10 * MB + 1) }), /larger than 10 MB/, documentType);
+        }
+    });
+
+    test("the upload target reports 50 MB for VISA_SUBMISSION and 10 MB for others", async () => {
+        const db = createFakeDb();
+        const bucket = createFakeBucket();
+        await registered(db);
+        const visa = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "VISA_SUBMISSION", mimeType: "application/pdf", fileSize: 20 * MB });
+        assert.equal(visa.maxFileSize, 50 * MB);
+        const other = await createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "MEDICAL", mimeType: "application/pdf", fileSize: 10 });
+        assert.equal(other.maxFileSize, 10 * MB);
+        await assert.rejects(
+            createUploadTarget({ db, bucket, passportId: "N1023757", documentType: "VISA_SUBMISSION", mimeType: "application/pdf", fileSize: 50 * MB + 1 }),
+            (error) => error.code === "FILE_REJECTED" && /larger than 50 MB/.test(error.message),
+        );
     });
 });
 

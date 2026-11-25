@@ -43,7 +43,7 @@ import { normalizeSearchText, searchTokens } from "../utils/searchText.js";
 import { setAuditActor } from "./auditActor.js";
 import { formatTestId } from "./testId.js";
 import { hasRole } from "../middleware/requireRole.js";
-import { VISA_SUBMISSION_DOCUMENT_TYPE, VISA_SUBMISSION_ROLES } from "../config/visaSubmission.js";
+import { VISA_SUBMISSION_DOCUMENT_TYPE, VISA_SUBMISSION_MAX_FILE_SIZE, VISA_SUBMISSION_ROLES } from "../config/visaSubmission.js";
 
 // ---------------------------------------------------------------- definitions
 
@@ -90,11 +90,14 @@ export const REQUIRED_SUBMISSION_DOCUMENTS = Object.freeze(["PASSPORT", "MEDICAL
 // Skill videos only.
 export const VIDEO_MIME_TYPES = Object.freeze(["video/mp4", "video/quicktime", "video/webm"]);
 
-// A skill video may be up to 50 MB; every other candidate document keeps the
-// 10 MB document limit (MAX_FILE_SIZE, shared with WhatsApp intake). The
+// A skill video and the signed Visa Submission (VISA_SUBMISSION_MAX_FILE_SIZE) may be up to 50 MB; every
+// other candidate document keeps the 10 MB document limit (MAX_FILE_SIZE, shared with WhatsApp intake). The
 // storage bucket's own file size limit must be at least the larger one.
 export const MAX_VIDEO_FILE_SIZE = 50 * 1024 * 1024;
-export const maxFileSizeFor = (documentType) => (CANDIDATE_DOCUMENT_TYPES[documentType]?.video ? MAX_VIDEO_FILE_SIZE : MAX_FILE_SIZE);
+export const maxFileSizeFor = (documentType) => {
+    if (documentType === VISA_SUBMISSION_DOCUMENT_TYPE) return VISA_SUBMISSION_MAX_FILE_SIZE;
+    return CANDIDATE_DOCUMENT_TYPES[documentType]?.video ? MAX_VIDEO_FILE_SIZE : MAX_FILE_SIZE;
+};
 const tooLargeMessage = (limit) => `The file is larger than ${limit / (1024 * 1024)} MB.`;
 
 const MAX_NAME_LENGTH = 100;
@@ -1335,7 +1338,6 @@ const UPLOAD_REJECTION_MESSAGES = {
     MISSING_MIME_TYPE: "The file has no type.",
     UNSUPPORTED_FILE_TYPE: "This file type is not accepted. Use PDF, JPG or PNG.",
     INVALID_FILE_SIZE: "The file is empty.",
-    FILE_TOO_LARGE: `The file is larger than ${MAX_FILE_SIZE / (1024 * 1024)} MB.`,
     FILE_SIGNATURE_MISMATCH: "The file's content does not match its type.",
     PDF_ONLY: "This file type is not accepted. Use PDF.",
 };
@@ -1355,8 +1357,9 @@ export function validateCandidateUpload({ documentType, mimeType, buffer }) {
     }
     // The %PDF signature itself is checked by validateDocumentFile below.
     if (definition?.pdfOnly && mimeType && mimeType !== PDF_MIME_TYPE) return UPLOAD_REJECTION_MESSAGES.PDF_ONLY;
-    const result = validateDocumentFile({ mimeType, fileSize: buffer?.length ?? 0, fileBuffer: buffer });
+    const result = validateDocumentFile({ mimeType, fileSize: buffer?.length ?? 0, fileBuffer: buffer, maxFileSize: maxFileSizeFor(documentType) });
     if (result.valid) return null;
+    if (result.reason === "FILE_TOO_LARGE") return tooLargeMessage(maxFileSizeFor(documentType));
     return UPLOAD_REJECTION_MESSAGES[result.reason] ?? "The file was not accepted.";
 }
 

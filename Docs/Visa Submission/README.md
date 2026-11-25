@@ -89,6 +89,7 @@ Do not copy the list anywhere else. Phase 2 (the tab and all its routes) uses th
 | The server builds the storage path from the database record | A request can never point at another file. |
 | ANALYST access removed for this document type | Visa submission is handled by Team Lead and Admin only. Other document types are unchanged. |
 | The signed upload accepts PDF only | A signed legal document must be a PDF. Checked in the browser and on the server (file type and the `%PDF` header). |
+| The signed upload may be up to 50 MB (other documents stay at 10 MB) | The signed file is a merge of six documents that is rescanned after signing, so it often passes 10 MB. The limit is `VISA_SUBMISSION_MAX_FILE_SIZE` in `src/config/visaSubmission.js`, enforced on `upload-target` and `finalize` (the message says "larger than 50 MB"). The file still goes straight from the browser to storage; it never passes through the API. **The Supabase project's global file size limit and the bucket's own limit must both be at least 50 MB** (Storage settings), or the upload fails at storage before the app can check it. |
 | Completion uses the existing visa rules | One source of truth: test PASS and an active Job, as the manual form requires. |
 | Rules failing still saves the document | The file is not lost; staff see why the stage is not completed. |
 | Removing the signed document reopens the stage | The stage must not stay completed without its document. |

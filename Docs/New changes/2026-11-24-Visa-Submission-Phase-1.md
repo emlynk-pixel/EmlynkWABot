@@ -34,7 +34,7 @@ Order: Passport, SL Normal Police Report, SL Verified Police Report, Romania Pol
 - Uploading the signed document now marks the stage **Completed** when the existing rules pass (test PASS and an active Job). Before, the stage had to be ticked by hand.
 - If the rules fail, the document is still saved and the screen shows the reason.
 - Removing the signed document sets the stage back to not completed.
-- **Only PDF** is accepted for this document now.
+- **Only PDF** is accepted for this document now, up to **50 MB** (the signed file is a merge of six documents, rescanned after signing). Every other document type keeps the 10 MB limit. The Supabase storage limit must be at least 50 MB.
 - **Analysts can no longer upload or remove this document.** Admin, Owner and Team Lead can. Other document types are unchanged.
 
 ## Where the code is
