@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 
-import { CandidateError } from "./candidateService.js";
+import { CandidateError, CONTACT_SAME_AS_WHATSAPP_MESSAGE } from "./candidateService.js";
 import { ANSWER_FIELDS, BLOOD_GROUPS, CIVIL_STATUS_CODES, ENGLISH_LEVELS, OTHER_JOB_CATEGORY, answerValue, isNotApplicable } from "./candidateFormDataService.js";
 import { NO_PREFERRED_JOB_TYPE, isNoPreference } from "./jobTypeCatalog.js";
-import { canonicalPhoneNumber, phoneKey } from "../utils/phoneNumber.js";
+import { canonicalPhoneNumber, isSamePhoneNumber, phoneKey } from "../utils/phoneNumber.js";
 
 // Per-field "Confirm candidate change" (Admin > Candidate Details).
 //
@@ -180,7 +180,11 @@ export const CONFIRMABLE_FIELDS = Object.freeze({
     "basic.birthDate": { table: "candidate", column: "dateOfBirth", ...date({ notFuture: true }) },
     "basic.birthPlace": { table: "candidate", column: "placeOfBirth", ...text(100) },
     "contact.address": { table: "candidate", column: "address", ...text(500) },
-    "contact.alternativePhone": { table: "candidate", column: "contactNumber", ...phone },
+    "contact.alternativePhone": {
+        table: "candidate", column: "contactNumber", ...phone,
+        // The record's contact number is a second number: never its WhatsApp number (lockAndRead reads it).
+        requires: ({ candidate, value }) => (isSamePhoneNumber(value, candidate?.whatsappNumber) ? CONTACT_SAME_AS_WHATSAPP_MESSAGE : null),
+    },
     "passport.issueDate": { table: "candidate", column: "passportIssueDate", ...date({ notFuture: true }) },
     "passport.expiryDate": { table: "candidate", column: "passportExpiryDate", ...date() },
     "qualifications.experience": { table: "candidate", column: "jobExperience", ...text(2000) },
@@ -307,7 +311,8 @@ async function lockAndRead(tx, passportId) {
     const locked = await tx.$queryRaw`SELECT "passport_id" FROM "candidate" WHERE "passport_id" = ${passportId} FOR UPDATE`;
     if (!locked.length) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
     const [candidate, details, response] = await Promise.all([
-        tx.candidate.findUnique({ where: { passportId }, select: CONFIRM_SELECT.candidate }),
+        // whatsappNumber: for the alternative number's rule only (it is never a target).
+        tx.candidate.findUnique({ where: { passportId }, select: { ...CONFIRM_SELECT.candidate, whatsappNumber: true } }),
         tx.candidateAdditionalDetails.findUnique({ where: { passportId }, select: CONFIRM_SELECT.details }),
         tx.candidateFormResponse.findUnique({ where: { passportId } }),
     ]);
@@ -365,12 +370,13 @@ export const rejectFormField = (args) => reviewFormField({ ...args, expectedCurr
 // ---------------------------------------------------------------- Confirm All / Reject All
 //
 // POST .../form-submission/confirm-all | reject-all { changes: [{ field, expectedCurrentValue, expectedSubmittedValue }] }.
-// Every pending change of the submission in ONE transaction, with exactly the per-field rules,
-// review rows and audit entries of Confirm / Reject (one entry per field, its reason marked
-// "(Confirm All)" / "(Reject All)"). All or nothing:
-//   - `changes` must be EXACTLY the pending set the server finds now (same fields, same values):
-//     a field added, decided or changed since the page was loaded refuses the whole request
-//     (409 FORM_FIELD_STALE), so nothing is decided that the Admin did not see;
+// The pending changes the user chose (all of them, or all but the ones marked "keep Pending") in ONE
+// transaction, with exactly the per-field rules, review rows and audit entries of Confirm / Reject (one
+// entry per field, its reason marked "(Confirm All)" / "(Reject All)"). All or nothing:
+//   - `changes` lists the fields to decide, each with the values the user saw. Every one must still be
+//     pending with exactly those values: a field decided or changed since the page was loaded refuses
+//     the whole request (409 FORM_FIELD_STALE), so nothing is decided that the Admin did not see. A
+//     pending field that is NOT listed is left alone: no decision, no change to the record;
 //   - a Confirm whose field rules refuse it (a spouse without Married, children out of order, too many
 //     job types, ...) refuses the whole request (409 FORM_FIELD_PREREQUISITE, naming the field) and
 //     the transaction is rolled back: nothing is written. That field can then be decided on its own.
@@ -390,13 +396,18 @@ async function reviewAllFormFields({ db, actor, passportId, changes, decision })
         const confirmable = Object.fromEntries(Object.keys(CONFIRMABLE_FIELDS).map((field) => [field, submittedValueOf(response, field)]));
         const pending = pendingChanges({ candidate, details, submitted: confirmable }, reviewed);
         if (!pending.length) throw new CandidateError(409, "FORM_FIELD_NOT_PENDING", "There are no Candidate Form changes left to review.");
-        const seen = new Map(changes.map((change) => [change.field, change]));
-        const matches = seen.size === changes.length && seen.size === pending.length
-            && pending.every((change) => seen.has(change.field) && (seen.get(change.field).expectedCurrentValue ?? null) === change.current && (seen.get(change.field).expectedSubmittedValue ?? null) === change.submitted);
+        if (!changes.length) throw new CandidateError(400, "NO_FIELDS_SELECTED", "Choose at least one field to review.");
+        const pendingByField = new Map(pending.map((change) => [change.field, change]));
+        const chosen = new Set(changes.map((change) => change.field));
+        const matches = chosen.size === changes.length
+            && changes.every((change) => {
+                const now = pendingByField.get(change.field);
+                return now && (change.expectedCurrentValue ?? null) === now.current && (change.expectedSubmittedValue ?? null) === now.submitted;
+            });
         if (!matches) throw new CandidateError(409, "FORM_FIELD_STALE", "The Candidate Form changes changed since you opened the page. Refresh and review again.");
 
         const decided = [];
-        for (const field of ordered(pending.map((change) => change.field))) {
+        for (const field of ordered([...chosen])) {
             // Against the record as the earlier decisions of this request left it.
             const change = pendingChange(field, { candidate, details, submitted: confirmable });
             if (!change) continue;

@@ -416,6 +416,28 @@ describe("Work Allocation API: assigning", () => {
         assert.deepEqual(rows.map((r) => r.action).sort(), ["ASSIGN_CANDIDATE", "REASSIGN_CANDIDATE"]);
     });
 
+    test("REALLOC-001 / 002: A to B in one step leaves a single owner, one audit entry and only the existing A1 notification; a failed request leaves every owner as it was", async () => {
+        await seedAllocations();
+        const failed = await assign(USERS.OWNER, [pid(1), pid(2)], [{ analystId: USERS.GONE.adminId, count: 2 }], { reassign: true });
+        assert.equal(failed.status, 409, "an inactive target is refused");
+        assert.deepEqual([(await allocations())[pid(1)], (await allocations())[pid(2)]], [USERS.ANN.adminId, USERS.ANN.adminId], "neither moved");
+        assert.equal((await allocationAudit()).length, 0);
+
+        const knownNotifications = new Set((await prisma.notification.findMany({ select: { id: true } })).map((n) => n.id));
+        const { status } = await assign(USERS.OWNER, [pid(1), pid(2)], [{ analystId: USERS.BEN.adminId, count: 2 }], { reassign: true });
+        assert.equal(status, 200);
+        for (const id of [pid(1), pid(2)]) {
+            assert.equal(await prisma.candidateAllocation.count({ where: { passportId: id } }), 1, "one owner, never both or neither");
+            assert.equal((await allocations())[id], USERS.BEN.adminId);
+        }
+        const rows = await allocationAudit();
+        assert.deepEqual(rows.map((r) => r.action), ["REASSIGN_CANDIDATE", "REASSIGN_CANDIDATE"]);
+        assert.deepEqual(rows.map((r) => [JSON.parse(r.previousValue).name, JSON.parse(r.newValue).name]), [["Ann Analyst", "Ben Analyst"], ["Ann Analyst", "Ben Analyst"]]);
+        const added = (await prisma.notification.findMany({ select: { id: true, type: true } })).filter((n) => !knownNotifications.has(n.id));
+        const types = [...new Set(added.map((n) => n.type))];
+        assert.deepEqual(types, ["A1_NEW_CANDIDATES_ALLOCATED"], "no new notification type");
+    });
+
     test("a candidate given to the Analyst it already has is left alone and not audited", async () => {
         await seedAllocations();
         const { body } = await assign(USERS.ADMIN, [pid(1)], [{ analystId: USERS.ANN.adminId, count: 1 }], { reassign: true });

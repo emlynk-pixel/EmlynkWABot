@@ -615,7 +615,8 @@ describe("a verification resets when the data it covers changes (VERIFY-RESET-00
         await api(USERS.OWNER, "POST", `/jobs/${job.jobId}/complete`, {});
         await assignJob();
         await api(USERS.ADMIN, "POST", `/candidates/${P}/call-logs`, { note: "Called" });
-        for (const stage of ["JOB_DETAILS", "VISA_SUBMISSION", "VISA_APPROVAL"]) assert.equal((await completeStage(P, stage)).status, 200, stage);
+        for (const stage of ["VISA_SUBMISSION", "VISA_APPROVAL"]) assert.equal((await completeStage(P, stage)).status, 200, stage);
+        assert.equal((await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/JOB_DETAILS`, { notes: "Job details comment" })).status, 200, "Job details completes by itself; its note is still saved");
         // A final status is not a detail either.
         assert.equal((await api(USERS.OWNER, "POST", `/candidates/${P}/final-status`, { status: "DEPARTED" })).status, 200);
         await api(USERS.ADMIN, "PUT", `/candidates/${P}/stages/CANDIDATE_DETAILS`, { notes: "A stage comment" });

@@ -312,6 +312,10 @@ function WorkAllocationView() {
             setBusy(false);
         }
     };
+    // Who the confirmation says will receive the candidates (a reassignment replaces the previous assignee in one step).
+    const newAssignees = confirm === "assignMe"
+        ? [me?.name ?? "you"]
+        : parsedCounts.filter((entry) => entry.value > 0).map((entry) => entry.analyst.name);
     const onAssign = () => (alreadyAllocated.length ? setConfirm("reassign") : runAssign());
     const confirmRun = () => runAssign(confirm === "assignMe");
 
@@ -407,11 +411,13 @@ function WorkAllocationView() {
             {notice && <div role="status" className="rounded-xl border border-verified-border bg-verified-bg px-3 py-2 text-body-sm text-verified">{notice}</div>}
             {actionError && !confirm && <p role="alert" className="rounded-lg border border-critical-border bg-critical-bg px-3 py-2 text-body-sm text-critical">{actionError}</p>}
 
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
                 <Card>
                     <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2">
                         <span className="text-label-md text-ink tabular-nums" aria-live="polite">{formatNumber(selectedCount)} selected</span>
                         {selectedCount > 0 && <button type="button" onClick={clearSelection} className="text-label-md text-primary hover:underline">Clear selection</button>}
+                        {/* Below the wide layout the Allocate panel sits under the table: a way to reach it from here. */}
+                        {selectedCount > 0 && <button type="button" onClick={() => document.getElementById("allocate-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="text-label-md text-primary hover:underline xl:hidden">Go to Allocate ↓</button>}
                         {analystView && (
                             <label className="ml-auto flex items-center gap-2 text-label-md text-ink-soft">
                                 Analyst
@@ -446,7 +452,7 @@ function WorkAllocationView() {
                         <>
                             {changingPage && <p role="status" className="px-3 pt-3 text-label-sm text-ink-muted">Loading page…</p>}
                             <div aria-busy={changingPage} className={`overflow-x-auto ${changingPage ? "opacity-60" : ""}`}>
-                                <table className={`w-full min-w-[40rem] border-separate border-spacing-0`}>
+                                <table className={`w-full min-w-[32rem] border-separate border-spacing-0`}>
                                     <caption className="sr-only">Candidates to allocate</caption>
                                     <thead>
                                         <tr>
@@ -495,7 +501,7 @@ function WorkAllocationView() {
                 </Card>
 
                 <Card className="h-fit p-4">
-                    <h2 className="text-headline-sm text-ink">Allocate</h2>
+                    <h2 id="allocate-panel" className="scroll-mt-4 text-headline-sm text-ink">Allocate</h2>
                     <p className="mt-1 text-body-sm text-ink-muted tabular-nums">
                         {formatNumber(selectedCount)} selected
                         {alreadyAllocated.length > 0 && <span className="text-review"> · {formatNumber(alreadyAllocated.length)} already allocated</span>}
@@ -668,8 +674,9 @@ function WorkAllocationView() {
                         {formatNumber(confirm === "assignMe" ? movedFromOthers.length : alreadyAllocated.length)} of the {formatNumber(selectedCount)} selected candidates are already allocated. They will move to {confirm === "assignMe" ? "you" : "the new assignees"}, and their current assignees are no longer assigned to them; an Analyst loses access to the candidate immediately.
                         {confirm === "assignMe" && ownedByMe.length > 0 && ` ${formatNumber(ownedByMe.length)} already ${ownedByMe.length === 1 ? "belongs" : "belong"} to you and stays unchanged.`}
                     </p>
+                    <p className="mt-2 text-body-sm text-ink-soft">New {newAssignees.length === 1 ? "assignee" : "assignees"}: <span className="font-medium text-ink">{newAssignees.join(", ")}</span></p>
                     <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto text-body-sm text-ink-muted">
-                        {(confirm === "assignMe" ? movedFromOthers : alreadyAllocated).map((item) => <li key={item.passportId}>{item.name ?? item.passportId} · now {item.analyst?.name}</li>)}
+                        {(confirm === "assignMe" ? movedFromOthers : alreadyAllocated).map((item) => <li key={item.passportId}>{item.name ?? item.passportId} · now {item.analyst?.name}{newAssignees.length === 1 ? ` → ${newAssignees[0]}` : ""}</li>)}
                         {confirm === "assignMe" && ownedByMe.map((item) => <li key={item.passportId}>{item.name ?? item.passportId} · already yours (unchanged)</li>)}
                     </ul>
                     <DialogError message={actionError} />

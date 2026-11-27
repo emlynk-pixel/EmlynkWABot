@@ -1,6 +1,7 @@
 import type { MessageKey, MessageParams } from "../i18n/translations";
 import { NOT_APPLICABLE_FIELDS, isNotApplicable, isNotApplicableFor, showsChildren, showsOtherJobCategory, showsSpouse, type CandidateFormData, type FormGroup } from "./model";
 import { parseHeight, parseWeight } from "./measurements";
+import { samePhone } from "./phone";
 import { BLOOD_GROUPS, CIVIL_STATUS_OPTIONS, ENGLISH_LEVELS, JOB_CATEGORIES, SEX_OPTIONS, SHIRT_SIZES, YES_NO, jobCategoryChoices } from "./options";
 import { CITY_PATTERN, MAX_CITY_LENGTH } from "./romania";
 
@@ -53,7 +54,8 @@ function dateProblem(value: string, { notFuture, today, latest = LATEST_EXPIRY_D
 // Every problem in the whole form.
 // `jobCategories`: the choices offered (jobCategoryChoices of the server's list);
 // by default the original trades, for callers without a server list.
-export function validateForm(data: CandidateFormData, today = todayInSriLanka(), jobCategories: readonly string[] = jobCategoryChoices(JOB_CATEGORIES)): FormErrors {
+// `whatsappNumber`: the verified WhatsApp number; the alternative number must differ from it.
+export function validateForm(data: CandidateFormData, today = todayInSriLanka(), jobCategories: readonly string[] = jobCategoryChoices(JOB_CATEGORIES), whatsappNumber?: string | null): FormErrors {
     const errors: FormErrors = {};
     const add = (path: string, key: MessageKey, params?: MessageParams) => {
         if (!errors[path]) errors[path] = params ? { key, params } : { key };
@@ -109,6 +111,10 @@ export function validateForm(data: CandidateFormData, today = todayInSriLanka(),
     length("contact.address", contact.address, MAX_LENGTH.address);
     for (const field of ["city", "district", "dsDivision", "gnDivision"] as const) length(`contact.${field}`, contact[field], MAX_LENGTH.text);
     phone("contact.alternativePhone", contact.alternativePhone);
+    // (only reached for a well-formed number: `add` keeps the first problem of a field)
+    if (!naAllowed("contact.alternativePhone", contact.alternativePhone) && samePhone(contact.alternativePhone, whatsappNumber)) {
+        add("contact.alternativePhone", "v.sameAsContact");
+    }
     if (contact.email.trim() && (!EMAIL_PATTERN.test(contact.email.trim()) || contact.email.trim().length > 254)) add("contact.email", "v.emailInvalid");
     const cityInRomania = contact.cityInRomania.trim().replace(/\s+/g, " ");
     if (cityInRomania && !naAllowed("contact.cityInRomania", cityInRomania)) {

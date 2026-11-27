@@ -16,7 +16,7 @@ import {
 } from "../api/candidates";
 import { canRegisterCandidates, useAuth } from "../auth/AuthProvider";
 import { canListCandidates, canManageCandidates, canViewCandidates } from "../auth/roles";
-import { CandidateFields, detailsFrom, emptyDetails, Field, textAreaControl, validateDetails } from "../components/candidate/CandidateFields";
+import { CandidateFields, detailsFrom, emptyDetails, Field, isSameAsContactError, SAME_AS_CONTACT, textAreaControl, validateDetails } from "../components/candidate/CandidateFields";
 import { DocumentRow, DOCUMENT_ACCEPT, VIDEO_ACCEPT } from "../components/candidate/DocumentRow";
 import { DialogError, primaryButton, secondaryButton } from "../components/Dialog";
 import { documentTypeLabel } from "../components/format";
@@ -161,7 +161,7 @@ export function CandidateRegistrationPage() {
 
     const saveExisting = async (current: CandidateDetails) => {
         if (!token) return;
-        const found = validateDetails(details, "registration", { whatsappLocked: Boolean(current.candidate.whatsappNumber) });
+        const found = validateDetails(details, "registration", { whatsappLocked: Boolean(current.candidate.whatsappNumber), original: detailsFrom(current.candidate) });
         setErrors(found);
         if (Object.keys(found).length) return;
         setBusy(true);
@@ -176,7 +176,8 @@ export function CandidateRegistrationPage() {
             }
             finish(candidateId, `The details of ${candidateId} were saved.`);
         } catch (caught) {
-            setError({ message: caught instanceof ApiError ? caught.message : "The changes could not be saved." });
+            if (isSameAsContactError(caught)) setErrors((current) => ({ ...current, contactNumber: SAME_AS_CONTACT }));
+            else setError({ message: caught instanceof ApiError ? caught.message : "The changes could not be saved." });
             setBusy(false);
         }
     };
@@ -211,6 +212,7 @@ export function CandidateRegistrationPage() {
         } catch (caught) {
             const exists = caught instanceof ApiError && caught.status === 409 && /passport ID/i.test(caught.message);
             setBusy(false);
+            if (isSameAsContactError(caught)) setErrors((current) => ({ ...current, contactNumber: SAME_AS_CONTACT }));
             // Registered in the meantime: load it instead.
             if (exists) {
                 try {

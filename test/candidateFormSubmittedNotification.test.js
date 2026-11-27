@@ -177,13 +177,17 @@ describe("A4 Candidate Form Submitted", () => {
         assert.doesNotMatch(line, /Anusha|Soysa|N1000001|submitted the candidate form/, "no names, identifiers or text in the log");
     });
 
-    test("an empty name falls back to the passport number; a failing candidate lookup sends nothing and does not throw", async () => {
+    test("an empty name is 'A candidate', never the passport number; a failing candidate lookup sends nothing and does not throw", async () => {
         assert.equal(formSubmittedMessage("Anusha De Soysa"), "Anusha De Soysa has submitted the candidate form.");
+        assert.equal(formSubmittedMessage(null), "A candidate has submitted the candidate form.");
         await pg.exec(`UPDATE "candidate" SET "first_name" = '', "other_name" = NULL`);
         await allocate(USERS.ANN);
         const at = new Date("2026-11-24T10:00:00.000Z");
         assert.equal((await notifyCandidateFormSubmitted(prisma, { passportId: A.passportId, submittedAt: at })).created, 1);
-        assert.equal((await rowsOf(USERS.ANN))[0].message, "N1000001 has submitted the candidate form.");
+        const [row] = await rowsOf(USERS.ANN);
+        assert.equal(row.message, "A candidate has submitted the candidate form.");
+        assert.doesNotMatch(`${row.title} ${row.message}`, /N1000001/, "no passport number in the text");
+        assert.equal(row.candidateId, A.passportId, "which candidate travels as candidateId");
 
         const broken = { candidate: { findUnique: async () => { throw new Error("down"); } }, notification: prisma.notification, user: prisma.user };
         assert.deepEqual(await notifyCandidateFormSubmitted(broken, { passportId: A.passportId, submittedAt: at }), { created: 0, failed: true });

@@ -24,7 +24,8 @@ export function CandidateStatusPanel({ details, onChange }: { details: Candidate
 
     const status = details.workflowStatus ?? null;
     const canSet = canSetFinalStatus(user);
-    if (!status && !canSet) return null;
+    const allocatedTo = details.allocatedTo;
+    if (!status && !canSet && !allocatedTo) return null;
 
     const save = async () => {
         if (!token) return;
@@ -46,6 +47,12 @@ export function CandidateStatusPanel({ details, onChange }: { details: Candidate
                 {status ? <WorkflowStatusBadge status={status} /> : <span>—</span>}
                 {details.finalStatus?.at && <span className="text-label-sm">since {formatDateTime(details.finalStatus.at)}</span>}
             </p>
+            {allocatedTo && (
+                <p data-testid="candidate-allocated-to" className="flex items-center gap-2 text-body-sm text-ink-muted">
+                    <span>Allocated To</span>
+                    <span className="text-ink">{allocatedTo.length ? allocatedTo.map((u) => u.name).join(", ") : "-"}</span>
+                </p>
+            )}
             {canSet && (
                 <div className="flex flex-wrap items-center gap-2">
                     <label htmlFor="final-status" className="text-label-md text-ink-soft">Final status</label>

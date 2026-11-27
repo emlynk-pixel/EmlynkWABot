@@ -178,7 +178,7 @@ describe("scheduled and manual reconciliation", () => {
         const { sheet, store, worker } = setup();
         const { passportId, uniqueId } = await register();
         await giveTestPassAndJob(prisma, passportId); // the visa stages need a PASS and a Job
-        for (const stage of ["JOB_DETAILS", "VISA_SUBMISSION", "VISA_APPROVAL"]) {
+        for (const stage of ["VISA_SUBMISSION", "VISA_APPROVAL"]) {
             await updateStage({ db: prisma, passportId, stage, values: parseStageBody({ completed: true }, stage).values });
         }
         await prisma.candidate.update({ where: { passportId }, data: { firstName: "First" } });

@@ -43,3 +43,6 @@ e2e/
 
 # Docs live on the separate docs/restructure branch, never on dev or stage
 Docs/
+
+# Record of the previous values written by scripts/backfillAutoStageCompletion.mjs (passport IDs: keep private)
+stage-completion-backfill-*.json

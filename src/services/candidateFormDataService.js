@@ -5,6 +5,7 @@ import { activeJobTypeNames, isNoPreference, NO_PREFERRED_JOB_TYPE } from "./job
 import { notifyCandidateFormSubmitted } from "./notificationEvents.js";
 import { parseHeight, parseWeight } from "../utils/bodyMeasurements.js";
 import { findRomanianCity, ROMANIA_CITIES } from "../utils/romaniaCities.js";
+import { isSamePhoneNumber } from "../utils/phoneNumber.js";
 
 // The Candidate Form's data on the server: the field list, the prefill from
 // the existing records, the immutable prefill snapshot, and the one-time
@@ -348,7 +349,8 @@ export async function saveCandidateFormDraft({ db, passportId, version, step, gr
         }
         const existing = await tx.candidateFormDraft.findUnique({ where: { passportId }, select: { answers: true } });
         const civilStatus = isObject(existing?.answers?.basic) ? existing.answers.basic.civilStatus ?? null : null;
-        const parsed = parseAnswerValues(answers, { now, jobCategories, groups, civilStatus });
+        const whatsappNumber = groups.includes("contact") ? await candidateContactNumber(tx, passportId) : null;
+        const parsed = parseAnswerValues(answers, { now, jobCategories, groups, civilStatus, whatsappNumber });
         if (parsed.errors.length) return { errors: parsed.errors };
 
         const merged = JSON.stringify(groupedAnswers(parsed.values, groups));
@@ -407,7 +409,8 @@ function shapeErrors(answers) {
 // { values (snapshot/response columns), idempotencyKey } or { errors }.
 // The server's own rules; the form checks the same before sending.
 // `jobCategories`: the active job type names (the route reads them from job_type).
-export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CATEGORIES } = {}) {
+// `whatsappNumber`: the candidate's number on record (candidateContactNumber).
+export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CATEGORIES, whatsappNumber = null } = {}) {
     if (!isObject(body)) return { errors: [{ field: "body", code: "invalid", message: "must be a JSON object" }] };
     const errors = [];
     for (const key of Object.keys(body)) {
@@ -419,7 +422,7 @@ export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CA
     errors.push(...shapeErrors(body.answers));
     if (errors.length) return { errors };
 
-    const parsed = parseAnswerValues(body.answers, { now, jobCategories });
+    const parsed = parseAnswerValues(body.answers, { now, jobCategories, whatsappNumber });
     return parsed.errors.length ? { errors: parsed.errors } : { values: parsed.values, idempotencyKey: body.idempotencyKey };
 }
 
@@ -427,7 +430,8 @@ export function parseSubmission(body, { now = new Date(), jobCategories = JOB_CA
 // limits the check to those groups of the form (a draft step); the rules that reach across
 // groups are applied only where their groups are included. `civilStatus` is the saved one,
 // for a step that does not carry the Basic group itself (the spouse and children depend on it).
-function parseAnswerValues(answers, { now, jobCategories, groups = null, civilStatus = null }) {
+// `whatsappNumber`: the candidate's verified number on record (the alternative number must differ).
+function parseAnswerValues(answers, { now, jobCategories, groups = null, civilStatus = null, whatsappNumber = null }) {
     const errors = [];
     const has = (group) => !groups || groups.includes(group);
     const today = businessDateOf(now);
@@ -579,7 +583,22 @@ function parseAnswerValues(answers, { now, jobCategories, groups = null, civilSt
         errors.push({ field: "passport.expiryDate", code: "invalid", message: "must be after the issue date" });
     }
 
+    // The alternative number is a second number: never the verified WhatsApp (contact) number, in
+    // any written form. "N/A" and an empty answer are left to the rules above.
+    if (has("contact") && isSamePhoneNumber(values.alternativePhone, whatsappNumber)) {
+        fail("contact.alternativePhone", ALTERNATIVE_SAME_AS_CONTACT.code, ALTERNATIVE_SAME_AS_CONTACT.message);
+    }
+
     return { values, errors };
+}
+
+export const ALTERNATIVE_SAME_AS_CONTACT = Object.freeze({ code: "same_as_contact", message: "Alternative number must be different from your contact number." });
+
+// The candidate's verified WhatsApp number (their contact number), which the alternative number is
+// compared with; null when the record has none.
+export async function candidateContactNumber(db, passportId) {
+    const candidate = await db.candidate.findUnique({ where: { passportId }, select: { whatsappNumber: true } });
+    return candidate?.whatsappNumber ?? null;
 }
 
 // POST /api/public/candidate-details/submit. All or nothing, once:
@@ -588,8 +607,7 @@ function parseAnswerValues(answers, { now, jobCategories, groups = null, civilSt
 //      this match zero rows);
 //   2. store the answers (with the verified NIC from the record) and make
 //      sure the original-values snapshot exists;
-//   3. fill the EMPTY Additional Details fields with the submitted values
-//      (applyAutoFill; fields with a value are left for Confirm / Reject).
+//   (The candidate's record is not changed: every submitted value that differs is left for staff to accept or reject.)
 // A retry of the winning request (same idempotency key) gets the same success;
 // anything else after submission is 409 with a neutral body.
 export async function submitCandidateForm({ db, passportId, linkId, version, kind = "SINGLE", jobId = null, values, idempotencyKey, now = new Date() }) {
@@ -626,12 +644,8 @@ export async function submitCandidateForm({ db, passportId, linkId, version, kin
             });
         }
         const response = await tx.candidateFormResponse.create({ data: { passportId, ...values, nic: candidate.nic, submittedAt: now, submittedViaLinkId: linkId } });
-        // The Additional Details fields that are EMPTY in the record take the submitted value now, in this
-        // transaction (candidateFormFieldConfirmService.js applyAutoFill): fill only, never a field that has
-        // a value (a different value there stays a pending change for Confirm / Reject), never the core
-        // candidate record. Imported at call time: that module imports this one (ANSWER_FIELDS, ...).
-        const { applyAutoFill } = await import("./candidateFormFieldConfirmService.js");
-        await applyAutoFill(tx, passportId, response);
+        // Nothing is written to the candidate's record here: every submitted value that differs from the record
+        // (an empty Additional Details field included) is a pending change that staff accept or reject.
         // The saved progress is superseded by the submission (and its personal data is not kept twice).
         await tx.candidateFormDraft.deleteMany({ where: { passportId } });
         // The Google Sheet sync outbox (formSubmissionSync.js): this submission, once (passport_id is

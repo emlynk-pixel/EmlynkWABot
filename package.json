@@ -21,6 +21,7 @@
     "db:audit-stages": "node scripts/auditCandidateStages.js",
     "auth:audit-users": "node scripts/auditUserAccounts.js",
     "form:backfill-autofill": "node scripts/backfillCandidateFormAutoFill.mjs",
+    "stages:backfill-completion": "node scripts/backfillAutoStageCompletion.mjs",
     "admin:install": "npm --prefix admin install",
     "admin:dev": "npm --prefix admin run dev",
     "admin:build": "npm --prefix admin run build",

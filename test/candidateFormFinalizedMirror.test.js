@@ -184,18 +184,18 @@ const sheetRowOf = (sheet) => {
 // ---------------------------------------------------------------- the flow
 
 describe("submitted -> confirmed -> canonical -> mirror", () => {
-    test("SHEET-FINAL-001 a new submission fills only the EMPTY Additional Details (marking the candidate); values on record and the core record wait for Confirm", async () => {
+    test("SHEET-FINAL-001 a new submission writes nothing to the record or the sheet row; every value waits for Confirm", async () => {
         await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, bloodGroup: "O+" } });
         const before = await mirrorRow();
         await prisma.sheetSyncQueue.deleteMany();
         await submitForm();
         const after = await mirrorRow();
         assert.equal(cellOf(after, "bloodGroup"), "O+", "a value on record is unchanged until Confirm");
-        assert.equal(cellOf(after, "guardianName"), "KAMAL PERERA", "an empty field took the submitted value");
+        assert.notEqual(cellOf(after, "guardianName"), "KAMAL PERERA", "an empty field is not filled by the submission");
         // Every column outside the Candidate Form ones (the core record) is identical.
         const core = (row) => SHEET_COLUMNS.filter((c) => !FORM_FIELDS.includes(c.field)).map((c) => row[c.index]);
         assert.deepEqual(core(after), core(before));
-        assert.equal((await pendingQueue()).length, 1, "the fill marks the candidate once (the candidate_additional_details trigger)");
+        assert.equal((await pendingQueue()).length, 0, "nothing in the record changed, so the candidate is not marked");
     });
 
     test("SHEET-FINAL-002 / 003 Confirm writes the canonical value and marks the candidate in the existing sheet_sync_queue", async () => {
@@ -404,9 +404,9 @@ describe("Confirm / Reject rules for the newly confirmable fields", () => {
     test("job category: an OTHER answer is not a job type (its text is Other Job Category); No Preferred Type replaces the list", async () => {
         await submitForm(withAnswer(withAnswer(ANSWERS(), "qualifications.jobCategory", "OTHER"), "qualifications.jobCategoryOther", "crane operator"));
         assert.equal(await pendingFor("qualifications.jobCategory"), undefined);
-        // Other Job Category was empty: filled at submission, nothing to confirm.
-        assert.equal(await pendingFor("qualifications.jobCategoryOther"), undefined);
-        assert.equal((await details()).otherJobCategory, "CRANE OPERATOR");
+        // Other Job Category was empty: not filled at submission, it is a pending change.
+        assert.deepEqual(await pendingFor("qualifications.jobCategoryOther"), { field: "qualifications.jobCategoryOther", current: null, submitted: "CRANE OPERATOR" });
+        assert.equal((await details())?.otherJobCategory ?? null, null);
         assert.equal((await prisma.candidate.findUnique({ where: { passportId: A.passportId } })).job, "PLUMBER", "the job types are untouched");
 
         await pg.exec(`DELETE FROM "candidate_form_field_review"; DELETE FROM "candidate_form_sheet_sync"; DELETE FROM "candidate_form_response"; DELETE FROM "candidate_form_access"; DELETE FROM "candidate_form_link";`);

@@ -63,11 +63,13 @@ async function insertRows(db, data) {
     }
 }
 
-// specs: [{ type, title, message, dedupeKey, roles?, userIds?, requireRoles?, excludeUserIds? }]
+// specs: [{ type, title, message, dedupeKey, roles?, userIds?, requireRoles?, excludeUserIds?, candidateId?, jobId? }]
 //   roles           exact roles (notificationRecipients.js AUDIENCE / tierRoles)
 //   userIds         named users
 //   requireRoles    with userIds: a named user receives it only while holding one of these roles
 //   excludeUserIds  never these users (the acting user of E1 / E2), per spec
+//   candidateId     the candidate (passport ID) / the job (uuid) it is about, stored so the app can
+//   jobId           open them; never part of the text. Absent: null.
 // Returns { created } (rows inserted; 0 when every recipient already had it). Never throws.
 export async function notifyAll(db, specs) {
     const list = (specs ?? []).filter((spec) => spec && spec.type && spec.dedupeKey);
@@ -81,7 +83,10 @@ export async function notifyAll(db, specs) {
         for (const spec of list) {
             for (const user of users) {
                 if (!isRecipientOf(user, spec)) continue;
-                data.push({ recipientId: user.adminId, type: spec.type, title: spec.title ?? null, message: spec.message ?? null, dedupeKey: spec.dedupeKey });
+                data.push({
+                    recipientId: user.adminId, type: spec.type, title: spec.title ?? null, message: spec.message ?? null, dedupeKey: spec.dedupeKey,
+                    candidateId: spec.candidateId ?? null, jobId: spec.jobId ?? null,
+                });
             }
         }
         if (!data.length) return { created: 0 };
@@ -120,8 +125,11 @@ export function parseNotificationListQuery(query = {}) {
 }
 
 const iso = (value) => (value ? value.toISOString() : null);
-const view = (row) => ({ id: row.id, type: row.type, title: row.title, message: row.message, createdAt: iso(row.createdAt), readAt: iso(row.readAt) });
-const SELECT = { id: true, type: true, title: true, message: true, createdAt: true, readAt: true };
+const view = (row) => ({
+    id: row.id, type: row.type, title: row.title, message: row.message, candidateId: row.candidateId ?? null, jobId: row.jobId ?? null,
+    createdAt: iso(row.createdAt), readAt: iso(row.readAt),
+});
+const SELECT = { id: true, type: true, title: true, message: true, candidateId: true, jobId: true, createdAt: true, readAt: true };
 const ORDER = [{ createdAt: "desc" }, { id: "desc" }];
 
 export const countUnread = ({ db, recipientId }) => db.notification.count({ where: { recipientId, readAt: null } });

@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
 import { getUnreadCount, listNotifications, markNotificationRead, type AdminNotification } from "../api/notifications";
+import { NO_ACCESS_MESSAGE, notificationTarget, type NotificationNavState } from "../notifications/targets";
 import { Icon } from "./Icon";
 
 // The header bell: the signed-in admin's server-side notification feed (every role). Read state lives on
 // the server. The unread count is polled while the tab is visible; the list loads when the panel opens.
-// Notifications are informational: no navigation or other actions.
+// Clicking a notification marks it read, then opens the page it is about (notifications/targets.ts) and
+// closes the panel. One with no page only gets marked read; one whose pages the role cannot open keeps
+// the panel open with a short message.
 
 const POLL_MS = 30_000;
 const dateFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
@@ -17,7 +21,9 @@ function formatWhen(iso: string): string {
 
 export function NotificationBell() {
     const { user, token } = useAuth();
+    const navigate = useNavigate();
     const [isOpen, setIsOpen] = useState(false);
+    const [notice, setNotice] = useState<string | null>(null);
     const [items, setItems] = useState<AdminNotification[]>([]);
     const [nextCursor, setNextCursor] = useState<string | null>(null);
     const [unreadCount, setUnreadCount] = useState(0);
@@ -104,6 +110,7 @@ export function NotificationBell() {
     const handleToggle = () => {
         if (!isOpen) {
             setFreshIds(new Set());
+            setNotice(null);
             void loadList();
             void refreshCount();
         }
@@ -144,6 +151,20 @@ export function NotificationBell() {
         }
     };
 
+    const openItem = (item: AdminNotification) => {
+        // Not awaited: the bell stays mounted across pages, so the read state (and a rollback) still lands.
+        void markRead(item);
+        const target = notificationTarget(item, user);
+        if (target.kind === "open") {
+            setNotice(null);
+            setIsOpen(false);
+            const state: NotificationNavState | undefined = target.record ? { fromNotification: true } : undefined;
+            navigate(target.to, { state });
+        } else if (target.kind === "denied") {
+            setNotice(NO_ACCESS_MESSAGE);
+        }
+    };
+
     if (!user) return null;
 
     const badgeText = unreadCount > 99 ? "99+" : unreadCount > 0 ? String(unreadCount) : null;
@@ -172,6 +193,7 @@ export function NotificationBell() {
                     <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
                         <h3 className="font-medium text-ink">Notifications</h3>
                     </div>
+                    {notice && <p role="status" className="shrink-0 border-b border-border px-4 py-2 text-body-sm text-ink-muted">{notice}</p>}
 
                     <div className="min-h-[100px] flex-1 overflow-y-auto">
                         {loading && items.length === 0 ? (
@@ -199,7 +221,7 @@ export function NotificationBell() {
                                             >
                                                 <button
                                                     type="button"
-                                                    onClick={() => void markRead(item)}
+                                                    onClick={() => openItem(item)}
                                                     className="relative flex w-full flex-col p-4 pl-6 text-left transition-colors hover:bg-canvas-muted"
                                                 >
                                                     {/* Bar and dot are always rendered so the row never shifts; only opacity/transform change. */}

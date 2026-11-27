@@ -6,6 +6,7 @@
 //   A1  New Candidates Allocated       the allocated Analyst, once per allocation action (a bulk
 //                                      import: once per import, all its chunks together)
 //   A4  Candidate Form Submitted       the Analyst the candidate is allocated to, once per submission
+//   A5  Job Assigned                   the Analyst the candidate is allocated to, once per assignment
 //   B2  Role Updated                   the Registration Desk user whose role was changed
 //   C1  New Job Added                  Job Handlers, when unassigned eligible candidates exist
 //   C2  Missing Country Information    Job Handlers, for a new Agent without a country
@@ -20,7 +21,8 @@
 // notificationScanService.js; their types are listed here too.
 //
 // Text holds names only where the notification names someone (a candidate's, a user's or an
-// Agent's name): never a passport number, NIC, phone number or other identifier.
+// Agent's name): never a passport number, NIC, phone number or other identifier. A candidate
+// without a name is "a candidate" (A4, A5, E1, E2); which candidate it is travels as candidateId.
 
 import { randomUUID } from "node:crypto";
 
@@ -33,6 +35,7 @@ import { notify, notifyAll } from "./notificationService.js";
 export const NOTIFICATION_TYPE = Object.freeze({
     A1: "A1_NEW_CANDIDATES_ALLOCATED",
     A4: "A4_CANDIDATE_FORM_SUBMITTED",
+    A5: "A5_JOB_ASSIGNED",
     B2: "B2_ROLE_UPDATED",
     C1: "C1_NEW_JOB_ADDED",
     C2: "C2_MISSING_COUNTRY_INFORMATION",
@@ -77,23 +80,34 @@ export const allocationMessage = (count) => `You have received ${count} new cand
 // One allocation action (assign, auto-allocate, a whole bulk import): each Analyst once, with the
 // number of candidates newly assigned or reassigned TO them in it. Only users who hold the ANALYST
 // role now receive it (a Team Lead or another role receiving candidates does not).
-// counts: [{ analystId, count }] (the same analyst twice is added up). batchId: the action's id, so
-// the same action is sent once per Analyst (a bulk import passes "import:<importId>").
+// counts: [{ analystId, count, passportId? }] (the same analyst twice is added up). batchId: the
+// action's id, so the same action is sent once per Analyst (a bulk import passes "import:<importId>").
+// candidateId is set only when the Analyst received exactly one candidate whose passportId is known
+// (a bulk import passes counts only: null).
 export async function notifyCandidatesAllocated(db, { counts, batchId = randomUUID() }) {
     const totals = new Map();
-    for (const { analystId, count } of counts ?? []) {
-        if (analystId && count > 0) totals.set(analystId, (totals.get(analystId) ?? 0) + count);
+    const candidates = new Map();
+    for (const { analystId, count, passportId } of counts ?? []) {
+        if (!analystId || !(count > 0)) continue;
+        totals.set(analystId, (totals.get(analystId) ?? 0) + count);
+        if (!candidates.has(analystId)) candidates.set(analystId, new Set());
+        if (passportId) candidates.get(analystId).add(passportId);
     }
     if (!totals.size) return { created: 0 };
-    return notifyAll(db, [...totals].map(([analystId, count]) => ({
-        type: NOTIFICATION_TYPE.A1, title: "New Candidates Allocated", message: allocationMessage(count),
-        dedupeKey: `A1:${batchId}`, userIds: [analystId], requireRoles: [ROLES.ANALYST],
-    })));
+    return notifyAll(db, [...totals].map(([analystId, count]) => {
+        const ids = candidates.get(analystId);
+        return {
+            type: NOTIFICATION_TYPE.A1, title: "New Candidates Allocated", message: allocationMessage(count),
+            dedupeKey: `A1:${batchId}`, userIds: [analystId], requireRoles: [ROLES.ANALYST],
+            candidateId: count === 1 && ids.size === 1 ? [...ids][0] : null,
+        };
+    }));
 }
 
 // ---------------------------------------------------------------- A4
 
-export const formSubmittedMessage = (name) => `${name} has submitted the candidate form.`;
+// name: the candidate's name, or none ("A candidate").
+export const formSubmittedMessage = (name) => `${name || "A candidate"} has submitted the candidate form.`;
 
 // A candidate submitted the public Candidate Form: the Analyst the candidate is allocated to now
 // (role exactly ANALYST, ACTIVE), nobody else. An unallocated candidate sends nothing. submittedAt:
@@ -108,10 +122,37 @@ export async function notifyCandidateFormSubmitted(db, { passportId, submittedAt
     }
     const analystId = candidate?.allocation?.analystId;
     if (!analystId) return { created: 0 };
-    // The one notification that falls back to an identifier: the Analyst needs to know which candidate.
+    // No name: "A candidate" (never the passport ID); the Analyst opens the candidate through candidateId.
     return notify(db, {
-        type: NOTIFICATION_TYPE.A4, title: "Candidate Form Submitted", message: formSubmittedMessage(clientName(candidate) || passportId),
+        type: NOTIFICATION_TYPE.A4, title: "Candidate Form Submitted", message: formSubmittedMessage(clientName(candidate)),
         dedupeKey: `A4:${passportId}:${new Date(submittedAt).toISOString()}`, userIds: [analystId], requireRoles: [ROLES.ANALYST],
+        candidateId: passportId,
+    });
+}
+
+// ---------------------------------------------------------------- A5
+
+// name: the candidate's name, or none ("a candidate").
+export const jobAssignedMessage = (jobCode, name) => `Job ${jobCode} has been assigned to ${name || "a candidate"}.`;
+
+// A candidate newly put on a job (jobService.js assignCandidate: a new membership, or a released one
+// reactivated; never an import): the Analyst the candidate is allocated to now (role exactly
+// ANALYST, ACTIVE), nobody else. assignedAt: the membership's assigned_at, so each assignment is sent
+// once and a later re-assignment (after a removal) again. Like A4, no name is "a candidate".
+export async function notifyJobAssigned(db, { jobId, jobCode, passportId, assignedAt }) {
+    if (!jobId || !jobCode || !passportId || !assignedAt || typeof db?.candidate?.findUnique !== "function") return { created: 0 };
+    let candidate;
+    try {
+        candidate = await db.candidate.findUnique({ where: { passportId }, select: { firstName: true, otherName: true, allocation: { select: { analystId: true } } } });
+    } catch {
+        return { created: 0, failed: true };
+    }
+    const analystId = candidate?.allocation?.analystId;
+    if (!analystId) return { created: 0 };
+    return notify(db, {
+        type: NOTIFICATION_TYPE.A5, title: "Job Assigned", message: jobAssignedMessage(jobCode, clientName(candidate)),
+        dedupeKey: `A5:${jobId}:${passportId}:${new Date(assignedAt).toISOString()}`, userIds: [analystId], requireRoles: [ROLES.ANALYST],
+        candidateId: passportId, jobId,
     });
 }
 
@@ -156,7 +197,7 @@ export async function notifyNewJobs(db, jobs) {
     }
     return notifyAll(db, list.map((job) => ({
         type: NOTIFICATION_TYPE.C1, title: "New Job Added", message: `A new job has been added. Job ID: ${job.jobCode}. Please review the details.`,
-        dedupeKey: `C1:${job.jobId}`, roles: AUDIENCE.JOB_HANDLERS,
+        dedupeKey: `C1:${job.jobId}`, roles: AUDIENCE.JOB_HANDLERS, jobId: job.jobId,
     })));
 }
 
@@ -197,6 +238,7 @@ export async function notifyCandidatesCancelled(db, { actorId = null, actorName,
         type: NOTIFICATION_TYPE.E1, title: "Candidate Cancelled",
         message: `${actorName || "A user"} marked ${names.get(passportId) || "a candidate"} as Cancelled.`,
         dedupeKey: `E1:${passportId}:${stamp}`, roles: AUDIENCE.ADMIN_TEAM, excludeUserIds: actorId ? [actorId] : [],
+        candidateId: passportId,
     })));
 }
 

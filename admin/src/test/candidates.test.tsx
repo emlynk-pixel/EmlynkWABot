@@ -368,7 +368,9 @@ describe("Candidate deployment", () => {
             expect(await screen.findByLabelText("Test result")).toHaveValue("");
             expect(within(screen.getByLabelText("Test result")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Select result…", "Pass", "Fail"]);
             expect(screen.getByLabelText("Test date")).toHaveValue("");
-            expect(screen.getByRole("checkbox", { name: "Stage completed" })).not.toBeChecked();
+            // No manual tick: the stage completes by itself on the server.
+            expect(screen.queryByRole("checkbox", { name: "Stage completed" })).not.toBeInTheDocument();
+            expect(screen.getByText(/Completes when the agent name, test ID, test date and a PASS result are filled in/)).toBeInTheDocument();
 
             await user.type(screen.getByLabelText("Agent name"), " Nimal Perera ");
             await user.type(screen.getByLabelText("Test ID"), " T-2026-014 ");
@@ -376,7 +378,7 @@ describe("Candidate deployment", () => {
             await user.type(screen.getByLabelText("Test date"), "2026-09-28");
             await user.click(screen.getByRole("button", { name: "Save changes" }));
 
-            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: null, completed: false, testAgentName: "Nimal Perera", testId: "T-2026-014", testResult: "PASS", testDate: "2026-09-28" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: null, testAgentName: "Nimal Perera", testId: "T-2026-014", testResult: "PASS", testDate: "2026-09-28" }));
             await vi.waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled());
             expect(screen.getByLabelText("Agent name")).toHaveValue("Nimal Perera");
             expect(screen.getByLabelText("Test ID")).toHaveValue("T-2026-014");
@@ -398,7 +400,8 @@ describe("Candidate deployment", () => {
             expect(screen.getByLabelText("Test ID")).toHaveValue("T-2026-009");
             expect(screen.getByLabelText("Test date")).toHaveValue("2026-09-20");
             expect(screen.getByLabelText("Notes")).toHaveValue("Retest booked");
-            expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeChecked();
+            expect(screen.queryByRole("checkbox", { name: "Stage completed" })).not.toBeInTheDocument();
+            expect(screen.getByText("Stage completed")).toBeInTheDocument();
 
             await user.selectOptions(screen.getByLabelText("Test result"), "PASS");
             await user.type(screen.getByLabelText("Test ID"), "X");
@@ -408,7 +411,7 @@ describe("Candidate deployment", () => {
 
             await user.type(screen.getByLabelText("Notes"), " (done)");
             await user.click(screen.getByRole("button", { name: "Save changes" }));
-            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Retest booked (done)", completed: true, testAgentName: "Ion Popescu", testId: "T-2026-009", testResult: "FAIL", testDate: "2026-09-20" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Retest booked (done)", testAgentName: "Ion Popescu", testId: "T-2026-009", testResult: "FAIL", testDate: "2026-09-20" }));
         });
 
         test("the other admin-completed stages stay notes and completion only", async () => {
@@ -460,6 +463,21 @@ describe("Candidate deployment", () => {
             await user.click(panel.getByRole("button", { name: "Save" }));
             await vi.waitFor(() => expect(calls.find((c) => c.method === "POST")!.body).toEqual({ status: null }));
             expect(await panel.findByText("Registered")).toBeInTheDocument();
+        });
+
+        test("ALLOC-TO-UI: Allocated To follows Status with the names the server sent, \"-\" when none, and is absent when the server sends none", async () => {
+            const shownFor = async (allocatedTo: CandidateDetails["allocatedTo"]) => {
+                signedInBackend({ "GET /api/admin/candidates/N0000002": { status: 200, body: { ...withStatus("VISA_APPROVED", "Visa Approved"), allocatedTo } } });
+                const view = renderApp("/candidates/N0000002");
+                const panel = await screen.findByTestId("candidate-status");
+                const row = screen.queryByTestId("candidate-allocated-to");
+                const result = { text: row?.textContent ?? null, afterStatus: row ? Boolean(panel.querySelector("p:first-child + [data-testid='candidate-allocated-to']")) : false };
+                view.unmount();
+                return result;
+            };
+            expect(await shownFor([{ adminId: "u1", name: "Ann Analyst", role: "ANALYST" }, { adminId: "u2", name: "Tara Lead", role: "TEAM_LEAD" }])).toEqual({ text: "Allocated ToAnn Analyst, Tara Lead", afterStatus: true });
+            expect(await shownFor([])).toEqual({ text: "Allocated To-", afterStatus: true });
+            expect(await shownFor(undefined)).toEqual({ text: null, afterStatus: false });
         });
 
         test("a non-Admin sees the Status but not the final status control", async () => {
@@ -590,7 +608,8 @@ describe("Candidate deployment", () => {
             expect(screen.getByLabelText("Client name")).toHaveValue("Not assigned");
             expect(screen.getByLabelText("Date")).toHaveValue("");
             expect(screen.getByLabelText("Note")).toHaveValue("");
-            expect(screen.getByRole("checkbox", { name: "Stage completed" })).not.toBeChecked();
+            expect(screen.queryByRole("checkbox", { name: "Stage completed" })).not.toBeInTheDocument();
+            expect(screen.getByText("Completes when a Job is assigned and the date is filled in.")).toBeInTheDocument();
         });
 
         test("JOB-HISTORY: with no current Job, the latest earlier Job is shown read-only with a small status note; a current Job has no note", async () => {
@@ -617,7 +636,7 @@ describe("Candidate deployment", () => {
             expect(screen.queryByText(/not current/)).not.toBeInTheDocument();
         });
 
-        test("STAGE-JOB-012, 013, 014: Date, Note and completion are saved by the existing stage save, and only those are sent", async () => {
+        test("STAGE-JOB-012, 013, 014: Date and Note are saved by the existing stage save, and only those are sent; completion is shown, never sent", async () => {
             const saved = withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders", jobDate: "2026-10-05", notes: "Visa interview booked", completed: true });
             const { calls } = signedInBackend({
                 "GET /api/admin/candidates/N0000002": { status: 200, body: withJob({ jobCode: "JOB-2026-000007", clientName: "Acme Builders" }) },
@@ -628,13 +647,13 @@ describe("Candidate deployment", () => {
             await screen.findByLabelText("Job ID");
             await user.type(screen.getByLabelText("Date"), "2026-10-05");
             await user.type(screen.getByLabelText("Note"), "Visa interview booked");
-            await user.click(screen.getByRole("checkbox", { name: "Stage completed" }));
             await user.click(screen.getByRole("button", { name: "Save changes" }));
-            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Visa interview booked", completed: true, jobDate: "2026-10-05" }));
+            await vi.waitFor(() => expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ notes: "Visa interview booked", jobDate: "2026-10-05" }));
             await vi.waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled());
             expect(screen.getByLabelText("Date")).toHaveValue("2026-10-05");
             expect(screen.getByLabelText("Note")).toHaveValue("Visa interview booked");
-            expect(screen.getByRole("checkbox", { name: "Stage completed" })).toBeChecked();
+            expect(screen.queryByRole("checkbox", { name: "Stage completed" })).not.toBeInTheDocument();
+            expect(screen.getByText("Stage completed")).toBeInTheDocument();
         });
 
         test("STAGE-JOB-022: a reload after the candidate moved to another Job shows the new Job and Client", async () => {

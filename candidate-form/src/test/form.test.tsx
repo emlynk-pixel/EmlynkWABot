@@ -94,7 +94,7 @@ describe("sections and fields", () => {
         const { user } = await verified();
         fillBasic("MARRIED");
         fillContact();
-        setField("f.alternativePhone", "0771234567");
+        setField("f.alternativePhone", "0712345678");
         await next(user);
         await fillPassport(user);
         setField("f.shirtSize", "M");
@@ -107,7 +107,7 @@ describe("sections and fields", () => {
         expect(field("f.surname")).toHaveValue("SATHSARA");
         expect(field("f.otherNames")).toHaveValue("KAMAL"); // from the record
         expect(field("f.email")).toHaveValue("shamal@example.com");
-        expect(field("f.alternativePhone")).toHaveValue("0771234567");
+        expect(field("f.alternativePhone")).toHaveValue("0712345678");
         await next(user);
         expect(field("f.jobCategory")).toHaveValue("WELDER TIG");
         expect(field("f.shirtSize")).toHaveValue("M");
@@ -287,6 +287,36 @@ describe("validation", () => {
         setField("f.passportExpiryDate", "2019-01-01");
         await next(user);
         expect(screen.getByText(en("v.expiryBeforeIssue"))).toBeInTheDocument();
+    });
+
+    test("the alternative number must differ from the verified WhatsApp number, however it is written", async () => {
+        const { user, calls } = await verified();
+        expect(WHATSAPP).toBe("+94771234567");
+        fillBasic();
+        fillContact();
+        for (const same of ["+94 77 123 4567", "0094771234567", "0771234567", "077-123 4567", "94771234567"]) {
+            setField("f.alternativePhone", same);
+            await next(user);
+            expect(screen.getByText(en("v.sameAsContact")), same).toBeInTheDocument();
+            expect(stepHeading("step.personal")).toBeInTheDocument();
+        }
+        expect(callsTo(calls, "draft")).toHaveLength(0);
+        setField("f.alternativePhone", "0712345678");
+        await next(user);
+        await screen.findByRole("heading", { level: 2, name: startsWith(en("step.work")) });
+        expect(screen.queryByText(en("v.sameAsContact"))).toBeNull();
+    });
+
+    test("the same-number message is shown in Sinhala too", async () => {
+        const { user } = await verified();
+        fillBasic();
+        fillContact();
+        setField("f.alternativePhone", "0771234567");
+        await next(user);
+        await switchLanguage(user, "සිංහල");
+        expect(screen.getByText(si("v.sameAsContact"))).toBeInTheDocument();
+        expect(si("v.sameAsContact")).toBe("විකල්ප අංකය ඔබගේ සම්බන්ධතා අංකයට වඩා වෙනස් විය යුතුය.");
+        expect(en("v.sameAsContact")).toBe("Alternative number must be different from your contact number.");
     });
 
     test("FORM-NEW-010 guardian name, NIC, phone and address are required and checked", async () => {

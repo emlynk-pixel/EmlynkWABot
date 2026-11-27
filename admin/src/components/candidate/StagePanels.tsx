@@ -20,7 +20,7 @@ import { documentTypeLabel } from "../format";
 import { DatePicker } from "../DatePicker";
 import { Icon } from "../Icon";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
-import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
+import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, isSameAsContactError, SAME_AS_CONTACT, textAreaControl, validateDetails } from "./CandidateFields";
 import { DocumentRow, VIDEO_ACCEPT } from "./DocumentRow";
 import { exportDocumentSubmissionPdf } from "./exportPdf";
 import { FormChangesButtons, mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
@@ -107,12 +107,27 @@ export function visaLockReason(details: CandidateDetails): string | null {
 }
 export const SCAN_LOCK_REASON = "Scans can be uploaded once the candidate is assigned to a Job.";
 
+// Test details and Job details complete themselves on the server when their required fields are filled
+// (src/services/stageCompletion.js); the panel only shows the result.
+const AUTO_COMPLETION_HINT: Partial<Record<CandidateStageKey, string>> = {
+    TEST_DETAILS: "Completes when the agent name, test ID, test date and a PASS result are filled in.",
+    JOB_DETAILS: "Completes when a Job is assigned and the date is filled in.",
+};
+
 // Stages completed by their data: done, or what is still missing.
 function AutomaticStatus({ stage, completedLabel = "Stage completed" }: { stage: StageState; completedLabel?: string }) {
     return stage.completed ? (
         <p className="inline-flex items-center gap-1.5 text-body-sm text-verified"><Icon name="check" className="size-4" />{completedLabel}</p>
     ) : (
         <p className="text-body-sm text-ink-muted">Missing: {stage.missing.join(", ")}</p>
+    );
+}
+
+function AutoCompletionStatus({ stage, completed }: { stage: CandidateStageKey; completed: boolean }) {
+    return completed ? (
+        <p className="inline-flex items-center gap-1.5 text-body-sm text-verified"><Icon name="check" className="size-4" />Stage completed</p>
+    ) : (
+        <p className="text-body-sm text-ink-muted">{AUTO_COMPLETION_HINT[stage]}</p>
     );
 }
 
@@ -158,8 +173,8 @@ function VerifyBar({ details, kind, onChange }: { details: CandidateDetails; kin
 
 const message = (caught: unknown) => (caught instanceof ApiError ? caught.message : "The changes could not be saved.");
 
-// The stages completed by an admin (Test details, Job details, Visa submission, Visa
-// approval): notes and completion. Test details also
+// Test details and Job details (completion follows their data) and the stages completed by an admin
+// (Visa submission, Visa approval): notes and completion. Test details also
 // shows the candidate's job (from the Job assignment, read-only) and records the
 // test's result and the date it was sat; the client name shown with them comes
 // from the candidate's record.
@@ -179,7 +194,8 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
     const [error, setError] = useState<string | null>(null);
     const notesId = useId();
     const testId = useId();
-    const dirty = notes !== (saved.notes ?? "") || completed !== saved.completed
+    const autoCompleted = isTest || isJob;
+    const dirty = notes !== (saved.notes ?? "") || (!autoCompleted && completed !== saved.completed)
         || (isTest && (agentName !== (saved.testAgentName ?? "") || testRef !== (saved.testId ?? "") || testResult !== (saved.testResult ?? "") || testDate !== (saved.testDate ?? "")))
         || (isJob && jobDate !== (saved.jobDate ?? ""));
 
@@ -201,7 +217,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
         try {
             const next = await updateCandidateStage(token, details.candidate.passportId, stage, {
                 notes: notes.trim() || null,
-                completed,
+                ...(autoCompleted ? {} : { completed }),
                 ...(isTest ? { testAgentName: agentName.trim() || null, testId: testRef.trim() || null, testResult: testResult || null, testDate: testDate || null } : {}),
                 ...(isJob ? { jobDate: jobDate || null } : {}),
             });
@@ -221,7 +237,7 @@ export function NotesStage({ details, canEdit, onChange, stage }: PanelProps & {
                 <textarea id={notesId} rows={5} maxLength={2000} value={notes} disabled={!canEdit || busy} onChange={(event) => setNotes(event.target.value)} className={textAreaControl} />
             </div>
             <PanelFooter
-                status={<CompletedCheckbox completed={completed} onChange={setCompleted} disabled={!canEdit || busy} lockedReason={VISA_STAGES.includes(stage) && !saved.completed && canEdit ? visaLockReason(details) : null} />}
+                status={autoCompleted ? <AutoCompletionStatus stage={stage} completed={saved.completed} /> : <CompletedCheckbox completed={completed} onChange={setCompleted} disabled={!canEdit || busy} lockedReason={VISA_STAGES.includes(stage) && !saved.completed && canEdit ? visaLockReason(details) : null} />}
                 canEdit={canEdit}
                 busy={busy}
                 dirty={dirty}
@@ -327,7 +343,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
         if (!token) return;
         // Missing address / WhatsApp number don't block the save (the stage
         // just stays incomplete); they are shown under their fields.
-        const errors = validateDetails(form, "details", { whatsappLocked: Boolean(details.candidate.whatsappNumber) });
+        const errors = validateDetails(form, "details", { whatsappLocked: Boolean(details.candidate.whatsappNumber), original: detailsFrom(details.candidate) });
         setFieldErrors({ ...completionGaps(form), ...errors });
         if (Object.keys(errors).length) return;
         setBusy(true);
@@ -345,7 +361,8 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
             setForm(detailsFrom(next.candidate));
             setComment(stageOf(next, "CANDIDATE_DETAILS").notes ?? "");
         } catch (caught) {
-            setError(message(caught));
+            if (isSameAsContactError(caught)) setFieldErrors((current) => ({ ...current, contactNumber: SAME_AS_CONTACT }));
+            else setError(message(caught));
         } finally {
             setBusy(false);
         }

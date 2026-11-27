@@ -166,9 +166,8 @@ describe("candidate activity is audited", () => {
         const save = (body) => updateStage({ db: prisma, passportId: "N1023757", stage: "TEST_DETAILS", values: stage("TEST_DETAILS", body), actor: profile("ADMIN") });
         await save({ testId: "T-1", testResult: "PASS", testDate: "2026-09-28" });
         await save({ testId: "T-1", testResult: "PASS", testDate: "2026-09-28" });
-        await save({ completed: false });
         const stages = (await auditRows()).filter((r) => r.action === "UPDATE_STAGE");
-        assert.equal(stages.length, 1, "neither the repeat nor 'not completed' on a stage that isn't is a change");
+        assert.equal(stages.length, 1, "the repeat is not a change (no agent name: the stage is still not complete)");
         assert.deepEqual(JSON.parse(stages[0].newValue), { stage: "TEST_DETAILS", testId: "T-1", testResult: "PASS", testDate: "2026-09-28" });
         assert.equal(stages[0].previousStatus, stages[0].newStatus);
         assert.equal(stages[0].reason, null);
