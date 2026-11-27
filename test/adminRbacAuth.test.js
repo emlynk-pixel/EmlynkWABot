@@ -1,7 +1,7 @@
 // Role-based authorization on the real admin router. The role is
 // public."user".role, read on every request; the Supabase session only says
 // who the caller is. Matrix (routes/admin.js tiers):
-//   ALL_ACTIVE      ADMIN, ANALYST                              reads (overview, documents, reports, …)
+//   ALL_ACTIVE      ADMIN, ANALYST                              reads (documents, reports, …)
 //   CANDIDATE_STAFF ADMIN, TEAM_LEAD, ANALYST                   the Candidates area and Need Attention
 //   CANDIDATE_READERS  … plus JOB_HANDLER                       candidate reads (list, page)
 //   REGISTRATION_WORKFLOW  … plus REGISTRATION_DESK             the Add Candidate form's routes
@@ -35,8 +35,10 @@ const admits = (allowed, role) => allowed.includes(role) || (role === "OWNER" &&
 
 // [method, path, body, roles allowed]
 const MATRIX = [
-    // The dashboard, documents and review queue: ADMIN (an ANALYST works only on their candidates).
-    ["GET", "/overview", undefined, ["ADMIN"]],
+    // The Overview: ADMIN, TEAM_LEAD and ANALYST, each its own figures (an invalid view, so the
+    // allowed roles get 400 before anything is read).
+    ["GET", "/overview?view=bogus", undefined, ["ADMIN", "TEAM_LEAD", "ANALYST"]],
+    // The documents and review queue: ADMIN (an ANALYST works only on their candidates).
     ["GET", "/documents", undefined, ["ADMIN"]],
     // The Daily Report: ADMIN and TEAM_LEAD.
     ["GET", "/reports/daily", undefined, ["ADMIN", "TEAM_LEAD"]],
@@ -72,6 +74,8 @@ const MATRIX = [
     ["PUT", "/users/someone/role", { role: "ANALYST" }, ["ADMIN"]],
     ["POST", "/users/someone/deactivate", {}, ["ADMIN"]],
     ["GET", "/audit-logs", undefined, ["ADMIN"]],
+    // The export: no format, so ADMIN gets 400 before anything is read.
+    ["POST", "/audit-logs/export", {}, ["ADMIN"]],
     // Google Sheet Sync and Upload (the bulk import): ADMIN only, like every Settings tab.
     ["GET", "/settings/sheet-sync/status", undefined, ["ADMIN"]],
     ["POST", "/settings/sheet-sync/run", {}, ["ADMIN"]],
@@ -173,11 +177,11 @@ describe("role matrix (backend is the boundary)", () => {
 
     test("a role change in the database applies to the very next request", async () => {
         const row = fixture.adminRows.find((r) => r.adminId === "user-REGISTRATION_DESK-ACTIVE");
-        assert.equal((await call("GET", "/overview", row.adminId)).status, 403);
+        assert.equal((await call("GET", "/documents", row.adminId)).status, 403);
         row.role = "ADMIN";
-        assert.equal((await call("GET", "/overview", row.adminId)).status, 200);
+        assert.equal((await call("GET", "/documents", row.adminId)).status, 200);
         row.role = "REGISTRATION_DESK";
-        assert.equal((await call("GET", "/overview", row.adminId)).status, 403);
+        assert.equal((await call("GET", "/documents", row.adminId)).status, 403);
     });
 
     test("a role in the request body or query is ignored", async () => {

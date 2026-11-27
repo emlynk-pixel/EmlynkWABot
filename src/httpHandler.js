@@ -26,7 +26,10 @@ assertValidEnv();
 
 // Imported after the check: some modules read env vars when loaded.
 const { createApp } = await import("./createApp.js");
+const { createSystemAlertReporter } = await import("./services/notificationEvents.js");
 
-const app = createApp();
+// A 500 tells the Owner (System Alert, once a business day per issue); the database client is
+// loaded only when that happens.
+const app = createApp({ onServerError: createSystemAlertReporter({ getDb: async () => (await import("./config/prisma.js")).default }) });
 
 export default app;

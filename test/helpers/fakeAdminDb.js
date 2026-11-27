@@ -86,6 +86,16 @@ export function createFakeAdminDb(users = [], { auditLogs = [] } = {}) {
                 return auditLogRows.filter((r) => matches(r, where)).map((r) => ({ ...r }));
             },
         },
+        // Nobody here holds candidates: a role change to Registration Desk or Job Handler finds none
+        // to unallocate (workAllocationService.js unallocateForRoleChange; tested on PGlite).
+        candidateAllocation: {
+            async findMany() {
+                return [];
+            },
+            async deleteMany() {
+                return { count: 0 };
+            },
+        },
         async $transaction(fn) {
             return fn(db);
         },

@@ -41,6 +41,7 @@ import { sha256Hex } from "../utils/fileChecksum.js";
 import { safeErrorText, safePrismaErrorFields } from "../utils/safeLog.js";
 import { STORAGE_TIMEOUT_MS, withStorageTimeout } from "../utils/storageTimeout.js";
 import { resolveDb, resolveBucket } from "../utils/resolveClients.js";
+import { notifySystemAlert } from "./notificationEvents.js";
 
 // Submissions this app instance processes at once, so at most this many OCR
 // requests are in flight from it. The OCR service limits its own load
@@ -147,6 +148,8 @@ export function createClaim(row, { db, clock = () => new Date(), leaseMs = QUEUE
 
 // Records FAILED for a submission the worker can't process (only while this
 // attempt still owns it). `diagnostic` (see retryLater) is for the log line only.
+// A final failure is a System Alert for the Owner (generic text, once a business
+// day; notificationEvents.js), best-effort.
 async function giveUp(db, claim, stage, error, diagnostic = null) {
     const { count } = await db.temporaryData.updateMany({
         where: claim.where(),
@@ -156,6 +159,7 @@ async function giveUp(db, claim, stage, error, diagnostic = null) {
             processingSummary: { stage, error, processingStatus: "FAILED", recordUpdated: true, attempts: claim.attempt },
         },
     });
+    if (count === 1) await notifySystemAlert(db, { issue: "DOCUMENT_PROCESSING_FAILED" });
     return { outcome: count === 1 ? "GAVE_UP" : "STALE_DISCARDED", ...(diagnostic ? { diagnostic } : {}) };
 }
 

@@ -16,6 +16,8 @@ import crypto from "node:crypto";
 
 import { RETIRED_ROLES, ROLES, isValidRole } from "../middleware/requireRole.js";
 import { USER_STATUS } from "../middleware/requireActiveUser.js";
+import { unallocateForRoleChange } from "./workAllocationService.js";
+import { notifyRoleUpdated } from "./notificationEvents.js";
 
 export const DEFAULT_REPLACEMENT_ROLE = Object.freeze({ [RETIRED_ROLES.MANAGER]: ROLES.ADMIN });
 
@@ -43,7 +45,7 @@ export async function convertRetiredRole({ db, retiredRole, replacementRole, act
     if (!isValidRole(replacementRole) || replacementRole === ROLES.OWNER) {
         throw new RetiredRoleError("INVALID_ROLE", "The replacement must be a supported role other than OWNER");
     }
-    return db.$transaction(async (tx) => {
+    const converted = await db.$transaction(async (tx) => {
         const actor = await tx.user.findUnique({ where: { adminId: String(actorId ?? "") } });
         if (actor?.role !== ROLES.OWNER || actor.status !== USER_STATUS.ACTIVE) {
             throw new RetiredRoleError("OWNER_REQUIRED", "The conversion runs as the ACTIVE OWNER account (--owner <admin_id>)");
@@ -51,7 +53,7 @@ export async function convertRetiredRole({ db, retiredRole, replacementRole, act
         if (typeof tx.$queryRaw === "function") {
             await tx.$queryRaw`SELECT "admin_id" FROM "user" WHERE "role" = ${retiredRole} ORDER BY "admin_id" FOR UPDATE`;
         }
-        const accounts = await tx.user.findMany({ where: { role: retiredRole }, select: { adminId: true, status: true }, orderBy: { adminId: "asc" } });
+        const accounts = await tx.user.findMany({ where: { role: retiredRole }, select: { adminId: true, name: true, status: true }, orderBy: { adminId: "asc" } });
         for (const account of accounts) {
             await tx.user.update({ where: { adminId: account.adminId }, data: { role: replacementRole } });
             await tx.auditLog.create({
@@ -66,7 +68,11 @@ export async function convertRetiredRole({ db, retiredRole, replacementRole, act
                     newValue: replacementRole,
                 },
             });
+            await unallocateForRoleChange(tx, { actor, holder: account, newRole: replacementRole });
         }
-        return accounts;
+        return accounts.map(({ adminId, status }) => ({ adminId, status }));
     });
+    // After the commit, best-effort (B2: only a conversion to Registration Desk concerns it).
+    for (const account of converted) await notifyRoleUpdated(db, { userId: account.adminId, previousRole: retiredRole, newRole: replacementRole });
+    return converted;
 }

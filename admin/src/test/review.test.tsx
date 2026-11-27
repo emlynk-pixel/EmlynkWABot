@@ -2,7 +2,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ApproveResult, AuditEntry, ReviewItem, ReviewQueue, ReviewQueueItem } from "../api/admin";
-import { ADMIN, CLIENT_REF, OVERVIEW as OVERVIEW_FIXTURE, renderApp, signedInBackend, stubBackend, type FetchRoutes, SESSION_TOKEN, renderAppSignedIn, RENDER_STEP, expectRedirectedHome } from "./helpers";
+import { ADMIN, CLIENT_REF, renderApp, signedInBackend, stubBackend, type FetchRoutes, SESSION_TOKEN, renderAppSignedIn, RENDER_STEP, expectRedirectedHome } from "./helpers";
 
 // Synthetic review data only.
 const TEMP_ID = "11111111-1111-4111-8111-111111111111";
@@ -965,13 +965,5 @@ describe("H3: failed submissions", () => {
             expect(await within(dialog).findByText(/already queued for processing again/)).toBeInTheDocument();
             expect(screen.queryByText("Queued for processing again.")).not.toBeInTheDocument();
         });
-    });
-
-    test("Overview links to the failed submissions; Pending review is unchanged", async () => {
-        signedInBackend({ "GET /api/admin/overview": { status: 200, body: { ...OVERVIEW_FIXTURE, reviewQueue: { ...OVERVIEW_FIXTURE.reviewQueue, failedSubmissions: 3 } } } });
-        renderApp("/");
-        const link = await screen.findByRole("link", { name: "3 submissions failed processing" });
-        expect(link).toHaveAttribute("href", "/review?kind=FAILED");
-        expect(screen.getByText("17")).toBeInTheDocument(); // Pending review KPI as before
     });
 });

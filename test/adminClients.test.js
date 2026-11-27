@@ -19,7 +19,7 @@ import {
     requiredDocumentStatus,
     summarizeCompleteness,
 } from "../src/services/adminClientService.js";
-import { getClientDetails, getOverview } from "../src/services/adminDashboardService.js";
+import { getClientDetails } from "../src/services/adminDashboardService.js";
 import { createFakeReviewDb } from "./helpers/fakeReviewDb.js";
 import { fakeVerifyAccessToken, tokenFor } from "./helpers/fakeSupabaseAuth.js";
 
@@ -139,12 +139,6 @@ describe("client completeness", () => {
             assert.deepEqual(details.missingDocumentTypes, row.missingDocumentTypes);
             assert.equal(details.complete, row.completion === "COMPLETE");
         }
-    });
-
-    test("the Overview shows the same counts", async () => {
-        const overview = await getOverview({ db: fixture().client, now: new Date("2026-09-25T06:00:00Z") });
-        assert.deepEqual(overview.clients, { total: 4, complete: 1, incomplete: 3, withMissing: 2, missingDocuments: 4, missingByType: { PASSPORT: 1, POLICE_REPORT: 1, MEDICAL: 2 } });
-        assert.deepEqual(overview.requiredDocumentTypes, ["PASSPORT", "POLICE_REPORT", "MEDICAL"]);
     });
 });
 

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 import { CandidateError, getCandidate } from "./candidateService.js";
 import { CANDIDATE_OUTCOME, WORKFLOW_STATUS_LABELS, isCandidateOutcome } from "./candidateWorkflowStatus.js";
+import { notifyCandidatesCancelled } from "./notificationEvents.js";
 
 // A candidate's FINAL status, recorded by an Admin on the candidate page (or by the bulk import's
 // VISA STATUS column, candidateImportService.js): Departed, Visa Not Going, Cancelled or Rejected.
@@ -28,12 +29,12 @@ const currentOf = (row) => row.outcome ?? (row.departedAt ? "DEPARTED" : null);
 const labelOf = (code) => (code ? WORKFLOW_STATUS_LABELS[code] : "None");
 
 export async function setCandidateFinalStatus({ db, actor, passportId, status, now = new Date() }) {
-    await db.$transaction(async (tx) => {
+    const changed = await db.$transaction(async (tx) => {
         const locked = await tx.$queryRaw`SELECT "passport_id" FROM "candidate" WHERE "passport_id" = ${passportId} FOR UPDATE`;
         if (!locked.length) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
         const row = await tx.candidate.findUnique({ where: { passportId }, select: { departedAt: true, outcome: true } });
         const previous = currentOf(row);
-        if (previous === status) return;
+        if (previous === status) return false;
         const data = status === "DEPARTED"
             ? { departedAt: now, outcome: null, outcomeAt: null }
             : isCandidateOutcome(status)
@@ -47,6 +48,9 @@ export async function setCandidateFinalStatus({ db, actor, passportId, status, n
                 reason: `Final status: ${labelOf(previous)} → ${labelOf(status)}`,
             },
         });
+        return true;
     });
+    // After the commit, best-effort (E1).
+    if (changed && status === CANDIDATE_OUTCOME.CANCELLED) await notifyCandidatesCancelled(db, { actorId: actor.adminId, actorName: actor.name, passportIds: [passportId], at: now });
     return getCandidate({ db, passportId });
 }

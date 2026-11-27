@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useSearchParams } from "react-router";
 import { listDocuments, type DocumentListParams } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { DocumentsTable } from "../components/DocumentsTable";
 import { formatNumber } from "../components/format";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
@@ -10,6 +10,9 @@ import { DatePicker } from "../components/DatePicker";
 
 const PAGE_SIZE = 25;
 const FILTER_KEYS = ["search", "documentType", "verificationStatus", "receivedFrom", "receivedTo", "sort", "order", "page"] as const;
+
+// The filters remembered for the next visit (hooks/useRememberedSearchParams.ts).
+const REMEMBERED_KEYS = FILTER_KEYS.filter((key) => key !== "page");
 
 const TYPE_OPTIONS = [
     ["", "All types"], ["PASSPORT", "Passport"], ["POLICE_SLIP", "Police slip"], ["POLICE_REPORT", "Police report"], ["MEDICAL", "Medical"],
@@ -37,10 +40,11 @@ function paramsFrom(search: URLSearchParams): DocumentListParams {
 }
 
 export function DocumentsPage() {
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("documents", REMEMBERED_KEYS);
     const params = paramsFrom(searchParams);
     const key = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString();
     const documents = useAdminResource(`documents?${key}`, (token, signal) => listDocuments(token, params, signal));
+    useDiscardRestoredOnBadRequest(documents, remembered);
     const [searchText, setSearchText] = useState(params.search ?? "");
 
     useEffect(() => setSearchText(params.search ?? ""), [params.search]);

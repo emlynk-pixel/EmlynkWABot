@@ -1,12 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { listCandidates } from "../api/candidates";
-import { cleanFilters, FILTER_KEYS, getCandidateFilterOptions, type CandidateFilters } from "../api/candidateFilters";
+import { cleanFilters, FILTER_KEYS, getCandidateFilterOptions, validFilters, type CandidateFilters } from "../api/candidateFilters";
 import { jobTypeLabel } from "../api/jobs";
 import { FilterBar, FiltersButton, useFilterFields } from "../components/AdvancedFilters";
 import { CandidateSearchBox } from "../components/CandidateSearchBox";
 import { formatNumber } from "../components/format";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { canFilterOwnAllocations, canRegisterCandidates, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
 import { WorkflowStatusBadge } from "../components/candidate/WorkflowStatusBadge";
@@ -21,21 +22,33 @@ const PAGE_SIZE = 100;
 const th = "h-10 whitespace-nowrap border-b border-border px-4 text-left text-label-md text-ink";
 const td = "h-10 border-b border-border px-4 py-2 text-body-sm";
 
+// What is remembered for the next visit (hooks/useRememberedSearchParams.ts): the search and the
+// filters, a saved value checked like the server checks it.
+const REMEMBERED_KEYS = ["search", ...FILTER_KEYS] as const;
+const validRemembered = (params: URLSearchParams) => {
+    const valid = new URLSearchParams(validFilters(Object.fromEntries(params)) as Record<string, string>);
+    const search = params.get("search")?.trim();
+    if (search) valid.set("search", search);
+    return valid;
+};
+
 // Admin > Candidates: every candidate (users), newest first, 100 a page,
 // paged on the server. Search, advanced filters and page live in the URL
-// (?page=2&jobType=Welder), so a reload, Back and Forward keep them. The
-// server applies the search and every filter (AND) before paging. A row
-// opens the candidate's deployment process.
+// (?page=2&jobType=Welder), so a reload, Back and Forward keep them; the search
+// and filters are also remembered for the next visit. The server applies the
+// search and every filter (AND) before paging. A row opens the candidate's
+// deployment process.
 export function CandidatesPage() {
     const { user } = useAuth();
     const navigate = useNavigate();
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("candidates", REMEMBERED_KEYS, validRemembered);
     const pageNumber = Number(searchParams.get("page"));
     const page = Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : 1;
     const search = searchParams.get("search") || undefined;
     const filters = cleanFilters(Object.fromEntries(FILTER_KEYS.map((key) => [key, searchParams.get(key) ?? ""])));
     const filtered = Object.keys(filters).length > 0;
     const list = useAdminResource(`candidates?${searchParams.toString()}`, (token, signal) => listCandidates(token, { page, pageSize: PAGE_SIZE, search, filters }, signal));
+    useDiscardRestoredOnBadRequest(list, remembered);
     const filterOptions = useAdminResource("candidate-filter-options", (token, signal) => getCandidateFilterOptions(token, signal));
     const [searchText, setSearchText] = useState(search ?? "");
     useEffect(() => setSearchText(search ?? ""), [search]);

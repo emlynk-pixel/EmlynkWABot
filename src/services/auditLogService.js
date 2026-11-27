@@ -1,4 +1,5 @@
-// Audit Logs (ADMIN only): GET /api/admin/audit-logs.
+// Audit Logs (ADMIN only): GET /api/admin/audit-logs, and its export
+// POST /api/admin/audit-logs/export (the same filters; bottom of this file).
 //
 // Read-only. audit_logs is append-only in the database (a trigger rejects
 // UPDATE and DELETE), and nothing here or anywhere in the API changes or
@@ -116,10 +117,12 @@ const contains = (value) => ({ contains: value, mode: "insensitive" });
 
 // The Prisma where for the filters. `candidatePassportIds`: the candidates
 // a name / unique ID search matched (null when there was no such search).
-function auditWhere(params, candidatePassportIds) {
+// `passportIdMatches`: the stored passport IDs equal to the passportId filter
+// ignoring case (null when there is no such filter), see filterLookups.
+function auditWhere(params, { candidatePassportIds = null, passportIdMatches = null } = {}) {
     const and = [];
     if (params.adminId) and.push({ adminId: params.adminId });
-    if (params.passportId) and.push({ passportId: { equals: params.passportId, mode: "insensitive" } });
+    if (passportIdMatches) and.push({ passportId: { in: passportIdMatches } });
     if (candidatePassportIds) and.push({ passportId: { in: candidatePassportIds } });
     if (params.action) and.push({ action: params.action });
     if (params.category) {
@@ -206,23 +209,58 @@ function toItem(row, candidates) {
     };
 }
 
-const candidateName = (candidate) => [candidate.firstName, candidate.otherName].filter((part) => part && part.trim()).join(" ") || null;
+const ENTRY_SELECT = Object.freeze({
+    auditId: true, adminId: true, action: true, passportId: true, previousStatus: true, newStatus: true,
+    reason: true, policeSubmittedDate: true, documentType: true, previousValue: true, newValue: true, createdDate: true,
+    admin: { select: { adminId: true, name: true, role: true } },
+});
 
-// { items, pagination, filters }. Four queries per page whatever its size:
-// the entries with their user, the count, the page's candidates, and the
-// users for the "Performed by" filter (plus one candidate lookup when a
-// candidate name / ID search is given).
-export async function listAuditLogs({ db, params }) {
-    let candidatePassportIds = null;
+// The candidates of these entries, by passport ID: one query.
+async function candidatesOf(db, rows) {
+    const passportIds = [...new Set(rows.map((r) => r.passportId).filter(Boolean))];
+    const candidateRows = passportIds.length
+        ? await db.candidate.findMany({
+            where: { passportId: { in: passportIds } },
+            select: { passportId: true, uniqueId: true, firstName: true, otherName: true },
+        })
+        : [];
+    return new Map(candidateRows.map((c) => [c.passportId, c]));
+}
+
+// The lookups the where needs before the entries are read:
+//   - candidatePassportIds: the candidates a name / unique ID search matches;
+//   - passportIdMatches: the passport IDs stored in audit_logs equal to the
+//     passportId filter ignoring case. The filter accepts only letters, digits
+//     and "-" (no LIKE wildcard), so this is the set the former
+//     `equals, mode: insensitive` (an ILIKE) matched, but found through the
+//     lower("passport_id") index; the entries are then read through the
+//     (passport_id, created_date) index.
+async function filterLookups(db, params) {
+    const lookups = { candidatePassportIds: null, passportIdMatches: null };
     if (params.candidate) {
         const matches = await db.candidate.findMany({
             where: clientSearchWhere(params.candidate),
             select: { passportId: true },
             take: MAX_CANDIDATE_MATCHES,
         });
-        candidatePassportIds = matches.map((m) => m.passportId);
+        lookups.candidatePassportIds = matches.map((m) => m.passportId);
     }
-    const where = auditWhere(params, candidatePassportIds);
+    if (params.passportId) {
+        const rows = await db.$queryRaw`SELECT DISTINCT "passport_id" FROM "audit_logs" WHERE lower("passport_id") = lower(${params.passportId})`;
+        lookups.passportIdMatches = rows.map((row) => row.passport_id);
+    }
+    return lookups;
+}
+
+const candidateName = (candidate) => [candidate.firstName, candidate.otherName].filter((part) => part && part.trim()).join(" ") || null;
+
+// { items, pagination, filters }. Four queries per page whatever its size:
+// the entries with their user, the count, the page's candidates, and the
+// users for the "Performed by" filter (plus one candidate lookup when a
+// candidate name / ID search is given, and one passport ID lookup when a
+// passport ID is given).
+export async function listAuditLogs({ db, params }) {
+    const where = auditWhere(params, await filterLookups(db, params));
     const skip = (params.page - 1) * params.pageSize;
 
     const [rows, total, users] = await Promise.all([
@@ -231,24 +269,13 @@ export async function listAuditLogs({ db, params }) {
             orderBy: [{ createdDate: "desc" }, { auditId: "desc" }],
             skip,
             take: params.pageSize,
-            select: {
-                auditId: true, adminId: true, action: true, passportId: true, previousStatus: true, newStatus: true,
-                reason: true, policeSubmittedDate: true, documentType: true, previousValue: true, newValue: true, createdDate: true,
-                admin: { select: { adminId: true, name: true, role: true } },
-            },
+            select: ENTRY_SELECT,
         }),
         db.auditLog.count({ where }),
         db.user.findMany({ select: { adminId: true, name: true, role: true, status: true }, orderBy: { name: "asc" } }),
     ]);
 
-    const passportIds = [...new Set(rows.map((r) => r.passportId).filter(Boolean))];
-    const candidateRows = passportIds.length
-        ? await db.candidate.findMany({
-            where: { passportId: { in: passportIds } },
-            select: { passportId: true, uniqueId: true, firstName: true, otherName: true },
-        })
-        : [];
-    const candidates = new Map(candidateRows.map((c) => [c.passportId, c]));
+    const candidates = await candidatesOf(db, rows);
 
     return {
         items: rows.map((row) => toItem(row, candidates)),
@@ -264,4 +291,93 @@ export async function listAuditLogs({ db, params }) {
             actions: AUDIT_ACTIONS,
         },
     };
+}
+
+// ---------------------------------------------------------------- export (ADMIN only)
+// POST /api/admin/audit-logs/export: every entry matching the list's filters
+// (no pagination), newest first, as an Excel workbook or a PDF
+// (auditLogExportWriters.js). The entries are read in keyset batches, each
+// batch its own short query (no long transaction, never all in memory), up to
+// a snapshot instant taken before counting, so entries written meanwhile
+// can't push the file past the count checked against the cap.
+
+export const AUDIT_EXPORT_FORMATS = Object.freeze(["xlsx", "pdf"]);
+export const MAX_AUDIT_EXPORT_ROWS = 50_000;
+export const AUDIT_EXPORT_BATCH_SIZE = 1000;
+export const NO_AUDIT_EXPORT_MATCHES_MESSAGE = "No audit log records match the selected filters";
+export const auditExportTooLargeMessage = (total, cap = MAX_AUDIT_EXPORT_ROWS) =>
+    `${total.toLocaleString("en-US")} audit log records match the selected filters, more than the ${cap.toLocaleString("en-US")} an export can hold. Narrow your filters (for example the date range) and try again.`;
+
+const EXPORT_FILTER_FIELDS = Object.freeze(["adminId", "passportId", "candidate", "action", "category", "startDate", "endDate", "search"]);
+const EXPORT_FIELD_LABELS = Object.freeze({
+    body: "The request", format: "Format", adminId: "Performed by", passportId: "Passport number", candidate: "Candidate",
+    action: "Action", category: "Category", startDate: "Start date", endDate: "End date", search: "Search",
+});
+
+// One user-facing sentence for the errors: never the submitted values (a
+// passport number included), only which field and what it must be.
+function exportErrorMessage(errors) {
+    if (errors.some((e) => e.field === "endDate" && /before the start date/.test(e.message))) {
+        return "The start date must be on or before the end date.";
+    }
+    const [first] = errors;
+    const more = errors.length > 1 ? ` (and ${errors.length - 1} more problem${errors.length > 2 ? "s" : ""})` : "";
+    return `${EXPORT_FIELD_LABELS[first.field] ?? first.field} ${first.message}${more}.`;
+}
+
+// JSON body: { params, format } or { errors, message }. The filters are the
+// list's (parseAuditLogQuery), an empty or null filter is no filter, and any
+// page / pageSize is ignored.
+export function parseAuditLogExportBody(body) {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+        const errors = [{ field: "body", message: "must be a JSON object" }];
+        return { errors, message: exportErrorMessage(errors) };
+    }
+    const errors = [];
+    const format = AUDIT_EXPORT_FORMATS.includes(body.format) ? body.format : undefined;
+    if (!format) errors.push({ field: "format", message: "must be xlsx or pdf" });
+    const query = {};
+    for (const field of EXPORT_FILTER_FIELDS) {
+        const value = body[field];
+        if (value === undefined || value === null || value === "") continue;
+        if (typeof value !== "string") errors.push({ field, message: "must be text" });
+        else query[field] = value;
+    }
+    const parsed = parseAuditLogQuery(query);
+    if (parsed.errors) errors.push(...parsed.errors);
+    if (errors.length) return { errors, message: exportErrorMessage(errors) };
+    const { page, pageSize, ...params } = parsed.params;
+    return { params, format };
+}
+
+// { where, total }: the filters' where, bounded by `asOf`, and how many
+// entries it matches.
+export async function prepareAuditLogExport({ db, params, asOf = new Date() }) {
+    const where = { AND: [auditWhere(params, await filterLookups(db, params)), { createdDate: { lte: asOf } }] };
+    const total = await db.auditLog.count({ where });
+    return { where, total };
+}
+
+// The entries of `where` as the list shows them (toItem: sensitive keys
+// stripped), newest first, in keyset batches of (createdDate, auditId).
+export async function* auditLogExportItems({ db, where, limit = MAX_AUDIT_EXPORT_ROWS, batchSize = AUDIT_EXPORT_BATCH_SIZE }) {
+    let cursor = null;
+    let sent = 0;
+    while (sent < limit) {
+        const after = cursor
+            ? [{ OR: [{ createdDate: { lt: cursor.createdDate } }, { createdDate: cursor.createdDate, auditId: { lt: cursor.auditId } }] }]
+            : [];
+        const rows = await db.auditLog.findMany({
+            where: { AND: [where, ...after] },
+            orderBy: [{ createdDate: "desc" }, { auditId: "desc" }],
+            take: Math.min(batchSize, limit - sent),
+            select: ENTRY_SELECT,
+        });
+        if (!rows.length) return;
+        const candidates = await candidatesOf(db, rows);
+        for (const row of rows) yield toItem(row, candidates);
+        sent += rows.length;
+        if (rows.length < batchSize) return;
+        cursor = rows.at(-1);
+    }
 }

@@ -78,6 +78,9 @@ function createFakeDashboardDb({ admins, documents = [docRow()], user = null, pe
         auditLog: {
             findMany: async (args) => record("auditLog.findMany", args, []), // police slip date changes
         },
+        candidateCallLog: {
+            count: async (args) => record("candidateCallLog.count", args, 5), // the Overview's calls taken today
+        },
     };
 }
 
@@ -190,61 +193,50 @@ describe("GET /api/admin/overview", () => {
     let http;
     let db;
     before(async () => {
-        db = createFakeDashboardDb({
-            admins: ADMINS,
-            documents: [docRow(), docRow({ documentId: "doc-2", documentType: "MEDICAL", verificationStatus: "REVIEW_REQUIRED", ocrConfidence: null, fileSize: null })],
-            pending: [{ temporaryId: "tmp-1", documentType: "POLICE_SLIP", processingStatus: "MANUAL_REVIEW", createdDate: new Date("2026-09-25T03:00:00Z"), user: CLIENT }],
-        });
+        db = createFakeDashboardDb({ admins: ADMINS });
         http = await startWith(db);
     });
     after(() => http.server.close());
 
-    test("returns KPIs, summaries, recent documents and the review queue", async () => {
+    test("an ADMIN gets the system view: counts only, in the documented shape", async () => {
         const { status, body } = await http.get("/api/admin/overview");
         assert.equal(status, 200);
         assert.match(body.businessDate, /^\d{4}-\d{2}-\d{2}$/);
-        assert.deepEqual(body.kpis, { totalClients: 12, totalDocuments: 2, pendingReview: 4 + 3, receivedToday: 9 });
-        assert.deepEqual(body.submissionsByStatus, { VERIFIED: 6, MANUAL_REVIEW: 3 });
-        assert.deepEqual(body.submissionsByType, { PASSPORT: 5, MEDICAL: 2 });
-        assert.deepEqual(body.reviewQueue.pendingByStatus, { MANUAL_REVIEW: 3, CONFLICT: 1 });
-        assert.equal(body.reviewQueue.total, 7);
-        assert.deepEqual(body.reviewQueue.items[0], {
-            temporaryId: "tmp-1", documentType: "POLICE_SLIP", processingStatus: "MANUAL_REVIEW",
-            receivedDate: "2026-09-25T03:00:00.000Z", client: { passportId: "N1234567", uniqueId: "0001", name: "KAMAL NIMAL PERERA" },
+        assert.deepEqual(body, {
+            businessDate: body.businessDate,
+            view: "system",
+            canChooseView: false,
+            overview: {
+                activeAllocated: 12,
+                jobAllocated: 12,
+                policeReportsYetToReceive: { total: 24, byVariant: { ROMANIA: 12, SL_VERIFIED: 12 } },
+                agreementsYetToReceive: 12,
+                detailsNotCompleted: 12,
+                newlyAllocated: 12,
+                visaSubmissionCompleted: 12,
+            },
+            daily: { formSubmissions: 12, newlyAllocated: 12, callsTaken: 5 },
         });
+        assert.ok(!JSON.stringify(body).includes("whatsapp"), "no sender numbers in the overview");
     });
 
-    test("documents are serialized safely: numbers, ISO dates, no paths or checksums", async () => {
-        const { body } = await http.get("/api/admin/overview");
-        const [first, second] = body.recentDocuments;
-        assert.equal(first.ocrConfidence, 97.5);
-        assert.equal(first.fileSize, 123456);
-        assert.equal(first.receivedDate, "2026-09-24T07:05:03.000Z");
-        assert.equal(second.ocrConfidence, null);
-        assert.equal(second.fileSize, null);
-        for (const doc of body.recentDocuments) {
-            assert.equal(doc.storagePath, undefined);
-            assert.equal(doc.fileSha256, undefined);
-        }
-        const serialized = JSON.stringify(body);
-        assert.ok(!serialized.includes("whatsapp"), "no sender numbers in the overview");
-    });
-
-    test("'received today' counts submissions since midnight in Sri Lanka", async () => {
+    test("'today' is the business day in Sri Lanka (form submissions, allocations, calls)", async () => {
+        const before = db.calls.length;
         await http.get("/api/admin/overview");
-        const todayCount = db.calls.find((c) => c.method === "temporaryData.count" && c.args?.where?.createdDate);
-        const { start } = businessDayRange(businessDateOf(new Date()));
-        assert.equal(todayCount.args.where.createdDate.gte.toISOString(), start.toISOString());
+        const { start, end } = businessDayRange(businessDateOf(new Date()));
+        const calls = db.calls.slice(before);
+        const callCount = calls.find((c) => c.method === "candidateCallLog.count");
+        assert.deepEqual(callCount.args.where, { createdDate: { gte: start, lt: end } }, "system view: every call today");
+        const formCount = calls.find((c) => c.method === "candidate.count" && c.args.where.formResponse);
+        assert.equal(formCount.args.where.formResponse.is.submittedAt.gte.toISOString(), start.toISOString());
     });
 
-    test("uses a fixed number of queries (no per-row lookups)", async () => {
+    test("uses a fixed number of count queries (no lists, no per-row lookups)", async () => {
         const before = db.calls.length;
         await http.get("/api/admin/overview");
         const dashboardCalls = db.calls.slice(before).filter((c) => !c.method.startsWith("user."));
-        assert.equal(dashboardCalls.length, 17); // 10 + 3 police due counts + 3 client completeness + 1 failed submissions (H3)
-        const recent = dashboardCalls.find((c) => c.method === "document.findMany");
-        assert.ok(recent.args.select.user, "client joined in the same query");
-        assert.equal(recent.args.take, 8);
+        assert.equal(dashboardCalls.length, 11);
+        assert.ok(dashboardCalls.every((c) => c.method.endsWith(".count")));
     });
 });
 

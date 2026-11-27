@@ -38,10 +38,9 @@ import { JobTypesSettings } from "./pages/JobTypesSettings";
 import { SetupPasswordPage } from "./pages/SetupPasswordPage";
 import { WorkAllocationPage } from "./pages/WorkAllocationPage";
 
-// The landing page: the Overview, or for a role without dashboard access (which
-// the API would otherwise refuse) its own first area (roles.ts landingPath):
-// Jobs for JOB_HANDLER, Add Candidate for REGISTRATION_DESK, Candidates for
-// TEAM_LEAD and ANALYST.
+// The landing page: the Overview (ADMIN, TEAM_LEAD, ANALYST), or for a role without
+// Overview access (which the API would otherwise refuse) its own first area
+// (roles.ts landingPath): Jobs for JOB_HANDLER, Add Candidate for REGISTRATION_DESK.
 function HomePage() {
     const { user } = useAuth();
     const to = landingPath(user);
@@ -92,8 +91,8 @@ export function AppRoutes() {
                     <Route path="documents" element={<DocumentsPage />} />
                     <Route path="review" element={<ReviewQueuePage />} />
                     <Route path="review/:id" element={<ReviewDetailPage />} />
-                    {/* No longer in the sidebar (Candidates replaces it); kept for the
-                        Overview completeness links and the client-details breadcrumb. */}
+                    {/* No longer in the sidebar (Candidates replaces it); kept for links
+                        from other pages and the client-details breadcrumb. */}
                     <Route path="clients" element={<ClientsPage />} />
                     <Route path="clients/:passportId" element={<ClientDetailsPage />} />
                     <Route path="missing-documents" element={<MissingDocumentsPage />} />

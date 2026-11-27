@@ -210,7 +210,7 @@ describe("M4 Policy B: admin review", () => {
         assert.deepEqual([item.reviewId, item.kind, item.documentType, item.reviewReason, item.client.passportId],
             [`pending-${T}`, "PENDING", "MEDICAL", "EXISTING_VERIFIED_DOCUMENT", "N1234567"]);
         assert.equal((await call("GET", "/review?reviewReason=EXISTING_VERIFIED_DOCUMENT")).body.items.length, 1);
-        assert.equal((await call("GET", "/overview")).body.kpis.pendingReview, 1);
+        assert.equal(queue.body.summary.total, 1);
     });
 
     // Item 9.

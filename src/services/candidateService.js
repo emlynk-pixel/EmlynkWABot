@@ -33,8 +33,10 @@ import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./client
 import { clientSearchWhere } from "./adminClientService.js";
 import { findUsersByWhatsappNumber } from "./userLookupService.js";
 import { openFollowUp } from "./callLogFollowUpService.js";
+import { notifyNeedAttention } from "./notificationEvents.js";
 import { candidateJobAssignments, displayJob } from "./jobAssignmentReader.js";
 import { deriveCandidateWorkflowStatus } from "./candidateWorkflowStatus.js";
+import { ADDITIONAL_DETAILS_COMPLETION_SELECT, additionalDetailsComplete } from "./additionalDetailsCompletion.js";
 import { candidateFilterWhere, derivedFilterMatch, needsDerivedFilter, parseCandidateFilters, queryValue, WORK_ALLOCATION_VIEWS, workAllocationViewWhere } from "./candidateListFilters.js";
 import { andWhere } from "./candidateAccess.js";
 import { normalizeSearchText, searchTokens } from "../utils/searchText.js";
@@ -813,34 +815,49 @@ export const WORKFLOW_STATUS_SELECT = Object.freeze({
     },
     jobAssignments: { where: { isActive: true }, select: { jobId: true }, take: 1 },
     verification: { select: { detailsVerifiedAt: true, documentsVerifiedAt: true } },
+    additionalDetails: { select: ADDITIONAL_DETAILS_COMPLETION_SELECT },
 });
 
 const stageCompleted = (user, stage) => Boolean(user.stages.find((row) => row.stage === stage)?.completed);
 
-function workflowStatusOf(user, formSubmitted, missing = automaticStageMissing(user, user.documents)) {
-    return deriveCandidateWorkflowStatus({
+// The derivation's inputs (candidateWorkflowStatus.js) of a row read with WORKFLOW_STATUS_SELECT.
+export function workflowSignalsOf(user, formSubmitted, missing = automaticStageMissing(user, user.documents)) {
+    return {
         // A recorded final outcome (Visa Not Going, Cancelled, Rejected) outranks everything.
         outcome: user.outcome ?? null,
         testResult: user.stages.find((row) => row.stage === "TEST_DETAILS")?.testResult ?? null,
         hasCurrentJob: (user.jobAssignments?.length ?? 0) > 0,
+        candidateDetailsCompleted: missing.CANDIDATE_DETAILS.length === 0,
         formSubmitted,
-        // Explicit manual verifications (candidateVerificationService.js), never inferred from data.
+        additionalDetailsCompleted: additionalDetailsComplete(user.additionalDetails),
+        // The manual verifications (candidateVerificationService.js). No longer read by the Status; kept for
+        // scripts/auditWorkflowStatusTransition.mjs, which compares with the previous ladder.
         detailsVerified: Boolean(user.verification?.detailsVerifiedAt),
         documentsVerified: Boolean(user.verification?.documentsVerifiedAt),
-        // Document submission complete (every required document on record): the Visa-document point.
         documentSubmissionCompleted: missing.DOCUMENT_SUBMISSION.length === 0,
         visaSubmitted: stageCompleted(user, "VISA_SUBMISSION"),
         visaApproved: stageCompleted(user, "VISA_APPROVAL"),
         // Recorded as Departed (candidate.departed_at: the import's "Departed" or an Admin's Mark departed).
         departed: Boolean(user.departedAt),
-    });
+    };
+}
+
+function workflowStatusOf(user, formSubmitted, missing) {
+    return deriveCandidateWorkflowStatus(workflowSignalsOf(user, formSubmitted, missing));
+}
+
+// The workflow signals of rows read with WORKFLOW_STATUS_SELECT. Map passportId -> signals.
+export async function candidateWorkflowSignals(db, users) {
+    const submitted = await submittedFormPassportIds(db, users.map((user) => user.passportId));
+    return new Map(users.map((user) => [user.passportId, workflowSignalsOf(user, submitted.has(user.passportId))]));
 }
 
 // The same workflow Status the Candidates list shows, for rows read with WORKFLOW_STATUS_SELECT
-// (Job details' assigned candidates). Map passportId -> { code, label }.
+// (Job details' assigned candidates). Map passportId -> { code, label } (plus group / subStatus while
+// step 4 is partial).
 export async function candidateWorkflowStatuses(db, users) {
-    const submitted = await submittedFormPassportIds(db, users.map((user) => user.passportId));
-    return new Map(users.map((user) => [user.passportId, workflowStatusOf(user, submitted.has(user.passportId))]));
+    const signals = await candidateWorkflowSignals(db, users);
+    return new Map([...signals].map(([passportId, values]) => [passportId, deriveCandidateWorkflowStatus(values)]));
 }
 
 const isoOrNull = (value) => (value ? new Date(value).toISOString() : null);
@@ -1896,10 +1913,12 @@ export async function addCallLog({ db, admin, passportId, values }) {
     };
     if (values.needsAttention) {
         // One call, and its follow-up with it, or neither.
-        await db.$transaction(async (tx) => {
+        const followUp = await db.$transaction(async (tx) => {
             await tx.candidateCallLog.create({ data });
-            await openFollowUp(tx, { actor: admin, passportId, callLogId });
+            return openFollowUp(tx, { actor: admin, passportId, callLogId });
         });
+        // After the commit, best-effort (E2).
+        await notifyNeedAttention(db, { followUpId: followUp?.followUpId, passportId, actorId: admin.adminId });
     } else {
         await db.candidateCallLog.create({ data });
     }

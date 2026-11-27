@@ -22,11 +22,31 @@ function statusFor(error) {
 // Express recognises an error handler by its four parameters, so `next`
 // must stay in the signature even though it's only used when a response
 // has already started.
-export function errorHandler(error, req, res, next) {
-    if (res.headersSent) {
-        return next(error);
-    }
+// onServerError(error): told about every 500 after the answer is sent (the
+// Owner's System Alert, notificationEvents.js createSystemAlertReporter). It
+// must not throw or block; it is guarded anyway, so it can never reach this
+// handler again or change the response.
+export function createErrorHandler({ onServerError = null } = {}) {
+    return function errorHandler(error, req, res, next) {
+        if (res.headersSent) {
+            return next(error);
+        }
+        const answered = answer(error, req, res);
+        if (onServerError && res.statusCode === 500) {
+            try {
+                onServerError(error);
+            } catch {
+                // Never surfaces: the response has been sent.
+            }
+        }
+        return answered;
+    };
+}
 
+// Without a System Alert reporter (the tests, and any app built without one).
+export const errorHandler = createErrorHandler();
+
+function answer(error, req, res) {
     const status = statusFor(error);
 
     // Safe metadata only: no message, stack, body or query string (the

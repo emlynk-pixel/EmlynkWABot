@@ -34,6 +34,8 @@ export function LoginPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [showPassword, setShowPassword] = useState(false);
+    // Unticked: the session ends when the browser is closed (auth/supabaseClient.ts).
+    const [remember, setRemember] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [fieldErrors, setFieldErrors] = useState<LoginErrors>({});
@@ -76,7 +78,7 @@ export function LoginPage() {
 
         setSubmitting(true);
         try {
-            await signIn(email.trim(), password);
+            await signIn(email.trim(), password, remember);
             navigate(returnPath(location.state), { replace: true });
         } catch (caught) {
             setError(caught instanceof ApiError ? caught.message : "Something went wrong. Please try again.");
@@ -182,6 +184,18 @@ export function LoginPage() {
                                 </button>
                             </div>
                         </FormField>
+
+                        <div className="flex items-center gap-2">
+                            <input
+                                id="remember-me"
+                                name="remember"
+                                type="checkbox"
+                                checked={remember}
+                                onChange={(event) => setRemember(event.target.checked)}
+                                className="size-4 shrink-0 rounded accent-primary focus:outline-none focus-visible:shadow-focus"
+                            />
+                            <label htmlFor="remember-me" className="text-body-sm text-ink">Remember me</label>
+                        </div>
 
                         <button
                             type="submit"

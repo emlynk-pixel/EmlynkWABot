@@ -16,6 +16,8 @@ afterEach(() => {
     cleanup();
     window.sessionStorage.clear();
     window.localStorage.clear();
+    // The "Remember me" browser-session marker (auth/supabaseClient.ts): every test starts in a fresh browser.
+    document.cookie = "emlynk.auth.alive=; Max-Age=0; path=/";
     fakeAuth.reset();
     setApiAccessToken(null);
     window.location.hash = "";

@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { AGENT_COUNTRY_NOT_SET, createAgent, getAgent, listAgents, setAgentStatus, updateAgent, type AgentDetails, type AgentInput, type AgentListItem, type AgentRecord, type EntityStatus } from "../api/agents";
 import { getClientOptions } from "../api/clientManagement";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { canManageMasterData, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../components/Dialog";
@@ -24,11 +25,14 @@ export function AgentsPage() {
     return <AgentsView />;
 }
 
+// The filters remembered for the next visit (hooks/useRememberedSearchParams.ts).
+const REMEMBERED_KEYS = ["search", "country", "status"];
+
 type Dialog = { kind: "create" } | { kind: "edit"; agent: AgentRecord } | { kind: "status"; agent: AgentRecord } | null;
 
 function AgentsView() {
     const { token } = useAuth();
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("agents", REMEMBERED_KEYS);
     const search = searchParams.get("search") || undefined;
     const country = searchParams.get("country") || undefined;
     const statusParam = searchParams.get("status");
@@ -39,6 +43,7 @@ function AgentsView() {
     useEffect(() => setSearchText(search ?? ""), [search]);
     const [dialog, setDialog] = useState<Dialog>(null);
     const list = useAdminResource(`agents?${searchParams.toString()}`, (t, signal) => listAgents(t, { search, country, status, page }, signal));
+    useDiscardRestoredOnBadRequest(list, remembered);
 
     const go = (changes: Record<string, string | null>) => {
         const next = new URLSearchParams(searchParams);

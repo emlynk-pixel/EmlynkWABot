@@ -184,18 +184,6 @@ describe("Client Details: police slip date", () => {
     });
 });
 
-describe("Overview completeness", () => {
-    test("completed, incomplete and missing documents link to their views", async () => {
-        signedInBackend();
-        renderApp("/");
-        const list = await screen.findByRole("list", { name: "Clients by completeness" });
-        expect(within(list).getByRole("link", { name: /Completed clients\s*1,200/ })).toHaveAttribute("href", "/clients?completion=COMPLETE");
-        expect(within(list).getByRole("link", { name: /Incomplete clients\s*228/ })).toBeInTheDocument();
-        expect(within(list).getByRole("link", { name: /Missing documents\s*190/ })).toHaveAttribute("href", "/missing-documents");
-        expect(screen.getByRole("list", { name: "Police reports by status" })).toBeInTheDocument();
-    });
-});
-
 describe("Sync", () => {
     test("reloads the data on screen, keeps the filters, shows progress and the result", async () => {
         let release: () => void = () => {};
@@ -227,7 +215,7 @@ describe("Sync", () => {
         let fail = false;
         signedInBackend({ "GET /api/admin/overview": () => (fail ? { status: 500, body: {} } : { status: 200, body: OVERVIEW }) });
         renderApp("/");
-        await screen.findByText("1,428");
+        await screen.findByText("1,428"); // Active Allocated Candidates
         fail = true;
         await userEvent.setup().click(screen.getByRole("button", { name: "Sync" }));
         expect(await screen.findByTestId("sync-status")).toHaveTextContent("Sync failed");

@@ -9,6 +9,7 @@ import { EditNameDialog } from "../components/EditNameDialog";
 import { ApiError } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { inputClass } from "../components/ui";
+import { EmptyState, ErrorState, LoadingState } from "../components/States";
 
 const dateFormat = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Colombo",
@@ -148,22 +149,22 @@ export function AdminRolesPage({ embedded = false }: { embedded?: boolean } = {}
                             <tbody className="divide-y divide-border">
                                 {fetchError && (
                                     <tr>
-                                        <td colSpan={4} className="px-4 py-8 text-center text-critical">
-                                            {fetchError}
+                                        <td colSpan={4}>
+                                            <ErrorState message={fetchError} onRetry={() => { setLoading(true); void loadAdmins(); }} />
                                         </td>
                                     </tr>
                                 )}
                                 {loading && (
                                     <tr>
-                                        <td colSpan={4} className="px-4 py-8 text-center text-ink-subtle">
-                                            Loading accounts...
+                                        <td colSpan={4}>
+                                            <LoadingState label="Loading accounts…" />
                                         </td>
                                     </tr>
                                 )}
                                 {!loading && !fetchError && admins.length === 0 && (
                                     <tr>
-                                        <td colSpan={4} className="px-4 py-8 text-center text-ink-subtle">
-                                            No accounts found.
+                                        <td colSpan={4} className="p-4">
+                                            <EmptyState title="No accounts found" />
                                         </td>
                                     </tr>
                                 )}

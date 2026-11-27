@@ -5,7 +5,7 @@ import { CANDIDATE_STAGES, type CandidateDetails } from "../api/candidates";
 import type { FollowUpList } from "../api/followUps";
 import {
     ALL_ROLES, CANDIDATE_LIST_ROLES, FOLLOW_UP_ROLES, FOLLOW_UP_VIEW_ROLES, canListCandidates, canManageAllocations, canManageCandidates, canManageMasterData, canRegisterCandidates,
-    canViewCandidates, canViewDailyReport, canViewDashboard, canViewFollowUps, canViewJobs, canWorkFollowUps, hasRole, isAdmin, landingPath, notificationSource,
+    canViewCandidates, canViewDailyReport, canViewDashboard, canViewFollowUps, canViewOverview, canViewJobs, canWorkFollowUps, hasRole, isAdmin, landingPath,
 } from "../auth/roles";
 import { NAV_ITEMS } from "../layout/navigation";
 import { RENDER_STEP, renderApp, signedInBackend, userWithRole, type FetchRoutes, expectRedirectedHome } from "./helpers";
@@ -55,6 +55,8 @@ function backend(role: string, routes: FetchRoutes = {}) {
         "GET /auth/me": { status: 200, body: { user: userWithRole(role) } },
         "GET /api/admin/candidates": { status: 200, body: { items: [], pagination: PAGE, filters: { search: null } } },
         "GET /api/admin/follow-ups": { status: 200, body: OPEN_FOLLOW_UPS },
+        "GET /api/admin/notifications/unread-count": { status: 200, body: { unreadCount: 1 } },
+        "GET /api/admin/notifications": { status: 200, body: { items: [{ id: "n-1", type: "GENERIC", title: "Server notice", message: "From the server feed", createdAt: "2026-10-07T05:00:00.000Z", readAt: null }], unreadCount: 1, nextCursor: null } },
         "GET /api/admin/candidates/N0000002": { status: 200, body: DETAILS },
         "GET /api/admin/candidates/N0000002/call-logs": { status: 200, body: CALL_LOGS },
         ...routes,
@@ -76,23 +78,17 @@ describe("roles.ts: the shared permission mapping", () => {
         expect([FOLLOW_UP_VIEW_ROLES, FOLLOW_UP_ROLES]).toEqual([["ADMIN", "TEAM_LEAD", "ANALYST"], ["ADMIN", "TEAM_LEAD", "ANALYST"]]);
     });
 
-    test("the bell's source: the review queue for ADMIN, Need Attention for TEAM_LEAD and ANALYST, an empty bell otherwise", () => {
-        const source = (role: string) => notificationSource(userWithRole(role));
-        expect(["OWNER", "ADMIN"].map(source)).toEqual(["review", "review"]);
-        expect(["TEAM_LEAD", "ANALYST"].map(source)).toEqual(["follow-ups", "follow-ups"]);
-        expect(["REGISTRATION_DESK", "JOB_HANDLER", "MANAGER"].map(source)).toEqual(["none", "none", "none"]);
-    });
-
     test("landing pages (also where a page a role can't open takes it)", () => {
         const land = (role: string) => landingPath(userWithRole(role));
-        expect([land("OWNER"), land("ADMIN")]).toEqual([null, null]);
-        expect([land("TEAM_LEAD"), land("ANALYST"), land("REGISTRATION_DESK"), land("JOB_HANDLER")]).toEqual(["/candidates", "/candidates", "/candidates/new", "/jobs"]);
+        // The Overview roles (ADMIN, TEAM_LEAD, ANALYST) land on the Overview (null); the others are unchanged.
+        expect([land("OWNER"), land("ADMIN"), land("TEAM_LEAD"), land("ANALYST")]).toEqual([null, null, null, null]);
+        expect([land("REGISTRATION_DESK"), land("JOB_HANDLER")]).toEqual(["/candidates/new", "/jobs"]);
     });
 
     test("every sidebar entry opens to exactly the roles its page guard admits (no link to an Access Restricted page, no page without its link)", () => {
         // The page guard of each sidebar entry: App.tsx AllowRoles, or the page's own check.
         const guards: Record<string, (user: { role: string }) => boolean> = {
-            "/": canViewDashboard, "/documents": canViewDashboard, "/missing-documents": canViewDashboard, "/review": canViewDashboard, "/police": canViewDashboard,
+            "/": canViewOverview, "/documents": canViewDashboard, "/missing-documents": canViewDashboard, "/review": canViewDashboard, "/police": canViewDashboard,
             "/candidates": canListCandidates, "/candidates/new": canRegisterCandidates, "/follow-ups": canViewFollowUps,
             "/work-allocation": canManageAllocations, "/jobs": canViewJobs, "/agents": canManageMasterData, "/client-management": canManageMasterData,
             "/reports/daily": canViewDailyReport, "/audit-logs": isAdmin, "/settings": isAdmin,
@@ -111,56 +107,53 @@ describe("roles.ts: the shared permission mapping", () => {
 
     test("every sidebar entry names its roles explicitly (never TEAM_LEAD through ADMIN)", () => {
         const visible = (role: string) => NAV_ITEMS.filter((item) => (item.roles as readonly string[]).includes(role)).map((item) => item.label);
-        expect(visible("TEAM_LEAD")).toEqual(["Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Daily Report"]);
+        expect(visible("TEAM_LEAD")).toEqual(["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Daily Report"]);
         expect(visible("REGISTRATION_DESK")).toEqual(["Add Candidate"]);
         expect(visible("JOB_HANDLER")).toEqual(["Candidates", "Jobs", "Agents", "Client Management"]);
     });
 });
 
-describe("TEAM_LEAD: the notification bell without the Review Queue", () => {
-    test("the bell reads open Need Attention follow-ups; the Review Queue is never requested", { timeout: 20_000 }, async () => {
+describe("TEAM_LEAD: the notification bell", () => {
+    test("the bell reads the server notification feed, with no navigation; no Review Queue or follow-up request", { timeout: 20_000 }, async () => {
         const { calls } = backend("TEAM_LEAD");
         renderApp("/candidates");
         const bell = await screen.findByRole("button", { name: "Notifications (1 unread)" }, RENDER_STEP);
-        expect(requested(calls, /^\/api\/admin\/follow-ups\?status=OPEN$/)).toBe(true);
+        expect(requested(calls, /^\/api\/admin\/notifications\/unread-count$/)).toBe(true);
         const user = userEvent.setup();
         await user.click(bell);
-        expect(screen.getByText("Needs attention")).toBeInTheDocument();
-        expect(screen.getByText("SAMAN SILVA: Medical not uploaded")).toBeInTheDocument();
-        const link = screen.getByRole("link", { name: "Open Need Attention" });
-        // Only ever a page the Team Lead can open.
-        expect(link).toHaveAttribute("href", "/follow-ups");
-        expect(screen.queryByRole("link", { name: "Review document" })).not.toBeInTheDocument();
-        await user.click(link);
-        expect(await screen.findByRole("heading", { name: "Need Attention", level: 1 }, RENDER_STEP)).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
+        expect(await screen.findByText("Server notice")).toBeInTheDocument();
+        expect(screen.getByText("From the server feed")).toBeInTheDocument();
+        expect(screen.queryByRole("link", { name: "Open Need Attention" })).not.toBeInTheDocument();
         expect(requested(calls, /\/api\/admin\/(review|overview|users|settings|audit-logs)/)).toBe(false);
     });
 
-    test("forbidden pages are blocked by URL, with no request for their data", { timeout: 60_000 }, async () => {
-        for (const path of ["/", "/review", "/review/pending-1", "/documents", "/missing-documents", "/police", "/clients", "/settings", "/audit-logs"]) {
+    test("lands on the Overview, its own view (\"My Overview\")", { timeout: 20_000 }, async () => {
+        const { calls } = backend("TEAM_LEAD");
+        renderApp("/");
+        await expectRedirectedHome("TEAM_LEAD");
+        expect(navLinks()[0]).toBe("Overview");
+        await waitFor(() => expect(requested(calls, /^\/api\/admin\/overview\?view=mine$/)).toBe(true), RENDER_STEP);
+    });
+
+    test("forbidden pages are blocked by URL (to the Overview), with no request for their data", { timeout: 60_000 }, async () => {
+        for (const path of ["/review", "/review/pending-1", "/documents", "/missing-documents", "/police", "/clients", "/settings", "/audit-logs"]) {
             const { calls } = backend("TEAM_LEAD");
             const { unmount } = renderApp(path);
-            if (path === "/") {
-                // The landing page is Candidates, not the Overview.
-                await waitFor(() => expect(requested(calls, /^\/api\/admin\/candidates\?/)).toBe(true), RENDER_STEP);
-            } else {
-                await expectRedirectedHome("TEAM_LEAD");
-            }
-            expect(requested(calls, /\/api\/admin\/(review|overview|documents|police|clients|users|settings|audit-logs)/), path).toBe(false);
+            await expectRedirectedHome("TEAM_LEAD");
+            expect(requested(calls, /\/api\/admin\/(review|documents|police|clients|users|settings|audit-logs)/), path).toBe(false);
             unmount();
         }
     });
 });
 
 describe("REGISTRATION_DESK: the registration workflow only", () => {
-    test("the sidebar is Add Candidate only; it lands on Add Candidate; an empty bell; the form links nowhere else", { timeout: 20_000 }, async () => {
+    test("the sidebar is Add Candidate only; it lands on Add Candidate; the bell; the form links nowhere else", { timeout: 20_000 }, async () => {
         const { calls } = backend("REGISTRATION_DESK");
         renderApp("/");
         expect(await screen.findByRole("heading", { name: "Add candidate", level: 1 }, RENDER_STEP)).toBeInTheDocument();
         expect(navLinks()).toEqual(["Add Candidate"]);
-        await userEvent.setup().click(screen.getByRole("button", { name: "Notifications" }));
-        expect(await screen.findByText("You have no notifications.")).toBeInTheDocument();
+        await userEvent.setup().click(await screen.findByRole("button", { name: /^Notifications/ }));
+        expect(await screen.findByText("Server notice")).toBeInTheDocument();
         expect(within(screen.getByRole("main")).queryByRole("link", { name: "Candidates" })).not.toBeInTheDocument();
         expect(requested(calls, /\/api\/admin\/(candidates\?|candidates$|review|overview|follow-ups)/)).toBe(false);
     });
@@ -190,7 +183,7 @@ describe("JOB_HANDLER: views candidates, changes none", () => {
         const dialog = await screen.findByRole("dialog");
         expect(await within(dialog).findByText("Asked for the medical")).toBeInTheDocument();
         for (const name of [/Add call/, /No Answer/, /Need Attention/, /Mark as needs attention/]) expect(within(dialog).queryByRole("button", { name })).not.toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /^Notifications/ })).toBeInTheDocument();
     });
 
     test("Need Attention and the other non-job pages stay blocked", { timeout: 60_000 }, async () => {
@@ -205,22 +198,25 @@ describe("JOB_HANDLER: views candidates, changes none", () => {
 });
 
 describe("ANALYST", () => {
-    test("Candidates and Need Attention only; lands on Candidates; the bell reads its own Need Attention, never the Review Queue", { timeout: 20_000 }, async () => {
+    test("Overview, Candidates and Need Attention only; lands on the Overview; the bell reads the server notification feed, never the Review Queue", { timeout: 20_000 }, async () => {
         const { calls } = backend("ANALYST");
         renderApp("/");
         await expectRedirectedHome("ANALYST");
-        expect(navLinks()).toEqual(["Candidates", "Need Attention"]);
+        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention"]);
+        // An Analyst never asks for a view (the server serves its own, "mine").
+        await waitFor(() => expect(requested(calls, /^\/api\/admin\/overview$/)).toBe(true), RENDER_STEP);
+        expect(requested(calls, /^\/api\/admin\/overview\?/)).toBe(false);
         expect(await screen.findByRole("button", { name: "Notifications (1 unread)" }, RENDER_STEP)).toBeInTheDocument();
-        expect(requested(calls, /^\/api\/admin\/follow-ups\?status=OPEN$/)).toBe(true);
-        expect(requested(calls, /\/api\/admin\/(review|overview|reports|jobs|documents|police)/)).toBe(false);
+        expect(requested(calls, /^\/api\/admin\/notifications\/unread-count$/)).toBe(true);
+        expect(requested(calls, /\/api\/admin\/(review|reports|jobs|documents|police)/)).toBe(false);
     });
 
-    test("every other page takes it to Candidates, with no warning and no request for the page's data", { timeout: 60_000 }, async () => {
+    test("every other page takes it to the Overview, with no warning and no request for the page's data", { timeout: 60_000 }, async () => {
         for (const path of ["/review", "/review/pending-1", "/documents", "/missing-documents", "/police", "/clients", "/clients/N0000002", "/reports/daily", "/jobs", "/jobs/x", "/work-allocation", "/agents", "/client-management", "/candidates/new", "/settings", "/audit-logs"]) {
             const { calls } = backend("ANALYST");
             const { unmount } = renderApp(path);
             await expectRedirectedHome("ANALYST");
-            expect(requested(calls, /\/api\/admin\/(review|overview|reports|jobs|documents|police|clients|work-allocation|agents|client-management|settings|audit-logs|users)/), path).toBe(false);
+            expect(requested(calls, /\/api\/admin\/(review|reports|jobs|documents|police|clients|work-allocation|agents|client-management|settings|audit-logs|users)/), path).toBe(false);
             unmount();
         }
     });

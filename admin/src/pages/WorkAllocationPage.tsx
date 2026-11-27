@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { ApiError } from "../api/client";
-import { cleanFilters, FILTER_KEYS, getCandidateFilterOptions, listOf, type CandidateFilters, type FilterKey } from "../api/candidateFilters";
+import { cleanFilters, FILTER_KEYS, getCandidateFilterOptions, listOf, validFilters, type CandidateFilters, type FilterKey } from "../api/candidateFilters";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import {
     assignCandidates,
     autoAllocateCandidates,
@@ -46,6 +47,20 @@ const FILTER_PARAMS = FILTER_KEYS.filter((key) => key !== "allocation").map((key
 const HIDDEN_UNALLOCATED: FilterKey[] = ["allocation", "analystId"];
 const HIDDEN_ALLOCATED: FilterKey[] = ["allocation"];
 
+// What is remembered for the next visit (hooks/useRememberedSearchParams.ts): the view too, as it is
+// this page's allocation filter (and the Analyst filter only applies with it).
+const REMEMBERED_KEYS = ["view", "search", ...FILTER_PARAMS.map(([, param]) => param)];
+const validRemembered = (params: URLSearchParams) => {
+    const valid = validFilters(Object.fromEntries(FILTER_PARAMS.map(([key, param]) => [key, params.get(param) ?? ""])));
+    const next = new URLSearchParams();
+    for (const [key, param] of FILTER_PARAMS) if (valid[key]) next.set(param, valid[key]!);
+    const view = params.get("view");
+    if (view === "allocated" || view === "completed") next.set("view", view);
+    const search = params.get("search")?.trim();
+    if (search) next.set("search", search);
+    return next;
+};
+
 // An ADMIN or a TEAM_LEAD may allocate to Analysts and to Team Leads (a Team Lead included themselves;
 // the server lists them). They are shown after the Analysts, each marked "Team Lead".
 const TEAM_LEAD = "TEAM_LEAD";
@@ -80,7 +95,7 @@ export function WorkAllocationPage() {
 
 function WorkAllocationView() {
     const { token, user } = useAuth();
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("work-allocation", REMEMBERED_KEYS, validRemembered);
     const status = viewFromParam(searchParams.get("view"));
     // Status is the candidate's workflow status; "Assigned to" is the allocation (Unallocated rows say so).
     // One Analyst (the header's select) or several (Filters), comma-separated. Completed filters by the
@@ -99,6 +114,7 @@ function WorkAllocationView() {
     const analystCount = listOf(analystFilter).length;
     const filtered = Object.keys(filters).length > 0 || analystCount > 1;
     const list = useAdminResource(`work-allocation?${searchParams.toString()}`, (t, signal) => listAllocationCandidates(t, { status, analystId: analystFilter, search, page, filters: filters as AllocationFilters }, signal));
+    useDiscardRestoredOnBadRequest(list, remembered);
     const filterOptions = useAdminResource("candidate-filter-options", (t, signal) => getCandidateFilterOptions(t, signal));
     const analysts = useAdminResource("work-allocation-analysts", (t, signal) => listAllocationAnalysts(t, signal));
 

@@ -1,7 +1,9 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useSearchParams } from "react-router";
-import { listAuditLogs, type AuditCategory, type AuditChange, type AuditLogItem, type AuditLogParams } from "../api/admin";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Link } from "react-router";
+import { ApiError } from "../api/client";
+import { exportAuditLogs, listAuditLogs, type AuditCategory, type AuditLogExportFormat, type AuditChange, type AuditLogItem, type AuditLogParams } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { stageLabel } from "../api/candidates";
 import { isAdmin, useAuth } from "../auth/AuthProvider";
 import { roleLabel as labelOfRole } from "../auth/roles";
@@ -177,6 +179,9 @@ function paramsFrom(search: URLSearchParams): AuditLogParams {
 
 const FILTER_NAMES = ["adminId", "passportId", "candidate", "action", "category", "startDate", "endDate", "search"] as const;
 
+// The filters remembered for the next visit (hooks/useRememberedSearchParams.ts).
+const REMEMBERED_KEYS = FILTER_NAMES;
+
 export function AuditLogsPage() {
     const { user } = useAuth();
     if (!isAdmin(user)) {
@@ -196,10 +201,11 @@ export function AuditLogsPage() {
 }
 
 function AuditLogsView() {
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("audit-logs", REMEMBERED_KEYS);
     const params = paramsFrom(searchParams);
     const key = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString();
     const list = useAdminResource(`audit-logs?${key}`, (token, signal) => listAuditLogs(token, params, signal));
+    useDiscardRestoredOnBadRequest(list, remembered);
     const data = list.data;
 
     const update = (changes: Record<string, string | undefined>, { keepPage = false } = {}) => {
@@ -220,6 +226,36 @@ function AuditLogsView() {
     const applyText = (event: FormEvent) => {
         event.preventDefault();
         update({ candidate: candidateText.trim() || undefined, search: searchText.trim() || undefined });
+    };
+
+    // Report download: sends the filters applied now (the URL state), in a POST body.
+    const { token, signOut } = useAuth();
+    const [downloading, setDownloading] = useState<AuditLogExportFormat | null>(null);
+    const [exportError, setExportError] = useState<string | null>(null);
+    const busy = useRef(false);
+    const download = async (format: AuditLogExportFormat) => {
+        if (busy.current) return;
+        setExportError(null);
+        if (params.startDate && params.endDate && params.startDate > params.endDate) {
+            setExportError("The start date must be on or before the end date.");
+            return;
+        }
+        busy.current = true;
+        setDownloading(format);
+        try {
+            const { page: _page, pageSize: _pageSize, ...filters } = params;
+            const { blob, filename } = await exportAuditLogs(token ?? "", format, filters);
+            saveFile(blob, filename ?? `audit-log-${new Date().toISOString().slice(0, 10)}.${format}`);
+        } catch (error) {
+            if (error instanceof ApiError && error.status === 401) {
+                signOut();
+            } else {
+                setExportError(error instanceof ApiError ? error.message : "The report could not be downloaded. Please try again.");
+            }
+        } finally {
+            busy.current = false;
+            setDownloading(null);
+        }
     };
 
     const filtered = FILTER_NAMES.some((name) => params[name] !== undefined);
@@ -301,6 +337,23 @@ function AuditLogsView() {
                         <button type="button" onClick={clearFilters} disabled={!filtered} className={secondaryButton.replace("h-8", "h-10")}>Clear filters</button>
                     </div>
                 </form>
+                <div role="group" aria-label="Download report" className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                    <span className="text-label-md text-ink">Download report</span>
+                    {(["xlsx", "pdf"] as const).map((format) => (
+                        <button
+                            key={format}
+                            type="button"
+                            onClick={() => download(format)}
+                            disabled={downloading !== null}
+                            aria-busy={downloading === format}
+                            className={secondaryButton}
+                        >
+                            {downloading === format ? "Preparing…" : format === "xlsx" ? "Excel (.xlsx)" : "PDF"}
+                        </button>
+                    ))}
+                    <span className="text-label-sm text-ink-subtle">Uses the filters above.</span>
+                </div>
+                {exportError && <p role="alert" className="mt-2 text-body-sm text-critical">{exportError}</p>}
                 {params.passportId && (
                     <p className="mt-3 flex flex-wrap items-center gap-2 text-body-sm text-ink-muted">
                         Passport ID <span className="font-medium text-ink">{params.passportId}</span>
@@ -353,6 +406,20 @@ function AuditLogsView() {
             </Card>
         </section>
     );
+}
+
+function saveFile(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    try {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    } finally {
+        URL.revokeObjectURL(url);
+    }
 }
 
 function FilterField({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {

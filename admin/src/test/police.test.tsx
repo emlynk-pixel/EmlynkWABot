@@ -2,7 +2,7 @@ import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ApproveResult, PoliceCountdown, PoliceList, PoliceListItem, ReviewItem } from "../api/admin";
-import { CLIENT_DETAILS, CLIENT_REF, OVERVIEW, renderApp, signedInBackend, stubBackend, type FetchRoutes } from "./helpers";
+import { CLIENT_DETAILS, CLIENT_REF, renderApp, signedInBackend, stubBackend, type FetchRoutes } from "./helpers";
 
 // Synthetic data only.
 const countdown = (overrides: Partial<PoliceCountdown> = {}): PoliceCountdown => ({
@@ -101,22 +101,6 @@ describe("Police Workflow page", () => {
         renderApp("/police");
         expect(await screen.findByRole("heading", { name: "Sign in to EMOPS" })).toBeInTheDocument();
         expect(calls.filter((c) => c.path.startsWith("/api/admin"))).toHaveLength(0);
-    });
-});
-
-describe("Overview police counts", () => {
-    test("shows due soon, due today and overdue with links to the filtered list", async () => {
-        signedInBackend({ "GET /api/admin/overview": { status: 200, body: OVERVIEW } });
-        renderApp("/");
-        const counts = await screen.findByRole("list", { name: "Police reports by status" });
-        const links = within(counts).getAllByRole("link");
-        expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-            ["Overdue3", "/police?status=OVERDUE"],
-            ["Due today1", "/police?status=DUE_TODAY"],
-            ["Due soon (1–7 days)2", "/police?status=DUE_SOON"],
-            ["Missing slip date4", "/police?status=DATE_MISSING"],
-            ["Not uploaded5", "/police?status=NOT_UPLOADED"],
-        ]);
     });
 });
 

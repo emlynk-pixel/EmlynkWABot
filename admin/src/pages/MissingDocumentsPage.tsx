@@ -1,13 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useSearchParams } from "react-router";
 import { listMissingDocuments, type MissingDocumentsParams } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { ClientTable, Pager } from "../components/ClientTable";
 import { documentTypeLabel, formatNumber } from "../components/format";
 import { Card, EmptyState, ErrorState, LoadingState } from "../components/States";
 import { filterControl } from "../components/ui";
 
 const PAGE_SIZE = 25;
+
+// The filters remembered for the next visit (hooks/useRememberedSearchParams.ts).
+const REMEMBERED_KEYS = ["search", "documentType"];
 
 function paramsFrom(search: URLSearchParams): MissingDocumentsParams {
     const page = Number(search.get("page"));
@@ -22,9 +25,10 @@ function paramsFrom(search: URLSearchParams): MissingDocumentsParams {
 // Missing-document view (proposal §22, GET /documents/missing): incomplete
 // clients, most documents missing first, filterable by the missing type.
 export function MissingDocumentsPage() {
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("missing-documents", REMEMBERED_KEYS);
     const params = paramsFrom(searchParams);
     const list = useAdminResource(`missing?${searchParams.toString()}`, (token, signal) => listMissingDocuments(token, params, signal));
+    useDiscardRestoredOnBadRequest(list, remembered);
     const [searchText, setSearchText] = useState(params.search ?? "");
     useEffect(() => setSearchText(params.search ?? ""), [params.search]);
 

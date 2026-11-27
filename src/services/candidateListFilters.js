@@ -289,7 +289,7 @@ export async function listCandidateFilterOptions({ db, user }) {
     return {
         jobTypes,
         noPreference: NO_PREFERRED_JOB_TYPE,
-        ...(officers ? { officers: officers.map((officer) => ({ id: officer.adminId, name: officer.name, role: officer.role, active: officer.status === USER_STATUS.ACTIVE && OFFICER_ROLES.includes(officer.role) })) } : {}),
+        ...(officers ? { officers: officers.map((officer) => ({ id: officer.adminId, name: officer.name, role: officer.role, active: officer.status === USER_STATUS.ACTIVE })) } : {}),
         ...(clients ? { clients } : {}),
         ...(agents ? { agents } : {}),
     };
