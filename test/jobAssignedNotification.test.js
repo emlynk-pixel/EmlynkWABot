@@ -14,6 +14,7 @@ import {
     jobAssignedMessage, NOTIFICATION_TYPE, notifyCandidateFormSubmitted, notifyCandidatesCancelled, notifyJobAssigned,
 } from "../src/services/notificationEvents.js";
 import { assignCandidates } from "../src/services/workAllocationService.js";
+import { addCandidateToJob, createJob as createJobService, JOB_TX_OPTIONS } from "../src/services/jobService.js";
 
 const user = (adminId, role, name, n, status = "ACTIVE") => ({
     adminId, role, name, status, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
@@ -187,6 +188,25 @@ describe("A5 Job Assigned", () => {
         for (const row of rows) assert.doesNotMatch(`${row.title} ${row.message}`, new RegExp(`${P.ANN}|${P.ANN2}`), "no passport ID in the text");
         assert.equal(jobAssignedMessage("J-1", null), "Job J-1 has been assigned to a candidate.");
         assert.equal((await a5()).length, 2);
+    });
+
+    test("the assignment transactions pass explicit timeouts (JOB_TX_OPTIONS); Add to job still answers the job view", async () => {
+        const options = [];
+        const db = new Proxy(prisma, {
+            get(target, prop) {
+                if (prop === "$transaction") return (fn, opts) => { options.push(opts); return target.$transaction(fn, opts); };
+                const value = Reflect.get(target, prop);
+                return typeof value === "function" ? value.bind(target) : value;
+            },
+        });
+        assert.deepEqual(JOB_TX_OPTIONS, { maxWait: 10000, timeout: 30000 });
+        const job = await createJobService({ db, actor: USERS.OWNER, values: { jobTypeId: ids.jobType, clientId: ids.acme, candidateIds: [P.NONE] } });
+        const view = await addCandidateToJob({ db, actor: USERS.OWNER, jobId: job.jobId, passportId: P.ANN });
+        assert.deepEqual(options, [JOB_TX_OPTIONS, JOB_TX_OPTIONS]);
+        assert.equal(view.jobId, job.jobId);
+        assert.deepEqual(view.candidates.map((c) => c.passportId).sort(), [P.ANN, P.NONE]);
+        assert.equal(view.candidateCount, 2);
+        assert.equal((await a5Of(USERS.ANN)).length, 1);
     });
 
     test("a job creation that fails (one candidate refused) sends nothing", async () => {

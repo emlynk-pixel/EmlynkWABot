@@ -585,6 +585,11 @@ export async function listJobCandidateOptions({ db, params }) {
 
 // ---------------------------------------------------------------- writing
 
+// The job-assignment transactions (New job with candidates, Add to job) run many sequential
+// statements (locks, rules, membership, stage completion, audit); against a distant database
+// they can pass Prisma's default 5 s interactive-transaction timeout (P2028).
+export const JOB_TX_OPTIONS = Object.freeze({ maxWait: 10000, timeout: 30000 });
+
 // Locks the job row (FOR SHARE for membership changes: they run side by side,
 // but never beside a completion or cancellation, which update the row).
 async function lockJob(tx, jobId, mode) {
@@ -721,7 +726,7 @@ async function createJobInTransaction({ db, actor, values, passportIds, now }) {
             }
         }
         return { job: await getJob({ db: tx, jobId: job.id, user: actor }), assignments };
-    });
+    }, JOB_TX_OPTIONS);
 }
 
 const COMPANY_JOB_ID_TAKEN = "Another job of this client already has this Company Job ID.";
@@ -857,16 +862,17 @@ export async function addCandidateToJob({ db, actor, jobId, passportId }) {
         result = await db.$transaction(async (tx) => {
             const job = await lockJob(tx, jobId, "share");
             requireProcessing(job);
-            const assignment = await assignCandidate(tx, { actor, job, passportId: stored });
-            return { job: await getJob({ db: tx, jobId, user: actor }), assignment };
-        });
+            return { assignment: await assignCandidate(tx, { actor, job, passportId: stored }) };
+        }, JOB_TX_OPTIONS);
     } catch (error) {
         if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", "This candidate was just assigned to this job. Nothing was changed; refresh and check.");
         throw error;
     }
     // After the commit, best-effort (A5).
     await notifyAssignments(db, [result.assignment]);
-    return result.job;
+    // The job view is a plain read: it runs after the commit (outside the transaction, so it no
+    // longer holds the locks or counts against the transaction timeout).
+    return getJob({ db, jobId, user: actor });
 }
 
 // DELETE /api/admin/jobs/:jobId/candidates/:passportId: takes the candidate
