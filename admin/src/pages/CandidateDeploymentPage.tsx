@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation, useParams, useSearchParams } from "react-router";
+import { Navigate, useLocation, useParams, useSearchParams } from "react-router";
 import { CANDIDATE_STAGES, STAGE_LABELS, activeJobsOf, getAdditionalDetails, getCandidate, getFormSubmission, type AdditionalDetailsView, type CandidateDetails, type CandidateStageKey, type FailedUpload } from "../api/candidates";
 import { useAdminResource } from "../api/useAdminResource";
 import { canConfirmSubmittedChanges, canManageCandidates, useAuth } from "../auth/AuthProvider";
@@ -18,6 +18,7 @@ import { secondaryButton } from "../components/Dialog";
 import { documentTypeLabel, formatDateTime } from "../components/format";
 import { Icon } from "../components/Icon";
 import { Card, ErrorState, LoadingState } from "../components/States";
+import { isFromNotification, RECORD_GONE } from "../notifications/targets";
 
 const isStage = (value: string | null): value is CandidateStageKey => CANDIDATE_STAGES.includes(value as CandidateStageKey);
 
@@ -75,6 +76,10 @@ export function CandidateDeploymentPage() {
     const additionalReady = searchParams.get("tab") !== "additional" || Boolean(ofThisCandidate(savedAdditional) ?? ofThisCandidate(additional.data));
     useConflictFocus(focusField, Boolean(loaded) && Boolean(submission.data) && additionalReady);
     if (!details || details.candidate.passportId.toUpperCase() !== passportId.toUpperCase()) {
+        // Opened from a notification whose candidate is gone (or no longer theirs): on to the list, with a message.
+        if (resource.status === "error" && isFromNotification(location.state) && (resource.error.status === 404 || resource.error.status === 403)) {
+            return <Navigate to="/candidates" replace state={{ notificationNotice: RECORD_GONE.candidate }} />;
+        }
         return resource.status === "error"
             ? <Card><ErrorState message={resource.error.message} onRetry={resource.reload} /></Card>
             : <Card><LoadingState label="Loading candidate…" /></Card>;

@@ -73,6 +73,10 @@ model Notification {
   dedupeKey   String    @map("dedupe_key")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   readAt      DateTime? @map("read_at") @db.Timestamptz(3)
+  // What the notification is about, for opening it (never in the text). No foreign keys: a
+  // notification outlives a deleted candidate or job. Migration 20261127120000_notification_entity_ids.
+  candidateId String?   @map("candidate_id")
+  jobId       String?   @map("job_id") @db.Uuid
 
   recipient User @relation(fields: [recipientId], references: [adminId], onDelete: Cascade, onUpdate: Cascade)
 

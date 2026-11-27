@@ -27,7 +27,7 @@ import { validateDocumentFile, ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from "../util
 import { sha256Hex } from "../utils/fileChecksum.js";
 import { clientName } from "../utils/clientName.js";
 import { CANDIDATE_PASSPORT_MESSAGE, parseCandidatePassportNumber } from "../utils/passportId.js";
-import { canonicalPhoneNumber, phoneKey } from "../utils/phoneNumber.js";
+import { canonicalPhoneNumber, isSamePhoneNumber, phoneKey, samePhoneKey } from "../utils/phoneNumber.js";
 import { clientFolderPath, extensionForMimeType, standardFileName } from "../utils/storageNaming.js";
 import { MAX_NAME_ATTEMPTS, removeObject } from "./permanentStorageService.js";
 import { DOCUMENT_PROCESSING_STATUS_STORED, VERIFICATION_STATUS } from "./clientDocumentService.js";
@@ -1089,6 +1089,9 @@ export async function createCandidate({ db, values, actor = null }) {
         error.passportId = existing.passportId;
         throw error;
     }
+    // The contact (alternative) number is a second number, never the WhatsApp number given here
+    // (compared in any written form). The Google Sheet import doesn't come through here.
+    if (isSamePhoneNumber(values.contactNumber, values.whatsappNumber)) throw contactSameAsWhatsappError();
     await assertNicFree(db, values.nic);
     await assertWhatsappFree(db, values.whatsappNumber);
 
@@ -1134,6 +1137,18 @@ async function requireCandidate(db, passportId) {
     return user;
 }
 
+// The one sentence every admin path shows (Candidate Details save, registration, Confirm of the
+// form's number), worded with the admin screens' labels "Contact number" and "WhatsApp number"
+// (admin CandidateFields.tsx and submittedChanges.tsx). The Candidate Form keeps its own code
+// same_as_contact and wording (candidateFormDataService.ALTERNATIVE_SAME_AS_CONTACT).
+export const CONTACT_SAME_AS_WHATSAPP_MESSAGE = "Contact number must be different from the WhatsApp number.";
+// 400 with the field, like a body validation error ({ message, code, errors: [{ field, code, message }] }).
+function contactSameAsWhatsappError() {
+    const error = new CandidateError(400, "CONTACT_SAME_AS_WHATSAPP", CONTACT_SAME_AS_WHATSAPP_MESSAGE);
+    error.errors = [{ field: "contactNumber", code: "same_as_contact", message: CONTACT_SAME_AS_WHATSAPP_MESSAGE }];
+    return error;
+}
+
 // PUT /api/admin/candidates/:passportId (Candidate Details stage).
 // A WhatsApp number already on record is never changed here: it is what
 // documents sent on WhatsApp are matched by. One can only be added when the
@@ -1150,7 +1165,17 @@ export async function updateCandidateDetails({ db, passportId, values, actor = n
         if (whatsappNumber && phoneKey(whatsappNumber) !== phoneKey(user.whatsappNumber)) {
             throw new CandidateError(409, "WHATSAPP_LOCKED", "The WhatsApp number is already set for this candidate and cannot be changed here.");
         }
-    } else if (whatsappNumber) {
+    }
+    // The contact (alternative) number is a second number: never the WhatsApp number, the one on
+    // record or the one being added now (compared in any written form). Refused only when this save
+    // makes them equal (a new contact number, or a WhatsApp number added): a record saved earlier
+    // with the two equal can still be edited without first changing its contact number.
+    const addingWhatsapp = !user.whatsappNumber && Boolean(whatsappNumber);
+    const contactChanged = samePhoneKey(data.contactNumber) !== samePhoneKey(user.contactNumber);
+    if ((contactChanged || addingWhatsapp) && isSamePhoneNumber(data.contactNumber, user.whatsappNumber || whatsappNumber)) {
+        throw contactSameAsWhatsappError();
+    }
+    if (addingWhatsapp) {
         await assertWhatsappFree(db, whatsappNumber, passportId);
         data.whatsappNumber = whatsappNumber;
     }

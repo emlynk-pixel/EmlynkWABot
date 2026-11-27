@@ -1,6 +1,7 @@
 import { useId, type ReactNode } from "react";
 import { SEX_OPTIONS, type CandidateDetails, type CandidateDetailsInput } from "../../api/candidates";
 import { getJobTypeChoices, isNoPreference, jobTypeLabel, NO_PREFERRED_JOB_TYPE } from "../../api/jobs";
+import { ApiError } from "../../api/client";
 import { useAdminResource } from "../../api/useAdminResource";
 import { HelpTip } from "../Form";
 import { DatePicker } from "../DatePicker";
@@ -75,6 +76,50 @@ export function whatsappLocalPart(stored: string): string {
     return digits.slice(0, 15);
 }
 
+// A phone number reduced so that the same number compares equal however it is written:
+// non-digits dropped, a leading "00" removed, and Sri Lankan numbers as their 9 national
+// digits (+94 77 123 4567, 0094771234567, 94771234567 and 0771234567 are one number).
+// Other numbers compare on their plain digits. The candidate form uses the same rule.
+export function phoneKey(input: string): string {
+    let digits = input.replace(/\D/g, "");
+    if (digits.startsWith("00")) digits = digits.slice(2);
+    if (digits.length === 11 && digits.startsWith("94")) return digits.slice(2);
+    if (digits.length === 12 && digits.startsWith("940")) return digits.slice(3);
+    if (digits.length === 10 && digits.startsWith("0")) return digits.slice(1);
+    return digits;
+}
+
+export function samePhoneNumber(a: string | null | undefined, b: string | null | undefined): boolean {
+    const left = phoneKey(a ?? "");
+    return left !== "" && left === phoneKey(b ?? "");
+}
+
+// Shown once, on the Contact number field, for both the client check and the server refusal. It uses the
+// labels this screen shows (the candidate form has its own wording).
+export const SAME_AS_CONTACT = "Contact number must be different from the WhatsApp number.";
+
+// The server's rule (candidateService.js): refused only when THIS save makes the two equal (a changed
+// contact number, or a WhatsApp number being added), so a record saved earlier with both equal can
+// still be edited without first changing its contact number. Without `original` (a new candidate):
+// whenever they are equal.
+function makesContactSameAsWhatsapp(value: Pick<CandidateDetailsInput, "contactNumber" | "whatsappNumber">, original?: Pick<CandidateDetailsInput, "contactNumber" | "whatsappNumber">): boolean {
+    if (!samePhoneNumber(value.contactNumber, value.whatsappNumber)) return false;
+    if (!original) return true;
+    const contactChanged = phoneKey(value.contactNumber) !== phoneKey(original.contactNumber);
+    const addingWhatsapp = !original.whatsappNumber && Boolean(value.whatsappNumber);
+    return contactChanged || addingWhatsapp;
+}
+
+// Whether a failed save is the server refusing a contact number equal to the WhatsApp number: the
+// error code CONTACT_SAME_AS_WHATSAPP, or "same_as_contact" on the contact number field (as its code
+// or message). Checked loosely: the field may be named after the admin input or the form answer.
+export function isSameAsContactError(caught: unknown): boolean {
+    if (!(caught instanceof ApiError)) return false;
+    if (caught.code === "CONTACT_SAME_AS_WHATSAPP" || caught.code === "SAME_AS_CONTACT") return true;
+    return caught.fieldErrors.some((entry) => /^(contactNumber|contact\.alternativePhone|alternativePhone)$/.test(entry.field)
+        && [(entry as { code?: unknown }).code, entry.message].some((code) => typeof code === "string" && code.toLowerCase() === "same_as_contact"));
+}
+
 // "registration": the WhatsApp number is required. "details": saving
 // Candidate Details is never blocked by a missing WhatsApp number
 // (completionGaps reports it); the stage only completes once it and the
@@ -91,7 +136,8 @@ const COMPLETION_REQUIRED = "Required to complete Candidate details.";
 // the admin sees which field to fix. Returns field -> message; any message
 // blocks saving. The passport and contact details are optional: only a value
 // that is given is checked.
-export function validateDetails(value: CandidateDetailsInput, form: DetailsForm = "registration", { whatsappLocked = false, initial = false }: { whatsappLocked?: boolean; initial?: boolean } = {}): Record<string, string> {
+// `original`: the record as saved (an existing candidate), for the contact-number rule.
+export function validateDetails(value: CandidateDetailsInput, form: DetailsForm = "registration", { whatsappLocked = false, initial = false, original }: { whatsappLocked?: boolean; initial?: boolean; original?: Pick<CandidateDetailsInput, "contactNumber" | "whatsappNumber"> } = {}): Record<string, string> {
     const errors: Record<string, string> = {};
     if (!value.surname.trim()) errors.surname = "Enter the surname.";
     if (!value.otherNames.trim()) errors.otherNames = "Enter the other names.";
@@ -112,6 +158,7 @@ export function validateDetails(value: CandidateDetailsInput, form: DetailsForm 
         errors.whatsappNumber = "Enter the mobile number with country code after +, e.g. 94771234567.";
     }
     if (value.contactNumber.trim() && !isPhoneNumber(value.contactNumber.trim())) errors.contactNumber = "Enter a phone number, e.g. 0771234567.";
+    else if (makesContactSameAsWhatsapp(value, original)) errors.contactNumber = SAME_AS_CONTACT;
     return errors;
 }
 

@@ -231,6 +231,15 @@ describe("sheet upload -> Jobs (end to end)", () => {
         assert.equal(await prisma.jobCodeCounter.count(), 0, "the manual Job counter is never used");
     });
 
+    test("an upload that puts the Analyst's candidates on Jobs sends no A5 Job Assigned", async () => {
+        await pg.exec(`DELETE FROM "notification"`);
+        const { chunks } = await importRows(renumber([row(1, 3100), row(2, 3150)]));
+        assert.equal(chunks[0].counts.jobAssignments, 2);
+        assert.equal(await prisma.candidateAllocation.count({ where: { analystId: "u-john", passportId: { in: [passportOf(1), passportOf(2)] } } }), 2, "allocated to the Analyst");
+        assert.equal(await prisma.jobCandidate.count({ where: { isActive: true } }), 2);
+        assert.equal(await prisma.notification.count({ where: { type: "A5_JOB_ASSIGNED" } }), 0);
+    });
+
     test("re-upload: the same groups reuse their Jobs (no duplicate); an edited suffix stays; a new block gets the next free suffix", async () => {
         await importRows(renumber([row(1, 3100), row(2, 3200)]));
         const second = (await jobsByCode())["JOB-2026-071102"];

@@ -611,7 +611,11 @@ export function createAdminRouter({
             return await run();
         } catch (error) {
             if (error instanceof CandidateError) {
-                return res.status(error.status).json({ message: error.message, code: error.code, ...(error.passportId ? { passportId: error.passportId } : {}) });
+                return res.status(error.status).json({
+                    message: error.message, code: error.code,
+                    ...(error.passportId ? { passportId: error.passportId } : {}),
+                    ...(Array.isArray(error.errors) ? { errors: error.errors } : {}),
+                });
             }
             throw error;
         }

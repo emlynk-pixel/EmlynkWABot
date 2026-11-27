@@ -421,7 +421,10 @@ describe("the API: the caller's own notifications only", () => {
         const list = await api(USERS.ADMIN, "GET", "/notifications");
         assert.equal(list.status, 200);
         assert.equal(list.body.items.length, 1);
-        assert.deepEqual(Object.keys(list.body.items[0]).sort(), ["createdAt", "id", "message", "readAt", "title", "type"]);
+        assert.deepEqual(Object.keys(list.body.items[0]).sort(), ["candidateId", "createdAt", "id", "jobId", "message", "readAt", "title", "type"]);
+        // An event about no candidate or job (E9) has neither.
+        assert.equal(list.body.items[0].candidateId, null);
+        assert.equal(list.body.items[0].jobId, null);
         assert.equal(list.body.items[0].type, NOTIFICATION_TYPE.E9);
         assert.equal(list.body.unreadCount, 1);
         assert.equal(list.body.nextCursor, null);

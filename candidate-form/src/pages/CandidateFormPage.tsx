@@ -22,7 +22,15 @@ import type { DraftStep, FormLoadResponse } from "../types/api";
 const SESSION_CHECK_MS = 10_000;
 
 // The server's field codes, as the form's own messages.
-const SERVER_CODE: Record<string, MessageKey> = { required: "v.required", tooLong: "v.tooLongShort", invalid: "v.invalidAnswer", unknown: "v.invalidAnswer" };
+// (same_as_contact: the alternative number repeats the verified WhatsApp number.)
+const SERVER_CODE: Record<string, MessageKey> = {
+    required: "v.required",
+    tooLong: "v.tooLongShort",
+    invalid: "v.invalidAnswer",
+    unknown: "v.invalidAnswer",
+    same_as_contact: "v.sameAsContact",
+    sameAsContact: "v.sameAsContact",
+};
 
 type SubmitState = "idle" | "confirm" | "sending" | "invalid" | "failed";
 // Saving a step (Next): "failed" = not saved (the answers stay on the page, the step does not change).
@@ -81,7 +89,7 @@ export function CandidateFormPage({ expiresAt, form, onSubmitted, onAlreadySubmi
     const step = STEPS[stepIndex];
     // The job category choices: the active job types sent with the form + No Preferred Type + OTHER.
     const jobCategories = useMemo(() => jobCategoryChoices(form.jobCategories), [form.jobCategories]);
-    const allErrors = useMemo(() => ({ ...serverErrors, ...validateForm(data, undefined, jobCategories) }), [data, serverErrors, jobCategories]);
+    const allErrors = useMemo(() => ({ ...serverErrors, ...validateForm(data, undefined, jobCategories, form.identity.whatsappNumber) }), [data, serverErrors, jobCategories, form.identity.whatsappNumber]);
     const shownErrors: FormErrors = useMemo(
         () => Object.fromEntries(Object.entries(allErrors).filter(([path]) => {
             const owner = stepOf(path);

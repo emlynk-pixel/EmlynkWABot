@@ -417,7 +417,7 @@ export async function assignCandidates({ db, actor, candidateIds, allocations, r
             to: analysts.get(entry.to),
         })));
 
-        received = changes.map((entry) => ({ analystId: entry.to, count: 1 }));
+        received = changes.map((entry) => ({ analystId: entry.to, count: 1, passportId: entry.passportId }));
         return {
             assigned: fresh.length,
             reassigned: changes.length - fresh.length,
@@ -578,7 +578,7 @@ export async function autoAllocateCandidates({ db, actor, candidateIds, analystI
             })));
         }
 
-        received = plan.map((entry) => ({ analystId: entry.analystId, count: 1 }));
+        received = plan.map((entry) => ({ analystId: entry.analystId, count: 1, passportId: entry.passportId }));
         const remainderRows = eligibleRows.slice(allocatedCount);
         const unallocatedCandidateIds = remainderRows.map((r) => r.passportId);
         const skippedCandidateIds = conflictingRows.map((r) => r.passportId);

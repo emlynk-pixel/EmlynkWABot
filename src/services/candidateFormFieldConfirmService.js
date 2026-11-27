@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 
-import { CandidateError } from "./candidateService.js";
+import { CandidateError, CONTACT_SAME_AS_WHATSAPP_MESSAGE } from "./candidateService.js";
 import { ANSWER_FIELDS, BLOOD_GROUPS, CIVIL_STATUS_CODES, ENGLISH_LEVELS, OTHER_JOB_CATEGORY, answerValue, isNotApplicable } from "./candidateFormDataService.js";
 import { NO_PREFERRED_JOB_TYPE, isNoPreference } from "./jobTypeCatalog.js";
-import { canonicalPhoneNumber, phoneKey } from "../utils/phoneNumber.js";
+import { canonicalPhoneNumber, isSamePhoneNumber, phoneKey } from "../utils/phoneNumber.js";
 
 // Per-field "Confirm candidate change" (Admin > Candidate Details).
 //
@@ -180,7 +180,11 @@ export const CONFIRMABLE_FIELDS = Object.freeze({
     "basic.birthDate": { table: "candidate", column: "dateOfBirth", ...date({ notFuture: true }) },
     "basic.birthPlace": { table: "candidate", column: "placeOfBirth", ...text(100) },
     "contact.address": { table: "candidate", column: "address", ...text(500) },
-    "contact.alternativePhone": { table: "candidate", column: "contactNumber", ...phone },
+    "contact.alternativePhone": {
+        table: "candidate", column: "contactNumber", ...phone,
+        // The record's contact number is a second number: never its WhatsApp number (lockAndRead reads it).
+        requires: ({ candidate, value }) => (isSamePhoneNumber(value, candidate?.whatsappNumber) ? CONTACT_SAME_AS_WHATSAPP_MESSAGE : null),
+    },
     "passport.issueDate": { table: "candidate", column: "passportIssueDate", ...date({ notFuture: true }) },
     "passport.expiryDate": { table: "candidate", column: "passportExpiryDate", ...date() },
     "qualifications.experience": { table: "candidate", column: "jobExperience", ...text(2000) },
@@ -307,7 +311,8 @@ async function lockAndRead(tx, passportId) {
     const locked = await tx.$queryRaw`SELECT "passport_id" FROM "candidate" WHERE "passport_id" = ${passportId} FOR UPDATE`;
     if (!locked.length) throw new CandidateError(404, "NOT_FOUND", "Candidate not found");
     const [candidate, details, response] = await Promise.all([
-        tx.candidate.findUnique({ where: { passportId }, select: CONFIRM_SELECT.candidate }),
+        // whatsappNumber: for the alternative number's rule only (it is never a target).
+        tx.candidate.findUnique({ where: { passportId }, select: { ...CONFIRM_SELECT.candidate, whatsappNumber: true } }),
         tx.candidateAdditionalDetails.findUnique({ where: { passportId }, select: CONFIRM_SELECT.details }),
         tx.candidateFormResponse.findUnique({ where: { passportId } }),
     ]);

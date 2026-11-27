@@ -20,7 +20,7 @@ import { documentTypeLabel } from "../format";
 import { DatePicker } from "../DatePicker";
 import { Icon } from "../Icon";
 import { DialogError, primaryButton, secondaryButton } from "../Dialog";
-import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, textAreaControl, validateDetails } from "./CandidateFields";
+import { CandidateFields, completionGaps, detailsFrom, Field, fieldControl, isSameAsContactError, SAME_AS_CONTACT, textAreaControl, validateDetails } from "./CandidateFields";
 import { DocumentRow, VIDEO_ACCEPT } from "./DocumentRow";
 import { exportDocumentSubmissionPdf } from "./exportPdf";
 import { FormChangesButtons, mergeRefreshed, useTakeConfirmed } from "./submittedChanges";
@@ -343,7 +343,7 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
         if (!token) return;
         // Missing address / WhatsApp number don't block the save (the stage
         // just stays incomplete); they are shown under their fields.
-        const errors = validateDetails(form, "details", { whatsappLocked: Boolean(details.candidate.whatsappNumber) });
+        const errors = validateDetails(form, "details", { whatsappLocked: Boolean(details.candidate.whatsappNumber), original: detailsFrom(details.candidate) });
         setFieldErrors({ ...completionGaps(form), ...errors });
         if (Object.keys(errors).length) return;
         setBusy(true);
@@ -361,7 +361,8 @@ export function CandidateDetailsStage({ details, canEdit, onChange }: PanelProps
             setForm(detailsFrom(next.candidate));
             setComment(stageOf(next, "CANDIDATE_DETAILS").notes ?? "");
         } catch (caught) {
-            setError(message(caught));
+            if (isSameAsContactError(caught)) setFieldErrors((current) => ({ ...current, contactNumber: SAME_AS_CONTACT }));
+            else setError(message(caught));
         } finally {
             setBusy(false);
         }

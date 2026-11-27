@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router";
+import { Link, Navigate, useLocation, useParams } from "react-router";
 import { ApiError } from "../api/client";
 import { addCandidateToJob, cancelJob, completeJob, createJobType, getJob, getJobOptions, listJobCandidateOptions, removeCandidateFromJob, updateJob, type JobCandidateOption, type JobCandidateOptions, type JobDetails, type JobOptions } from "../api/jobs";
 import { useAdminResource } from "../api/useAdminResource";
@@ -15,6 +15,7 @@ import { CountrySelect } from "../components/master/MasterParts";
 import { Card, ErrorState, LoadingState } from "../components/States";
 import { filterControl, inputClass, tableCell, tableHead, tableRow, textareaClass } from "../components/ui";
 import { ImportJobSuffixEditor } from "../components/job/ImportJobSuffixEditor";
+import { isFromNotification, RECORD_GONE } from "../notifications/targets";
 
 // Admin > Jobs > one job, in two tabs: Job Details (the default) and Assigned
 // Candidates. The tab is page state only (no route): switching keeps every open
@@ -53,6 +54,7 @@ const tabClass = (active: boolean) =>
 function JobDetailsView() {
     const { user, token } = useAuth();
     const { jobId = "" } = useParams();
+    const location = useLocation();
     const canManage = canManageJobs(user);
     // A candidate's name links to their page only for a role that can open it: a JOB_HANDLER
     // sees the job's own read-only rows (name, passport ID, NIC, Status, assigned date).
@@ -65,6 +67,10 @@ function JobDetailsView() {
     useBreadcrumbLabel(job?.jobCode);
 
     if (!job) {
+        // Opened from a notification whose job is gone (or no longer visible): on to the list, with a message.
+        if (resource.status === "error" && isFromNotification(location.state) && (resource.error.status === 404 || resource.error.status === 403)) {
+            return <Navigate to="/jobs" replace state={{ notificationNotice: RECORD_GONE.job }} />;
+        }
         return (
             <div className="space-y-4">
                 <Card>{resource.status === "error" ? <ErrorState message={resource.error.message} onRetry={resource.reload} /> : <LoadingState label="Loading job…" />}</Card>

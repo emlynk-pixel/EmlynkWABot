@@ -5,7 +5,7 @@ import { isUsableTokenSecret, parseCandidateFormOrigin } from "../config/candida
 import { createPostgresRateLimitStore } from "../middleware/postgresRateLimitStore.js";
 import { issueCandidateFormToken, passportReference } from "../services/candidateFormTokenService.js";
 import { ALREADY_SUBMITTED_MESSAGE, parseVerifyBody, VERIFY_FAILED_MESSAGE, verifyFormLinkAccess } from "../services/candidateFormVerificationService.js";
-import { loadCandidateForm, parseDraftBody, parseSubmission, saveCandidateFormDraft, submitCandidateForm } from "../services/candidateFormDataService.js";
+import { candidateContactNumber, loadCandidateForm, parseDraftBody, parseSubmission, saveCandidateFormDraft, submitCandidateForm } from "../services/candidateFormDataService.js";
 import { CandidateError } from "../services/candidateService.js";
 import { getPublicFormBranding, publicDefaultBranding } from "../services/candidateFormBrandingService.js";
 import { activeJobTypeNames } from "../services/jobTypeCatalog.js";
@@ -217,13 +217,14 @@ export function createPublicCandidateDetailsRouter({
 
     router.post("/submit", notAvailable, answersJson, requireSubmitSession, respond(async (req, res) => {
         const client = await resolveDb(db);
-        // The job category must be one of the job types active NOW (Settings > Job Types).
-        const parsed = parseSubmission(req.body, { now: now(), jobCategories: await activeJobTypeNames(client) });
+        const { passportId, linkId, version, kind, jobId } = req.candidateForm;
+        // The job category must be one of the job types active NOW (Settings > Job Types); the
+        // alternative number must differ from the WhatsApp number on record.
+        const parsed = parseSubmission(req.body, { now: now(), jobCategories: await activeJobTypeNames(client), whatsappNumber: await candidateContactNumber(client, passportId) });
         if (parsed.errors) {
             // Field paths and codes only: never the submitted values.
             return res.status(400).json({ message: INVALID_ANSWERS_MESSAGE, errors: parsed.errors.map(({ field, code }) => ({ field, code, message: code })) });
         }
-        const { passportId, linkId, version, kind, jobId } = req.candidateForm;
         const result = await submitCandidateForm({ db: client, passportId, linkId, version, kind, jobId, values: parsed.values, idempotencyKey: parsed.idempotencyKey, now: now() });
         return res.json(result);
     }));

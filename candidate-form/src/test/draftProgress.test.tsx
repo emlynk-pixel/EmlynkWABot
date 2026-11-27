@@ -116,6 +116,43 @@ describe("N/A variations", () => {
         expect(validateForm(data)["basic.otherNames"]).toEqual({ key: "v.required" });
     });
 
+    test("the alternative number may not repeat the verified WhatsApp number in any format; a different number, empty-as-required and N/A behave as before", () => {
+        const data = emptyForm();
+        const check = (value: string, whatsapp: string | null = "+94771234567") => {
+            data.contact.alternativePhone = value;
+            return validateForm(data, undefined, undefined, whatsapp)["contact.alternativePhone"];
+        };
+        for (const same of ["+94 77 123 4567", "0094771234567", "0771234567", "94771234567", "077-123-4567", " +94771234567 "]) {
+            expect(check(same), same).toEqual({ key: "v.sameAsContact" });
+        }
+        // The WhatsApp number as stored (no +) or typed locally is the same number.
+        expect(check("+94 77 123 4567", "94771234567")).toEqual({ key: "v.sameAsContact" });
+        expect(check("+94771234567", "0771234567")).toEqual({ key: "v.sameAsContact" });
+        // A foreign number compares on its digits.
+        expect(check("+40 712 345 678", "0040712345678")).toEqual({ key: "v.sameAsContact" });
+        expect(check("0712345678")).toBeUndefined();
+        expect(check("+94 71 234 5678")).toBeUndefined();
+        expect(check("+40712345678", "+40712345679")).toBeUndefined();
+        for (const na of ["N/A", "na", "NA"]) expect(check(na), na).toBeUndefined();
+        expect(check("")).toEqual({ key: "v.required" });
+        expect(check("12")).toEqual({ key: "v.phoneInvalid" });
+        // No WhatsApp number known: nothing to compare with.
+        expect(check("0771234567", null)).toBeUndefined();
+        expect(check("0771234567", "")).toBeUndefined();
+    });
+
+    test("the server's same_as_contact objection is shown as the same-number message", async () => {
+        const { user } = await open({ draft: (n) => (n === 1 ? { status: 400, body: { message: "bad", errors: [{ field: "contact.alternativePhone", message: "same_as_contact" }] } } : { status: 200, body: { savedSteps: ["personal"], savedAt: new Date().toISOString() } }) });
+        fillBasic();
+        fillContact();
+        await next(user);
+        expect(stepHeading("step.personal")).toBeInTheDocument();
+        expect(await screen.findByText(en("v.sameAsContact"))).toBeInTheDocument();
+        setField("f.alternativePhone", "0712345678");
+        await next(user);
+        expect(stepHeading("step.work")).toBeInTheDocument();
+    });
+
     test("in the form: NA, na and Na pass Next with no error and are saved as N/A", async () => {
         const { user, calls } = await verified();
         fillBasic();

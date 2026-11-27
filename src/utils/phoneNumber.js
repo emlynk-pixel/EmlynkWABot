@@ -50,3 +50,27 @@ export function canonicalPhoneNumber(value) {
     const key = phoneKey(value);
     return key && !key.startsWith("0") ? `+${key}` : null;
 }
+
+// The key two numbers are compared by in isSamePhoneNumber, never stored and never used for
+// lookups (those use phoneKey, which must stay equal to the SQL candidate_phone_key()). At least as
+// strict as the Candidate Form's samePhone (candidate-form/src/form/phone.ts): non-digits dropped,
+// a leading "00" removed, then a Sri Lankan number is its 9 national digits however written:
+//   94 + 9 digits, 940 + 9 digits ("+94 0771234567"), 0 + 9 digits, or the bare 9 digits.
+// Any other number is its plain digits (no length limit, like the form). No digits at all is null.
+export function samePhoneKey(value) {
+    if (value === null || value === undefined) return null;
+    let digits = String(value).replace(/\D/g, "");
+    if (digits.startsWith("00")) digits = digits.slice(2);
+    if (/^94\d{9}$/.test(digits)) digits = digits.slice(2);
+    else if (/^940\d{9}$/.test(digits)) digits = digits.slice(3);
+    else if (/^0\d{9}$/.test(digits)) digits = digits.slice(1);
+    return digits || null;
+}
+
+// Whether two numbers are the same phone number in any of their written forms ("+94 77 123 4567",
+// "0094771234567", "0771234567", "+94 0771234567", "771234567"). Not a number (empty, "N/A",
+// unparseable) is never the same.
+export function isSamePhoneNumber(a, b) {
+    const key = samePhoneKey(a);
+    return Boolean(key) && key === samePhoneKey(b);
+}

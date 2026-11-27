@@ -7,7 +7,7 @@ import { JOB_SELECT, JOB_STATUS, jobSummaryView } from "./jobAssignmentReader.js
 import { candidateMatchesJobTypes } from "./jobTypeCatalog.js";
 import { clientName } from "../utils/clientName.js";
 import { normalizeCountryCode } from "../utils/countries.js";
-import { notifyNewJobs } from "./notificationEvents.js";
+import { notifyJobAssigned, notifyNewJobs } from "./notificationEvents.js";
 
 export { JOB_STATUS, candidateMatchesJobTypes };
 
@@ -652,15 +652,28 @@ export async function createJob({ db, actor, values, now = new Date() }) {
     // order so two creations that share candidates cannot deadlock.
     const unique = [...new Set(passportIds)].sort();
     let job;
+    let assignments;
     try {
-        job = await createJobInTransaction({ db, actor, values, passportIds: unique, now });
+        ({ job, assignments } = await createJobInTransaction({ db, actor, values, passportIds: unique, now }));
     } catch (error) {
         if (isUniqueViolation(error)) throw new CandidateError(409, "COMPANY_JOB_ID_EXISTS", COMPANY_JOB_ID_TAKEN);
         throw error;
     }
     // After the commit, best-effort (C1: only while candidates who could join it are on no job).
     if (job?.jobId && job.jobCode) await notifyNewJobs(db, [{ jobId: job.jobId, jobCode: job.jobCode }]);
+    await notifyAssignments(db, assignments);
     return job;
+}
+
+// A5 for each committed assignment, one after another (best-effort: never throws).
+async function notifyAssignments(db, assignments) {
+    for (const assignment of assignments ?? []) {
+        try {
+            await notifyJobAssigned(db, assignment);
+        } catch {
+            // The assignment is committed; a notification must never turn it into an error.
+        }
+    }
 }
 
 async function createJobInTransaction({ db, actor, values, passportIds, now }) {
@@ -697,16 +710,17 @@ async function createJobInTransaction({ db, actor, values, passportIds, now }) {
                 newValue: JSON.stringify({ jobId: job.id, jobCode: job.jobCode, ...fields, jobTypeIds: typeIds, responsibleAgentId: agent.id, countryCode: agent.countryCode, candidates: passportIds.length }),
             }),
         });
+        const assignments = [];
         for (const passportId of passportIds) {
             try {
-                await assignCandidate(tx, { actor, job, passportId });
+                assignments.push(await assignCandidate(tx, { actor, job, passportId }));
             } catch (error) {
                 // Named, and the whole creation rolls back with it.
                 if (error instanceof CandidateError) throw new CandidateError(error.status, error.code, `${passportId}: ${error.message} Nothing was created.`);
                 throw error;
             }
         }
-        return getJob({ db: tx, jobId: job.id, user: actor });
+        return { job: await getJob({ db: tx, jobId: job.id, user: actor }), assignments };
     });
 }
 
@@ -830,23 +844,29 @@ async function assignCandidate(tx, { actor, job, passportId }) {
     await tx.auditLog.create({
         data: auditRow({ actor, action: JOB_AUDIT_ACTION.ADD_CANDIDATE, passportId, previousStatus: "NOT_ASSIGNED", newStatus: "ASSIGNED", reason: `Assigned to ${job.jobCode}`, newValue: JSON.stringify({ jobId, jobCode: job.jobCode }) }),
     });
+    // What A5 (notifyJobAssigned) needs once the caller's transaction has committed.
+    return { jobId, jobCode: job.jobCode, passportId, assignedAt: now };
 }
 
 // POST /api/admin/jobs/:jobId/candidates (job FOR SHARE, then assignCandidate).
 export async function addCandidateToJob({ db, actor, jobId, passportId }) {
     const stored = await resolveCandidatePassportId({ db, passportId });
     if (!stored) throw new CandidateError(404, "CANDIDATE_NOT_FOUND", "Candidate not found");
+    let result;
     try {
-        return await db.$transaction(async (tx) => {
+        result = await db.$transaction(async (tx) => {
             const job = await lockJob(tx, jobId, "share");
             requireProcessing(job);
-            await assignCandidate(tx, { actor, job, passportId: stored });
-            return getJob({ db: tx, jobId, user: actor });
+            const assignment = await assignCandidate(tx, { actor, job, passportId: stored });
+            return { job: await getJob({ db: tx, jobId, user: actor }), assignment };
         });
     } catch (error) {
         if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", "This candidate was just assigned to this job. Nothing was changed; refresh and check.");
         throw error;
     }
+    // After the commit, best-effort (A5).
+    await notifyAssignments(db, [result.assignment]);
+    return result.job;
 }
 
 // DELETE /api/admin/jobs/:jobId/candidates/:passportId: takes the candidate

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router";
 import { BreadcrumbProvider } from "../components/Breadcrumbs";
+import { NotificationNotice } from "../notifications/NotificationNotice";
 import { SyncProvider } from "../sync/SyncProvider";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
@@ -62,6 +63,7 @@ export function AdminLayout() {
                 <div className={`flex min-h-full flex-col transition-[padding] duration-200 ${collapsed ? "md:pl-sidebar-rail" : "md:pl-sidebar"}`}>
                     <Header onOpenMenu={() => setMobileOpen(true)} menuOpen={mobileOpen} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
                     <main className="mx-auto w-full max-w-content flex-1 p-4 md:p-6">
+                        <NotificationNotice />
                         <Outlet />
                     </main>
                 </div>

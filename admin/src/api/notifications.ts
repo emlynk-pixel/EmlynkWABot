@@ -10,6 +10,9 @@ export type AdminNotification = {
     message: string;
     createdAt: string;
     readAt: string | null;
+    // The candidate (passport ID) / job (id) the notification is about, when it names one.
+    candidateId?: string | null;
+    jobId?: string | null;
 };
 
 export type NotificationPage = { items: AdminNotification[]; unreadCount: number; nextCursor: string | null };
