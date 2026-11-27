@@ -21,6 +21,7 @@
 // through this API (see "direct uploads" below).
 
 import crypto from "node:crypto";
+import { AUTO_COMPLETE_STAGES, isAutoStageComplete } from "./stageCompletion.js";
 
 import { validateDocumentFile, ALLOWED_MIME_TYPES, MAX_FILE_SIZE } from "../utils/fileValidation.js";
 import { sha256Hex } from "../utils/fileChecksum.js";
@@ -1218,11 +1219,29 @@ export async function updateStage({ db, passportId, stage, values, actor = null,
     if (current.automatic && values.completed !== undefined) {
         throw new CandidateError(409, "AUTOMATIC_STAGE", "This stage is completed automatically when its details and documents are on record.");
     }
+    if (AUTO_COMPLETE_STAGES.includes(stage) && values.completed !== undefined) {
+        throw new CandidateError(409, "AUTOMATIC_STAGE", "This stage is completed automatically when its required details are filled in.");
+    }
     // Test details saved with a Test date and no Test ID: the generated one (testId.js). A typed one is kept.
     if (stage === "TEST_DETAILS" && (values.testDate !== undefined || values.testId !== undefined)) {
         const testDate = values.testDate !== undefined ? values.testDate : current.testDate;
         const testId = values.testId !== undefined ? values.testId : current.testId;
         if (testDate && !testId) values = { ...values, testId: formatTestId(testDate) };
+    }
+
+    // Test details and Job details: completion follows the saved data (stageCompletion.js), never the request.
+    if (AUTO_COMPLETE_STAGES.includes(stage)) {
+        const merged = stage === "TEST_DETAILS"
+            ? {
+                testAgentName: values.testAgentName !== undefined ? values.testAgentName : current.testAgentName,
+                testId: values.testId !== undefined ? values.testId : current.testId,
+                testDate: values.testDate !== undefined ? values.testDate : current.testDate,
+                testResult: values.testResult !== undefined ? values.testResult : current.testResult,
+            }
+            : { jobDetailsDate: values.jobDate !== undefined ? values.jobDate : current.jobDate };
+        const jobDisplay = { job: current.jobCode ? { jobCode: current.jobCode, client: { name: current.clientName } } : null };
+        const complete = isAutoStageComplete(stage, merged, jobDisplay);
+        if (complete !== current.completed) values = { ...values, completed: complete };
     }
 
     const data = {};

@@ -349,7 +349,7 @@ describe("Interview -> Test details", () => {
         const { preview: p } = await importRows(rows);
         assert.equal(p.actions.testsBlankResultAsPass, 1);
         const one = await stageOf(1, "TEST_DETAILS");
-        assert.deepEqual([one.testDate.toISOString().slice(0, 10), one.testResult, one.testId, one.completed], ["2026-11-03", "PASS", "T261103", true]);
+        assert.deepEqual([one.testDate.toISOString().slice(0, 10), one.testResult, one.testId, one.completed], ["2026-11-03", "PASS", "T261103", false]); // no Agent name in the sheet: not complete (stageCompletion.js)
         assert.deepEqual([(await stageOf(2, "TEST_DETAILS")).testResult, await statusOf(2)], ["FAIL", "STOPPED_WITH_TEST"]);
         assert.equal(await stageOf(3, "TEST_DETAILS"), null, "no date and no result: no test is invented");
         const later = await stageOf(4, "TEST_DETAILS");
@@ -554,7 +554,7 @@ describe("re-import and row atomicity", () => {
         assert.ok(issuesOf(p, 2).warnings.includes("Candidate details are verified in Emlynk: details not changed (the Test details and a visa status are still applied)"));
         assert.equal(await allocationOf(1), null);
         const stages = await prisma.candidateStage.findMany({ select: { stage: true, completed: true, testResult: true }, orderBy: { stage: "asc" } });
-        assert.deepEqual(stages, [{ stage: "TEST_DETAILS", completed: true, testResult: "PASS" }, { stage: "VISA_SUBMISSION", completed: true, testResult: null }], "the Test is written (PASS: the visa step)");
+        assert.deepEqual(stages, [{ stage: "TEST_DETAILS", completed: false, testResult: "PASS" }, { stage: "VISA_SUBMISSION", completed: true, testResult: null }], "the Test is written (PASS: the visa step); it has no Agent name, so it is not complete");
         assert.equal(await statusOf(1), "VISA_SUBMITTED");
         assert.ok((await prisma.candidateVerification.findUnique({ where: { passportId: passportOf(1) } })).detailsVerifiedAt, "the verification is kept");
         // Nothing new (the same Test, no visa status): nothing is written (SKIPPED_VERIFIED as before).

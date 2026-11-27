@@ -1,3 +1,6 @@
+// RETIRED: a submission no longer fills the record automatically (every changed field is reviewed), so this
+// is not run any more. Kept only for what it already did in environments where it was applied.
+//
 // One-time backfill: fill the EMPTY Additional Details fields of candidates who submitted the
 // Candidate Form before the automatic fill existed (src/services/candidateFormAutoFillBackfill.js).
 //

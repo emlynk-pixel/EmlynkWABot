@@ -317,10 +317,27 @@ describe("Work Allocation: allocated candidates", () => {
         await user.click(screen.getByRole("button", { name: "Reassign 1 candidates" }));
         const dialog = within(screen.getByRole("dialog", { name: "Reassign candidates?" }));
         expect(dialog.getByText(/CANDIDATE 5 · now Ann Analyst/)).toBeInTheDocument();
+        expect(dialog.getByText(/1 of the 1 selected candidates are already allocated/)).toBeInTheDocument();
+        expect(dialog.getByText("Ben Analyst")).toBeInTheDocument(); // the new assignee
+        expect(dialog.getByText(/→ Ben Analyst/)).toBeInTheDocument();
         expect(posts(calls)).toHaveLength(0);
         await user.click(dialog.getByRole("button", { name: "Reassign" }));
         await screen.findByRole("status", {}, RENDER_STEP);
         expect(posts(calls)[0].body).toMatchObject({ candidateIds: ["P0000005"], reassign: true });
+    });
+
+    test("REALLOC-UI: cancelling the reassignment confirmation sends nothing and keeps the selection", async () => {
+        const { calls } = backend();
+        renderApp("/work-allocation?view=allocated");
+        await table();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("checkbox", { name: "Select CANDIDATE 5" }));
+        await user.type(screen.getByLabelText("Candidates for Ben Analyst"), "1");
+        await user.click(screen.getByRole("button", { name: "Reassign 1 candidates" }));
+        await user.click(within(screen.getByRole("dialog", { name: "Reassign candidates?" })).getByRole("button", { name: "Cancel" }));
+        expect(screen.queryByRole("dialog", { name: "Reassign candidates?" })).not.toBeInTheDocument();
+        expect(posts(calls)).toHaveLength(0);
+        expect(screen.getByRole("checkbox", { name: "Select CANDIDATE 5" })).toBeChecked();
     });
 
     test("unassigning asks for confirmation, then sends confirm: true", async () => {

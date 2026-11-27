@@ -12,6 +12,7 @@ import { noRateLimit } from "./helpers/fakeAdminDb.js";
 import { createAdminRouter } from "../src/routes/admin.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { CANDIDATE_STAGES } from "../src/services/candidateService.js";
+import { businessDateOf } from "../src/utils/businessDay.js";
 
 const user = (adminId, role, n) => ({ adminId, role, name: `${role} ${n}`, email: `${adminId}@example.invalid`, authUserId: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` });
 const USERS = { ADMIN: user("u-admin", "ADMIN", 1), OWNER: user("u-owner", "OWNER", 2), ANALYST: user("u-ann", "ANALYST", 4), OTHER_ANALYST: user("u-ben", "ANALYST", 5), DESK: user("u-desk", "REGISTRATION_DESK", 3) };
@@ -257,7 +258,7 @@ describe("historical Job fallback on Job details (JOB-HISTORY-001 to 014)", () =
     test("JOB-HISTORY-011 / 012: the Date, Note and completion saved on Job details are unchanged while the displayed Job moves from current to historical", async () => {
         const a = await createJob(ids.acme);
         await assign(a);
-        await save(P1, "JOB_DETAILS", { jobDate: "2026-10-05", notes: "Interview booked", completed: true });
+        await save(P1, "JOB_DETAILS", { jobDate: "2026-10-05", notes: "Interview booked" });
         const keep = async () => { const s = await shownOf(); return [s.jobDate, s.notes, s.completed]; };
         assert.deepEqual(await keep(), ["2026-10-05", "Interview booked", true]);
         await complete(a);
@@ -295,27 +296,53 @@ describe("what can be saved (STAGE-JOB-010 to 015)", () => {
                 assert.equal(response.status, 400, `${key} ${JSON.stringify(body)}`);
             }
         }
-        assert.equal(await prisma.candidateStage.count(), 2, "nothing was written (only the two Test details rows the test set up)");
+        assert.equal(await prisma.candidateStage.count(), 3, "nothing was written (the two Test details rows the test set up, and the Job details row the assignment made)");
         const shown = await stage(P1, "JOB_DETAILS");
         assert.deepEqual([shown.jobCode, shown.clientName], [job.jobCode, "Acme Builders"]);
     });
 
-    test("STAGE-JOB-012 / 013 / 014: date, note and completion are saved and read back", async () => {
-        const response = await save(P1, "JOB_DETAILS", { jobDate: "2026-10-05", notes: "Visa interview booked", completed: true });
+    test("STAGE-JOB-012 / 013 / 014: date and note are saved and read back; completion follows the data, never the request", async () => {
+        // No Job yet: a date and a note do not complete the stage.
+        const response = await save(P1, "JOB_DETAILS", { jobDate: "2026-10-05", notes: "Visa interview booked" });
         assert.equal(response.status, 200, JSON.stringify(response.body));
-        const shown = await stage(P1, "JOB_DETAILS");
-        assert.deepEqual([shown.jobDate, shown.notes, shown.completed], ["2026-10-05", "Visa interview booked", true]);
-        assert.ok(shown.completedAt);
-        // Saved in the new column; the DB date is a plain DATE.
+        let shown = await stage(P1, "JOB_DETAILS");
+        assert.deepEqual([shown.jobDate, shown.notes, shown.completed], ["2026-10-05", "Visa interview booked", false]);
+        // The DB date is a plain DATE.
         const row = (await pg.query(`SELECT job_details_date::text AS d, completed FROM candidate_stages WHERE passport_id='${P1}' AND stage='JOB_DETAILS'`)).rows[0];
-        assert.deepEqual([row.d, row.completed], ["2026-10-05", true]);
-        // Un-complete and clear the date.
-        await save(P1, "JOB_DETAILS", { completed: false, jobDate: null });
-        const cleared = await stage(P1, "JOB_DETAILS");
-        assert.deepEqual([cleared.completed, cleared.completedAt, cleared.jobDate, cleared.notes], [false, null, null, "Visa interview booked"]);
-        // A Job being assigned does not complete the stage by itself.
+        assert.deepEqual([row.d, row.completed], ["2026-10-05", false]);
+        // A Job is assigned: the date typed earlier is kept, and the stage completes by itself.
         await assign(await createJob(ids.acme));
-        assert.equal((await stage(P1, "JOB_DETAILS")).completed, false);
+        shown = await stage(P1, "JOB_DETAILS");
+        assert.deepEqual([shown.jobDate, shown.completed], ["2026-10-05", true]);
+        assert.ok(shown.completedAt);
+        // Clearing the date makes it incomplete again (and clears the completion time); the note stays.
+        await save(P1, "JOB_DETAILS", { jobDate: null });
+        shown = await stage(P1, "JOB_DETAILS");
+        assert.deepEqual([shown.completed, shown.completedAt, shown.jobDate, shown.notes], [false, null, null, "Visa interview booked"]);
+        // A manual tick (or un-tick) is refused.
+        for (const completed of [true, false]) {
+            const refused = await save(P1, "JOB_DETAILS", { completed });
+            assert.deepEqual([refused.status, refused.body.code], [409, "AUTOMATIC_STAGE"]);
+        }
+    });
+
+    test("STAGE-JOB-025 / 026: assigning a Job selects the assignment day as the Date (editable); Notes never change completion", async () => {
+        await assign(await createJob(ids.acme));
+        let shown = await stage(P1, "JOB_DETAILS");
+        assert.deepEqual([shown.jobDate, shown.completed], [businessDateOf(new Date()), true]);
+        // The date can be changed, and stays complete.
+        await save(P1, "JOB_DETAILS", { jobDate: "2026-10-05" });
+        shown = await stage(P1, "JOB_DETAILS");
+        assert.deepEqual([shown.jobDate, shown.completed], ["2026-10-05", true]);
+        // Notes empty, filled or cleared: no effect.
+        for (const notes of ["a note", null, "again"]) {
+            await save(P1, "JOB_DETAILS", { notes });
+            assert.equal((await stage(P1, "JOB_DETAILS")).completed, true, String(notes));
+        }
+        // A second Job does not overwrite a date that is already there.
+        await assign(await createJob(ids.beta));
+        shown = await stage(P1, "JOB_DETAILS");
+        assert.deepEqual([shown.jobDate, shown.completed], ["2026-10-05", true]);
     });
 
     test("an invalid date, and a date sent to the wrong stage, are refused", async () => {
@@ -325,22 +352,66 @@ describe("what can be saved (STAGE-JOB-010 to 015)", () => {
         assert.equal((await save(P1, "JOB_DETAILS", { testId: "T-1" })).status, 400);
     });
 
-    test("STAGE-JOB-015: Test details saves and reloads agent, test ID, result, date, notes and completion", async () => {
-        const response = await save(P1, "TEST_DETAILS", { testAgentName: "Nimal Perera", testId: "T-2026-014", testResult: "PASS", testDate: "2026-09-28", notes: "Trade test", completed: true });
+    test("STAGE-JOB-015: Test details saves and reloads agent, test ID, result, date and notes; it completes when all are filled and the result is PASS", async () => {
+        const response = await save(P1, "TEST_DETAILS", { testAgentName: "Nimal Perera", testId: "T-2026-014", testResult: "PASS", testDate: "2026-09-28", notes: "Trade test" });
         assert.equal(response.status, 200, JSON.stringify(response.body));
         const shown = await stage(P1, "TEST_DETAILS");
         assert.deepEqual([shown.testAgentName, shown.testId, shown.testResult, shown.testDate, shown.notes, shown.completed], ["Nimal Perera", "T-2026-014", "PASS", "2026-09-28", "Trade test", true]);
+        assert.ok(shown.completedAt);
         assert.equal(shown.jobCode, null, "Job fields exist only on Job details");
+    });
+
+    test("STAGE-TEST-001 to 005: Test details completes only with Agent name, Test ID, Test date and a PASS; clearing a field, a FAIL or a blank value un-completes it; Notes never matter", async () => {
+        const completed = async () => (await stage(P1, "TEST_DETAILS")).completed;
+        // One by one: incomplete until the last required field is in.
+        await save(P1, "TEST_DETAILS", { testAgentName: "Nimal Perera" });
+        assert.equal(await completed(), false);
+        await save(P1, "TEST_DETAILS", { testResult: "PASS" });
+        assert.equal(await completed(), false);
+        await save(P1, "TEST_DETAILS", { testDate: "2026-09-28" }); // the Test ID is generated from the date
+        assert.equal(await completed(), true);
+        assert.ok((await stage(P1, "TEST_DETAILS")).testId, "a Test ID was generated");
+        // Notes: filled, cleared.
+        for (const notes of ["a note", null]) {
+            await save(P1, "TEST_DETAILS", { notes });
+            assert.equal(await completed(), true, String(notes));
+        }
+        // FAIL keeps it incomplete; PASS again completes it.
+        await save(P1, "TEST_DETAILS", { testResult: "FAIL" });
+        assert.equal(await completed(), false);
+        await save(P1, "TEST_DETAILS", { testResult: "PASS" });
+        assert.equal(await completed(), true);
+        // Clearing each required field un-completes it (and clears the completion time).
+        // (A cleared Test ID is generated again while a Test date is on record, so it is cleared together with the date below.)
+        for (const field of ["testAgentName", "testDate", "testResult"]) {
+            const before = await stage(P1, "TEST_DETAILS");
+            await save(P1, "TEST_DETAILS", { [field]: null });
+            const cleared = await stage(P1, "TEST_DETAILS");
+            assert.equal(cleared.completed, false, field);
+            assert.equal(cleared.completedAt, null, field);
+            await save(P1, "TEST_DETAILS", { [field]: before[field] });
+            assert.equal(await completed(), true, `${field} put back`);
+        }
+        const both = await stage(P1, "TEST_DETAILS");
+        await save(P1, "TEST_DETAILS", { testId: null, testDate: null });
+        assert.equal(await completed(), false, "Test ID and Test date cleared");
+        await save(P1, "TEST_DETAILS", { testId: both.testId, testDate: both.testDate });
+        assert.equal(await completed(), true);
+        await save(P1, "TEST_DETAILS", { testAgentName: "   " });
+        assert.equal(await completed(), false, "blank after trimming");
+        // A manual tick is refused.
+        const refused = await save(P1, "TEST_DETAILS", { completed: true });
+        assert.deepEqual([refused.status, refused.body.code], [409, "AUTOMATIC_STAGE"]);
     });
 
     test("saves are audited with the stage's own fields only (no Job or Client text)", async () => {
         const job = await createJob(ids.acme);
         await assign(job);
-        await save(P1, "JOB_DETAILS", { jobDate: "2026-10-05", notes: "n", completed: true });
+        await save(P1, "JOB_DETAILS", { jobDate: "2026-10-05", notes: "n" });
         const entries = await prisma.auditLog.findMany({ where: { action: "UPDATE_STAGE" } });
         assert.equal(entries.length, 1);
         const written = JSON.parse(entries[0].newValue);
-        assert.deepEqual(written, { stage: "JOB_DETAILS", completed: true, notes: "n", jobDate: "2026-10-05" });
+        assert.deepEqual(written, { stage: "JOB_DETAILS", notes: "n", jobDate: "2026-10-05" });
         assert.doesNotMatch(JSON.stringify(entries), /Acme Builders/);
     });
 });

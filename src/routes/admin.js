@@ -72,6 +72,7 @@ import {
     parseFollowUpListQuery,
 } from "../services/callLogFollowUpService.js";
 import { accessiblePassportIds, canAccessCandidate, candidateScope, isCandidateScoped } from "../services/candidateAccess.js";
+import { withAllocatedTo } from "../services/candidateAllocationVisibility.js";
 import { filterAccess, listCandidateFilterOptions } from "../services/candidateListFilters.js";
 import {
     assignCandidates,
@@ -634,6 +635,9 @@ export function createAdminRouter({
     const registrationOnly = (req) => hasRole(req.user.role, [REGISTRATION_DESK]);
     // A candidate as the user may see it: REGISTRATION_DESK gets the registration view only.
     const candidateFor = (req, details) => (registrationOnly(req) ? registrationView(details) : details);
+    // Every response that carries the candidate page's details: candidateFor, plus "Allocated To" for the roles
+    // that may see it, limited to the allocated users that role may see (candidateAllocationVisibility.js).
+    const candidateView = (req, client, details) => withAllocatedTo({ db: client, viewerRole: req.user.role, passportId: details?.candidate?.passportId, details: candidateFor(req, details) });
     const forbidden = (res) => res.status(403).json({ message: "Insufficient permissions" });
     // Creating a Candidate Form link: a system problem (the form not configured, an unexpected
     // error; never a refusal such as 409 FORM_SUBMITTED) also notifies the Admins and Team Leads
@@ -712,7 +716,7 @@ export function createAdminRouter({
         const passportId = await resolveCandidatePassportId({ db: client, passportId: req.params.passportId, scope: candidateScope(req.user) });
         const candidate = passportId && await getCandidate({ db: client, passportId });
         if (!candidate) return res.status(404).json({ message: "Candidate not found" });
-        return res.json(candidateFor(req, candidate));
+        return res.json(await candidateView(req, client, candidate));
     });
 
     router.put("/candidates/:passportId", requireRole(REGISTRATION_WORKFLOW), async (req, res) => {
@@ -727,7 +731,7 @@ export function createAdminRouter({
             const stored = await client.candidate.findUnique({ where: { passportId }, select: { job: true } });
             const values = await resolveJobTypes(res, client, parsed.values, parseJobTypes(stored?.job));
             if (!values) return undefined;
-            return res.json(candidateFor(req, await updateCandidateDetails({ db: client, actor: req.user, passportId, values })));
+            return res.json(await candidateView(req, client, await updateCandidateDetails({ db: client, actor: req.user, passportId, values })));
         });
     });
 
@@ -740,7 +744,7 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.json(candidateFor(req, await updateStage({
+        return candidateAction(res, async () => res.json(await candidateView(req, client, await updateStage({
             db: client, passportId: await storedCandidateId(client, req.params.passportId, req.user), stage: req.params.stage, values: parsed.values, actor: req.user,
         }))));
     });
@@ -752,9 +756,9 @@ export function createAdminRouter({
         const parsed = parseVerificationBody(req.body);
         if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.json(await setCandidateVerification({
+        return candidateAction(res, async () => res.json(await candidateView(req, client, await setCandidateVerification({
             db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
-        })));
+        }))));
     });
 
     // A candidate's final status (candidateFinalStatusService.js): Departed, Visa Not Going,
@@ -764,9 +768,9 @@ export function createAdminRouter({
         const parsed = parseFinalStatusBody(req.body);
         if (parsed.errors) return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.json(await setCandidateFinalStatus({
+        return candidateAction(res, async () => res.json(await candidateView(req, client, await setCandidateFinalStatus({
             db: client, actor: req.user, passportId: await storedCandidateId(client, req.params.passportId, req.user), ...parsed.values,
-        })));
+        }))));
     });
 
     // Document uploads: the browser sends the file straight to storage, never
@@ -799,7 +803,7 @@ export function createAdminRouter({
         }
         if (registrationOnly(req) && !REGISTRATION_DOCUMENTS.includes(parsed.values.documentType)) return forbidden(res);
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
-        return candidateAction(res, async () => res.json(candidateFor(req, await finalizeUpload({
+        return candidateAction(res, async () => res.json(await candidateView(req, client, await finalizeUpload({
             db: client,
             bucket: storage,
             admin: req.user,
@@ -820,14 +824,14 @@ export function createAdminRouter({
             return res.status(400).json({ message: "Invalid request body", errors: parsed.errors });
         }
         const [client, storage] = await Promise.all([resolveDb(db), resolveBucket(bucket)]);
-        return candidateAction(res, async () => res.json(await removeCandidateDocument({
+        return candidateAction(res, async () => res.json(await candidateView(req, client, await removeCandidateDocument({
             db: client,
             bucket: storage,
             admin: req.user,
             passportId: await storedCandidateId(client, req.params.passportId, req.user),
             documentId: req.params.documentId,
             reason: parsed.values.reason,
-        })));
+        }))));
     });
 
     router.get("/candidates/:passportId/call-logs", requireRole(CANDIDATE_READERS), async (req, res) => {

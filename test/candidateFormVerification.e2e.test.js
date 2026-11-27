@@ -293,8 +293,8 @@ describe("SUBMIT / DBSEC: what the database itself enforces", () => {
         const snapshot = await prisma.candidateFormPrefillSnapshot.findUnique({ where: { passportId: A.passportId } });
         assert.equal((await submit(token)).status, 200);
         assert.equal(JSON.stringify(await prisma.candidate.findUnique({ where: { passportId: A.passportId } })), candidateBefore, "candidate row unchanged");
-        // Only the EMPTY Additional Details of this candidate are filled (applyAutoFill); nothing else.
-        assert.deepEqual((await prisma.candidateAdditionalDetails.findMany({ select: { passportId: true } })).map((d) => d.passportId), [A.passportId]);
+        // The submission writes no Additional Details either: its values wait for staff to accept or reject them.
+        assert.deepEqual(await prisma.candidateAdditionalDetails.findMany({ select: { passportId: true } }), []);
         assert.equal(await prisma.candidateStage.count({ where: { NOT: { stage: "TEST_DETAILS" } } }), 0, "no stage written (only the seeded Test result PASS rows exist)");
         const response = await prisma.candidateFormResponse.findUnique({ where: { passportId: A.passportId } });
         assert.equal(response.fullName, "ANUSHA DE SOYSA", "server upper-cases English");

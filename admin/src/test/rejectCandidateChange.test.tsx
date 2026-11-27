@@ -68,17 +68,17 @@ describe("Revoke next to Confirm", () => {
         open();
         const birth = await hint("basic.birthDate");
         expect(birth).toHaveTextContent("Candidate submitted: 06 May 2003");
-        expect(within(birth).getByRole("button", { name: "Confirm Date of birth" })).toBeInTheDocument();
-        expect(within(birth).getByRole("button", { name: "Revoke Date of birth" })).toBeInTheDocument();
-        expect(screen.getAllByRole("button", { name: /^Revoke / })).toHaveLength(2);
+        expect(within(birth).getByRole("button", { name: "Accept Date of birth" })).toBeInTheDocument();
+        expect(within(birth).getByRole("button", { name: "Reject Date of birth" })).toBeInTheDocument();
+        expect(screen.getAllByRole("button", { name: /^Reject (?!All$)/ })).toHaveLength(2);
     });
 
     test("REJECT-002 / 003 / 005 / 006 / 007 Revoke asks first; then the record is unchanged, only a reject request is sent, the hint becomes a small rejected note and the others stay", async () => {
         const ctl = backend();
         const user = userEvent.setup();
         open();
-        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Revoke Date of birth" }));
-        const dialog = await screen.findByRole("dialog", { name: "Revoke the candidate's Date of birth?" });
+        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Reject Date of birth" }));
+        const dialog = await screen.findByRole("dialog", { name: "Reject the candidate's Date of birth?" });
         expect(within(dialog).getByText("05 Jun 2003")).toBeInTheDocument();
         expect(within(dialog).getByText("06 May 2003")).toBeInTheDocument();
         expect(within(dialog).getByText(/The current value is kept/)).toBeInTheDocument();
@@ -86,9 +86,9 @@ describe("Revoke next to Confirm", () => {
         expect(posts(ctl.calls)).toHaveLength(0);
         expect(screen.getByTestId("submitted-hint-basic.birthDate")).toBeInTheDocument(); // nothing is hidden before the server answers
 
-        await user.click(within(screen.getByTestId("submitted-hint-basic.birthDate")).getByRole("button", { name: "Revoke Date of birth" }));
+        await user.click(within(screen.getByTestId("submitted-hint-basic.birthDate")).getByRole("button", { name: "Reject Date of birth" }));
         ctl.reject("basic.birthDate");
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Revoke change" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Reject change" }));
         await waitFor(() => expect(screen.queryByTestId("submitted-hint-basic.birthDate")).toBeNull());
         // The request: one POST to reject-field with only the field key and the values the screen saw.
         const sent = posts(ctl.calls);
@@ -98,12 +98,12 @@ describe("Revoke next to Confirm", () => {
         expect(screen.getByLabelText("Date of birth")).toHaveValue("2003-06-05");
         const note = await screen.findByTestId("rejected-note-basic.birthDate");
         expect(note).toHaveTextContent("Candidate change rejected");
-        expect(screen.queryByRole("button", { name: "Confirm Date of birth" })).toBeNull();
-        expect(screen.queryByRole("button", { name: "Revoke Date of birth" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Accept Date of birth" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Reject Date of birth" })).toBeNull();
         // Other pending changes are untouched (REJECT-007).
         const address = screen.getByTestId("submitted-hint-contact.address");
-        expect(within(address).getByRole("button", { name: "Confirm Address" })).toBeInTheDocument();
-        expect(within(address).getByRole("button", { name: "Revoke Address" })).toBeInTheDocument();
+        expect(within(address).getByRole("button", { name: "Accept Address" })).toBeInTheDocument();
+        expect(within(address).getByRole("button", { name: "Reject Address" })).toBeInTheDocument();
         expect(screen.getByLabelText("Address")).toHaveValue("1 Main Street");
     });
 
@@ -118,8 +118,8 @@ describe("Revoke next to Confirm", () => {
         });
         const user = userEvent.setup();
         open();
-        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Revoke Date of birth" }));
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Revoke change" }));
+        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Reject Date of birth" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Reject change" }));
         expect(await screen.findByRole("button", { name: "Rejecting…" })).toBeDisabled();
         expect(screen.getByTestId("submitted-hint-basic.birthDate")).toBeInTheDocument();
         release();
@@ -130,13 +130,13 @@ describe("Revoke next to Confirm", () => {
         const ctl = backend();
         const user = userEvent.setup();
         open();
-        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Revoke Date of birth" }));
+        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Reject Date of birth" }));
         ctl.reject("basic.birthDate");
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Revoke change" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Reject change" }));
         await screen.findByTestId("rejected-note-basic.birthDate");
-        await user.click(within(screen.getByTestId("submitted-hint-contact.address")).getByRole("button", { name: "Confirm Address" }));
+        await user.click(within(screen.getByTestId("submitted-hint-contact.address")).getByRole("button", { name: "Accept Address" }));
         ctl.confirm("contact.address");
-        await user.click(within(await screen.findByRole("dialog", { name: "Update Address?" })).getByRole("button", { name: "Confirm change" }));
+        await user.click(within(await screen.findByRole("dialog", { name: "Accept Address?" })).getByRole("button", { name: "Accept change" }));
         await waitFor(() => expect(screen.getByLabelText("Address")).toHaveValue("12 GALLE ROAD"));
         expect(screen.getByLabelText("Date of birth")).toHaveValue("2003-06-05");
         expect(posts(ctl.calls).map((c) => c.path)).toEqual([`${PATH}/form-submission/reject-field`, `${PATH}/form-submission/confirm-field`]);
@@ -148,8 +148,8 @@ describe("Revoke next to Confirm", () => {
         });
         const user = userEvent.setup();
         open();
-        await user.click(within(await hint("contact.address")).getByRole("button", { name: "Revoke Address" }));
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Revoke change" }));
+        await user.click(within(await hint("contact.address")).getByRole("button", { name: "Reject Address" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Reject change" }));
         expect(await screen.findByRole("alert")).toHaveTextContent("This change was already confirmed. Refresh and review again.");
         expect(screen.getByTestId("submitted-hint-contact.address")).toBeInTheDocument();
         expect(screen.getByLabelText("Address")).toHaveValue("1 Main Street");
@@ -166,8 +166,8 @@ describe("who can revoke (REJECT-011 / 012)", () => {
             const view = open();
             const address = await hint("contact.address");
             expect(address).toHaveTextContent("Candidate submitted: 12 GALLE ROAD");
-            expect(within(address).queryByRole("button", { name: "Revoke Address" }) !== null, role).toBe(can);
-            expect(within(address).queryByRole("button", { name: "Confirm Address" }) !== null, role).toBe(can);
+            expect(within(address).queryByRole("button", { name: "Reject Address" }) !== null, role).toBe(can);
+            expect(within(address).queryByRole("button", { name: "Accept Address" }) !== null, role).toBe(can);
             view.unmount();
         }
     });
@@ -185,15 +185,15 @@ describe("unsaved Admin typing (REJECT-016)", () => {
         const address = screen.getByLabelText("Address");
         await user.clear(address);
         await user.type(address, "Typed but not saved");
-        await user.click(within(screen.getByTestId("submitted-hint-basic.birthDate")).getByRole("button", { name: "Revoke Date of birth" }));
+        await user.click(within(screen.getByTestId("submitted-hint-basic.birthDate")).getByRole("button", { name: "Reject Date of birth" }));
         ctl.reject("basic.birthDate");
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Revoke change" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Reject change" }));
         await screen.findByTestId("rejected-note-basic.birthDate");
         expect(screen.getByLabelText("Place of birth")).toHaveValue("KANDY");
         expect(screen.getByLabelText("Address")).toHaveValue("Typed but not saved");
         expect(screen.getByLabelText("Date of birth")).toHaveValue("2003-06-05");
         expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
         // The hint for the field with unsaved typing is still there, with its buttons.
-        expect(within(screen.getByTestId("submitted-hint-contact.address")).getByRole("button", { name: "Revoke Address" })).toBeInTheDocument();
+        expect(within(screen.getByTestId("submitted-hint-contact.address")).getByRole("button", { name: "Reject Address" })).toBeInTheDocument();
     });
 });

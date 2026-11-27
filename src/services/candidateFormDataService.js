@@ -588,8 +588,7 @@ function parseAnswerValues(answers, { now, jobCategories, groups = null, civilSt
 //      this match zero rows);
 //   2. store the answers (with the verified NIC from the record) and make
 //      sure the original-values snapshot exists;
-//   3. fill the EMPTY Additional Details fields with the submitted values
-//      (applyAutoFill; fields with a value are left for Confirm / Reject).
+//   (The candidate's record is not changed: every submitted value that differs is left for staff to accept or reject.)
 // A retry of the winning request (same idempotency key) gets the same success;
 // anything else after submission is 409 with a neutral body.
 export async function submitCandidateForm({ db, passportId, linkId, version, kind = "SINGLE", jobId = null, values, idempotencyKey, now = new Date() }) {
@@ -626,12 +625,8 @@ export async function submitCandidateForm({ db, passportId, linkId, version, kin
             });
         }
         const response = await tx.candidateFormResponse.create({ data: { passportId, ...values, nic: candidate.nic, submittedAt: now, submittedViaLinkId: linkId } });
-        // The Additional Details fields that are EMPTY in the record take the submitted value now, in this
-        // transaction (candidateFormFieldConfirmService.js applyAutoFill): fill only, never a field that has
-        // a value (a different value there stays a pending change for Confirm / Reject), never the core
-        // candidate record. Imported at call time: that module imports this one (ANSWER_FIELDS, ...).
-        const { applyAutoFill } = await import("./candidateFormFieldConfirmService.js");
-        await applyAutoFill(tx, passportId, response);
+        // Nothing is written to the candidate's record here: every submitted value that differs from the record
+        // (an empty Additional Details field included) is a pending change that staff accept or reject.
         // The saved progress is superseded by the submission (and its personal data is not kept twice).
         await tx.candidateFormDraft.deleteMany({ where: { passportId } });
         // The Google Sheet sync outbox (formSubmissionSync.js): this submission, once (passport_id is

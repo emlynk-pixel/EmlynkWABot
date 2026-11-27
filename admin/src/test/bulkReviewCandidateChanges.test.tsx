@@ -104,7 +104,7 @@ describe("Candidate Form changes: Confirm All / Reject All", () => {
         openPage();
         await user.click(within(await card()).getByRole("button", { name: "Confirm All" }));
         const dialog = await screen.findByRole("dialog", { name: "Confirm all 3 Candidate Form changes?" });
-        const rows = within(dialog).getAllByRole("row").slice(1).map((row) => [...row.querySelectorAll("th, td")].map((cell) => cell.textContent));
+        const rows = within(dialog).getAllByRole("row").slice(1).map((row) => [...row.querySelectorAll("th, td")].slice(0, 3).map((cell) => cell.textContent));
         expect(rows).toEqual([["Date of birth", "05 Jun 2003", "06 May 2003"], ["Address", "1 Main Street", "12 GALLE ROAD"], ["Shoe size (EU)", "41", "42"]]);
         expect(dialog).toHaveTextContent("If any one cannot be applied, nothing is changed.");
         // Cancel sends nothing.
@@ -181,12 +181,69 @@ describe("Candidate Form changes: Confirm All / Reject All", () => {
         expect(screen.getByLabelText("Address")).toHaveValue("1 Main Street");
     });
 
-    test("BULK-UI-008 the per-field Confirm / Revoke are still there next to the bulk buttons", async () => {
+    test("BULK-UI-X-001 / 002 x keeps a field Pending (struck through, left out of the request, still pending afterwards); x again includes it", async () => {
+        // The stub decides only what it is sent, like the server: the excluded Address stays pending.
+        const ctl = backend("ADMIN", [BIRTH, ADDRESS, SHOE], {
+            [`POST ${PATH}/form-submission/confirm-all`]: () => ({ status: 200, body: submission([ADDRESS]) }),
+        });
+        const user = userEvent.setup();
+        openPage();
+        await user.click(within(await card()).getByRole("button", { name: "Confirm All" }));
+        const dialog = within(await screen.findByRole("dialog", { name: "Confirm all 3 Candidate Form changes?" }));
+        const row = () => dialog.getByTestId("change-row-contact.address");
+        expect(row()).not.toHaveAttribute("data-excluded");
+
+        await user.click(dialog.getByRole("button", { name: "Keep Address Pending" }));
+        expect(row()).toHaveAttribute("data-excluded", "true");
+        expect(within(row()).getByText("Pending")).toBeInTheDocument();
+        expect(screen.getByRole("dialog", { name: "Confirm all 2 Candidate Form changes?" })).toBeInTheDocument();
+
+        // x again: the field is included again.
+        await user.click(dialog.getByRole("button", { name: "Include Address" }));
+        expect(row()).not.toHaveAttribute("data-excluded");
+        expect(within(row()).queryByText("Pending")).toBeNull();
+        expect(screen.getByRole("dialog", { name: "Confirm all 3 Candidate Form changes?" })).toBeInTheDocument();
+
+        // Excluded again, then confirmed: only the other two are sent, the excluded one is still pending afterwards.
+        await user.click(dialog.getByRole("button", { name: "Keep Address Pending" }));
+        await user.click(dialog.getByRole("button", { name: "Confirm all" }));
+        await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        expect(posts(ctl)).toHaveLength(1);
+        expect(posts(ctl)[0].body).toEqual({ changes: [BIRTH, SHOE].map((c) => ({ field: c.field, expectedCurrentValue: c.current, expectedSubmittedValue: c.submitted })) });
+        expect(await screen.findByTestId("submitted-hint-contact.address")).toBeInTheDocument();
+        expect(screen.getByTestId("candidate-form-changes")).toBeInTheDocument();
+    });
+
+    test("BULK-UI-X-003 when every field is excluded, Confirm is disabled with a message and nothing is sent; Reject All honours x too", async () => {
+        const ctl = backend("ADMIN", [BIRTH, ADDRESS, SHOE], {
+            [`POST ${PATH}/form-submission/reject-all`]: () => ({ status: 200, body: submission([BIRTH, ADDRESS]) }),
+        });
+        const user = userEvent.setup();
+        openPage();
+        await user.click(within(await card()).getByRole("button", { name: "Confirm All" }));
+        const dialog = within(await screen.findByRole("dialog"));
+        for (const label of ["Date of birth", "Address", "Shoe size (EU)"]) await user.click(dialog.getByRole("button", { name: `Keep ${label} Pending` }));
+        expect(dialog.getByRole("button", { name: "Confirm all" })).toBeDisabled();
+        expect(dialog.getByRole("alert")).toHaveTextContent("Every field is excluded");
+        expect(posts(ctl)).toHaveLength(0);
+        await user.click(dialog.getByRole("button", { name: "Cancel" }));
+
+        // The exclusions do not carry over to the next time the dialog is opened.
+        await user.click(within(await card()).getByRole("button", { name: "Reject All" }));
+        const rejecting = within(await screen.findByRole("dialog", { name: "Reject all 3 Candidate Form changes?" }));
+        await user.click(rejecting.getByRole("button", { name: "Keep Shoe size (EU) Pending" }));
+        await user.click(rejecting.getByRole("button", { name: "Reject all" }));
+        await waitFor(() => expect(posts(ctl)).toHaveLength(1));
+        expect(posts(ctl)[0].path).toBe(`${PATH}/form-submission/reject-all`);
+        expect((posts(ctl)[0].body as { changes: { field: string }[] }).changes.map((c) => c.field)).toEqual(["basic.birthDate", "contact.address"]);
+    });
+
+    test("BULK-UI-008 the per-field Accept / Reject are still there next to the bulk buttons", async () => {
         backend();
         openPage();
         await card();
         const address = screen.getByTestId("submitted-hint-contact.address");
-        expect(within(address).getByRole("button", { name: "Confirm Address" })).toBeInTheDocument();
-        expect(within(address).getByRole("button", { name: "Revoke Address" })).toBeInTheDocument();
+        expect(within(address).getByRole("button", { name: "Accept Address" })).toBeInTheDocument();
+        expect(within(address).getByRole("button", { name: "Reject Address" })).toBeInTheDocument();
     });
 });

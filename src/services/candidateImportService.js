@@ -17,6 +17,7 @@
 // Nothing here logs; results hold row numbers, masked passports and reason codes only.
 
 import crypto from "node:crypto";
+import { isTestDetailsComplete } from "./stageCompletion.js";
 
 import { JOB_ROLE_ALIASES, SUPPORTED_SOURCE_COLUMNS, analyzeSourceHeaders, sourceColumnFor, sourceColumnsForClient, sourceHeaderKey } from "./candidateImportSourceMapping.js";
 import { ROW_STATUS, sourceCells, validateLegacyRow } from "./candidateImportRowValidator.js";
@@ -569,14 +570,15 @@ async function executeExtras(tx, plans, { importId, actor, audits, effects, now,
         const effect = effects.get(plan.rowNumber);
         if (allocated.has(passportId)) effect.allocated = 1;
         if (test) {
-            // A new Test details row is completed when it has a result (a test held).
-            const completed = test.create && Boolean(test.fill.testResult);
-            await write(plan, "TEST_DETAILS", { passportId, stage: "TEST_DETAILS", ...test.fill, completed, completedAt: completed ? now : null }, test.fill);
+            // Completion follows the central rule (stageCompletion.js) applied to the stored row plus what the import fills.
+            const stored = stageOf(plan.prior, "TEST_DETAILS");
+            const completed = isTestDetailsComplete({ ...(stored ?? {}), ...test.fill });
+            const update = Boolean(stored?.completed) !== completed ? { ...test.fill, completed, completedAt: completed ? now : null } : test.fill;
+            await write(plan, "TEST_DETAILS", { passportId, stage: "TEST_DETAILS", ...test.fill, completed, completedAt: completed ? now : null }, update);
             const after = Object.fromEntries(Object.entries(test.fill).map(([field, value]) => [field, isoDayOf(value)]));
             const before = Object.fromEntries(Object.keys(test.fill).map((field) => [field, null]));
             const audit = stageAudit(passportId, "TEST_DETAILS", { from: false, to: completed, before, after: completed ? { ...after, completed: true } : after });
-            const stored = stageOf(plan.prior, "TEST_DETAILS");
-            ledgerStage(plan, passportId, "TEST_DETAILS", stored ? test.fill : { ...test.fill, completed, completedAt: completed ? now : null }, stored, audit);
+            ledgerStage(plan, passportId, "TEST_DETAILS", stored ? update : { ...test.fill, completed, completedAt: completed ? now : null }, stored, audit);
             effect.testSet = 1;
         }
         for (const stage of stages) {

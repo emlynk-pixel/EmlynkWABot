@@ -351,12 +351,11 @@ describe("routes: the new answers are stored, read back and reviewed", () => {
         assert.equal(confirmed.status, 200, JSON.stringify(confirmed.body));
         const details = await prisma.candidateAdditionalDetails.findUnique({ where: { passportId: A.passportId } });
         assert.deepEqual([details.fatherAlive, details.motherAlive], [false, true], "only the confirmed column changed");
-        // The other new answers were EMPTY in Additional Details: the submission filled them (applyAutoFill),
-        // so there is nothing left to confirm for them.
-        assert.deepEqual([details.bloodGroup, details.height, details.cityInRomania], ["O+", "175 cm", "Cluj-Napoca"]);
-        for (const field of ["basic.bloodGroup", "basic.height", "contact.cityInRomania"]) {
-            const r = await call("POST", `/api/admin/candidates/${A.passportId}/form-submission/confirm-field`, { body: { field, expectedCurrentValue: null, expectedSubmittedValue: "x" } });
-            assert.deepEqual([r.status, r.body.code], [409, "FORM_FIELD_NOT_PENDING"], field);
+        // The other new answers were EMPTY in Additional Details: the submission fills nothing, so they are pending.
+        assert.deepEqual([details.bloodGroup, details.height, details.cityInRomania], [null, null, null]);
+        const later = (await call("GET", `/api/admin/candidates/${A.passportId}/form-submission`)).body.pending;
+        for (const [field, submitted] of [["basic.bloodGroup", "O+"], ["basic.height", "175 cm"], ["contact.cityInRomania", "Cluj-Napoca"]]) {
+            assert.deepEqual(later.find((change) => change.field === field), { field, current: null, submitted }, field);
         }
     });
 });

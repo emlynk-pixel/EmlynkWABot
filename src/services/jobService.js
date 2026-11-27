@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 import { CandidateError, TEST_RESULT_PASS, WORKFLOW_STATUS_SELECT, candidateWorkflowStatuses, listCandidates, listPagination, resolveCandidatePassportId } from "./candidateService.js";
 import { candidateScope, isCandidateScoped } from "./candidateAccess.js";
+import { onJobAssigned } from "./stageCompletion.js";
 import { JOB_SELECT, JOB_STATUS, jobSummaryView } from "./jobAssignmentReader.js";
 import { candidateMatchesJobTypes } from "./jobTypeCatalog.js";
 import { clientName } from "../utils/clientName.js";
@@ -824,6 +825,8 @@ async function assignCandidate(tx, { actor, job, passportId }) {
         if (isUniqueViolation(error)) throw new CandidateError(409, "CANDIDATE_ALREADY_IN_JOB", `This candidate was just assigned to ${job.jobCode}. Nothing was changed; refresh and check.`);
         throw error;
     }
+    // Job details Date defaults to the day the Job was assigned (still editable), and the stage completion follows.
+    await onJobAssigned(tx, passportId, now);
     await tx.auditLog.create({
         data: auditRow({ actor, action: JOB_AUDIT_ACTION.ADD_CANDIDATE, passportId, previousStatus: "NOT_ASSIGNED", newStatus: "ASSIGNED", reason: `Assigned to ${job.jobCode}`, newValue: JSON.stringify({ jobId, jobCode: job.jobCode }) }),
     });

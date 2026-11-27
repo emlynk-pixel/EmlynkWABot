@@ -141,6 +141,13 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
     const [asking, setAsking] = useState<{ change: PendingChange; action: Action } | null>(null);
     // Confirm All / Reject All: the changes listed when the dialog opened are exactly what is sent.
     const [askingAll, setAskingAll] = useState<{ changes: readonly PendingChange[]; action: Action } | null>(null);
+    // Fields the Admin marked with "x" in that dialog: they are left out of the request and stay Pending.
+    const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
+    const toggleExcluded = (field: string) => setExcluded((previous) => {
+        const next = new Set(previous);
+        if (!next.delete(field)) next.add(field);
+        return next;
+    });
     // Form keys the Admin just confirmed: the forms take them once the refreshed record arrives.
     const confirmedKeys = useRef(new Set<string>());
     const takeConfirmed = useCallback((keys: readonly string[]) => {
@@ -155,7 +162,7 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
         rejected: new Set(rejected),
         canConfirm: canConfirm && Boolean(token),
         ask: (change, action) => { setError(null); setAsking({ change, action }); },
-        askAll: (action) => { setError(null); setAskingAll({ changes: pending, action }); },
+        askAll: (action) => { setError(null); setExcluded(new Set()); setAskingAll({ changes: pending, action }); },
         takeConfirmed,
         focusField,
     }), [pending, rejected, canConfirm, token, takeConfirmed, focusField]);
@@ -167,7 +174,10 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
         setBusy(true);
         setError(null);
         try {
-            const { changes, action } = askingAll;
+            const { action } = askingAll;
+            // The server decides exactly these fields; the excluded ones are not sent and stay Pending.
+            const changes = askingAll.changes.filter((change) => !excluded.has(change.field));
+            if (!changes.length) return;
             const body = { changes: changes.map((change) => ({ field: change.field, expectedCurrentValue: change.current, expectedSubmittedValue: change.submitted })) };
             if (action === "confirm") await confirmAllFormFields(token, passportId, body);
             else await rejectAllFormFields(token, passportId, body);
@@ -208,7 +218,7 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
         <SubmittedChanges.Provider value={value}>
             {children}
             {asking && (
-                <ActionDialog title={asking.action === "confirm" ? `Update ${CONFIRMABLE_LABELS[asking.change.field]?.label ?? "field"}?` : `Revoke the candidate's ${CONFIRMABLE_LABELS[asking.change.field]?.label ?? "field"}?`} busy={busy} onClose={close}>
+                <ActionDialog title={asking.action === "confirm" ? `Accept ${CONFIRMABLE_LABELS[asking.change.field]?.label ?? "field"}?` : `Reject the candidate's ${CONFIRMABLE_LABELS[asking.change.field]?.label ?? "field"}?`} busy={busy} onClose={close}>
                     <dl className="space-y-1 text-body-sm">
                         <div className="flex gap-2"><dt className="w-36 shrink-0 text-ink-muted">Current</dt><dd className="text-ink">{display(asking.change.field, asking.change.current)}</dd></div>
                         <div className="flex gap-2"><dt className="w-36 shrink-0 text-ink-muted">Candidate submitted</dt><dd className="font-medium text-ink">{display(asking.change.field, asking.change.submitted)}</dd></div>
@@ -219,13 +229,15 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
                     <DialogError message={error} />
                     <div className="mt-4 flex justify-end gap-2">
                         <button type="button" className={secondaryButton} disabled={busy} onClick={close}>{error ? "Close" : "Cancel"}</button>
-                        {!error && <button type="button" className={primaryButton} disabled={busy} onClick={confirm}>{busy ? (asking.action === "confirm" ? "Confirming…" : "Rejecting…") : asking.action === "confirm" ? "Confirm change" : "Revoke change"}</button>}
+                        {!error && <button type="button" className={primaryButton} disabled={busy} onClick={confirm}>{busy ? (asking.action === "confirm" ? "Accepting…" : "Rejecting…") : asking.action === "confirm" ? "Accept change" : "Reject change"}</button>}
                     </div>
                 </ActionDialog>
             )}
             {askingAll && (
-                <ActionDialog title={askingAll.action === "confirm" ? `Confirm all ${askingAll.changes.length} Candidate Form changes?` : `Reject all ${askingAll.changes.length} Candidate Form changes?`} busy={busy} onClose={close}>
-                    <ChangesTable changes={askingAll.changes} />
+                <ActionDialog title={askingAll.action === "confirm" ? `Confirm all ${askingAll.changes.length - excluded.size} Candidate Form changes?` : `Reject all ${askingAll.changes.length - excluded.size} Candidate Form changes?`} busy={busy} onClose={close} size="lg">
+                    <ChangesTable changes={askingAll.changes} excluded={excluded} onToggle={busy ? undefined : toggleExcluded} />
+                    <p className="mt-3 text-label-sm text-ink-muted">Click x on a field to keep it Pending: it is left out and stays as it is for you to review later.</p>
+                    {excluded.size === askingAll.changes.length && <p role="alert" className="mt-2 text-label-sm font-medium text-critical">Every field is excluded. Include at least one field to continue.</p>}
                     <p className="mt-3 text-label-sm text-ink-muted">{askingAll.action === "confirm"
                         ? "Every change listed is applied to the candidate's record, with the same checks as confirming each one. If any one cannot be applied, nothing is changed. The submitted form is kept as it is."
                         : "The current values are kept. Every submitted value listed is dismissed and will not be offered again; the submitted form itself is kept as it is."}</p>
@@ -233,7 +245,7 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
                     <div className="mt-4 flex justify-end gap-2">
                         <button type="button" className={secondaryButton} disabled={busy} onClick={close}>{error ? "Close" : "Cancel"}</button>
                         {!error && (
-                            <button type="button" className={askingAll.action === "confirm" ? primaryButton : dangerSolidButton} disabled={busy} onClick={reviewAll}>
+                            <button type="button" className={askingAll.action === "confirm" ? primaryButton : dangerSolidButton} disabled={busy || excluded.size === askingAll.changes.length} onClick={reviewAll}>
                                 {busy ? (askingAll.action === "confirm" ? "Confirming…" : "Rejecting…") : askingAll.action === "confirm" ? "Confirm all" : "Reject all"}
                             </button>
                         )}
@@ -244,26 +256,55 @@ export function SubmittedChangesProvider({ pending, rejected = [], canConfirm, p
     );
 }
 
-// Field / Current / Submitted for the changes a Confirm All / Reject All will decide.
-function ChangesTable({ changes }: { changes: readonly PendingChange[] }) {
+// Field / Current / Submitted for the changes a Confirm All / Reject All will decide. A field marked with x
+// (excluded) is struck through and says Pending: it is not decided. Without onToggle the x is not offered.
+function ChangesTable({ changes, excluded = new Set(), onToggle }: { changes: readonly PendingChange[]; excluded?: ReadonlySet<string>; onToggle?: (field: string) => void }) {
     return (
-        <div className="max-h-80 overflow-auto rounded-lg border border-border">
-            <table className="w-full text-left text-body-sm">
+        <div className="max-h-[55vh] overflow-y-auto overflow-x-hidden rounded-lg border border-border">
+            <table className="w-full table-fixed text-left text-body-sm">
+                <colgroup>
+                    <col className="w-[26%]" />
+                    <col className="w-[28%]" />
+                    <col className="w-[34%]" />
+                    {onToggle && <col className="w-[12%]" />}
+                </colgroup>
                 <thead className="sticky top-0 bg-canvas text-label-sm text-ink-muted">
                     <tr>
                         <th scope="col" className="px-3 py-2 font-medium">Field</th>
                         <th scope="col" className="px-3 py-2 font-medium">Current</th>
                         <th scope="col" className="px-3 py-2 font-medium">Submitted</th>
+                        {onToggle && <th scope="col" className="px-3 py-2 text-right font-medium" title="Keep Pending">Keep</th>}
                     </tr>
                 </thead>
                 <tbody>
-                    {changes.map((change) => (
-                        <tr key={change.field} data-testid={`change-row-${change.field}`} className="border-t border-border align-top">
-                            <th scope="row" className="px-3 py-2 font-medium text-ink">{CONFIRMABLE_LABELS[change.field]?.label ?? change.field}</th>
-                            <td className="break-words px-3 py-2 text-ink-muted">{display(change.field, change.current)}</td>
-                            <td className="break-words px-3 py-2 font-medium text-ink">{display(change.field, change.submitted)}</td>
-                        </tr>
-                    ))}
+                    {changes.map((change) => {
+                        const label = CONFIRMABLE_LABELS[change.field]?.label ?? change.field;
+                        const off = excluded.has(change.field);
+                        return (
+                            <tr key={change.field} data-testid={`change-row-${change.field}`} data-excluded={off ? "true" : undefined} className={`border-t border-border align-top ${off ? "bg-canvas text-ink-muted opacity-60" : ""}`}>
+                                <th scope="row" className={`[overflow-wrap:anywhere] px-3 py-2 font-medium ${off ? "line-through" : "text-ink"}`}>
+                                    {label}
+                                    {off && <span className="ml-2 rounded-full border border-border-strong px-2 py-0.5 text-label-sm font-medium no-underline">Pending</span>}
+                                </th>
+                                <td className={`[overflow-wrap:anywhere] px-3 py-2 ${off ? "line-through" : "text-ink-muted"}`}>{display(change.field, change.current)}</td>
+                                <td className={`[overflow-wrap:anywhere] px-3 py-2 ${off ? "line-through" : "font-medium text-ink"}`}>{display(change.field, change.submitted)}</td>
+                                {onToggle && (
+                                    <td className="px-3 py-2 text-right">
+                                        <button
+                                            type="button"
+                                            aria-pressed={off}
+                                            aria-label={off ? `Include ${label}` : `Keep ${label} Pending`}
+                                            title={off ? "Include this field again" : "Keep this field Pending"}
+                                            onClick={() => onToggle(change.field)}
+                                            className={`size-6 rounded-md border text-body-sm leading-none ${off ? "border-border-strong bg-surface text-ink" : "border-border text-ink-muted hover:bg-canvas"}`}
+                                        >
+                                            <span aria-hidden="true">×</span>
+                                        </button>
+                                    </td>
+                                )}
+                            </tr>
+                        );
+                    })}
                 </tbody>
             </table>
         </div>
@@ -301,11 +342,11 @@ export function SubmittedHint({ field }: { field: string }) {
             <span>Candidate submitted: <strong className="font-semibold">{display(field, change.submitted)}</strong></span>
             {context.canConfirm && (
                 <>
-                    <button type="button" aria-label={`Confirm ${label}`} onClick={() => context.ask(change, "confirm")} className="rounded-lg border border-review-border bg-review-bg px-2 py-0.5 text-label-sm font-medium text-review hover:opacity-80">
-                        Confirm
+                    <button type="button" aria-label={`Accept ${label}`} onClick={() => context.ask(change, "confirm")} className="rounded-lg border border-review-border bg-review-bg px-2 py-0.5 text-label-sm font-medium text-review hover:opacity-80">
+                        Accept
                     </button>
-                    <button type="button" aria-label={`Revoke ${label}`} onClick={() => context.ask(change, "reject")} className="rounded-lg border border-border-strong bg-surface px-2 py-0.5 text-label-sm font-medium text-ink-soft hover:bg-canvas">
-                        Revoke
+                    <button type="button" aria-label={`Reject ${label}`} onClick={() => context.ask(change, "reject")} className="rounded-lg border border-border-strong bg-surface px-2 py-0.5 text-label-sm font-medium text-ink-soft hover:bg-canvas">
+                        Reject
                     </button>
                 </>
             )}

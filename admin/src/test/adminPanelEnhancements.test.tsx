@@ -124,24 +124,24 @@ describe("CONFLICT-UI: the candidate page highlights unresolved fields and focus
         const user = userEvent.setup();
         await screen.findByTestId("submitted-hint-basic.birthPlace", undefined, RENDER_STEP);
         stub.resolve("basic.birthPlace");
-        await user.click(screen.getByRole("button", { name: "Confirm Place of birth" }));
-        await user.click(await screen.findByRole("button", { name: "Confirm change" }));
+        await user.click(screen.getByRole("button", { name: "Accept Place of birth" }));
+        await user.click(await screen.findByRole("button", { name: "Accept change" }));
         await waitFor(() => expect(fieldBox("basic.birthPlace")).not.toHaveAttribute("data-conflict"), RENDER_STEP);
         expect(fieldBox("basic.birthPlace")!.className).not.toMatch(/ring-/);
         expect(fieldBox("contact.address")).toHaveAttribute("data-conflict", "pending");
         stub.resolve("contact.address");
-        await user.click(screen.getByRole("button", { name: "Revoke Address" }));
-        await user.click(await screen.findByRole("button", { name: "Revoke change" }));
+        await user.click(screen.getByRole("button", { name: "Reject Address" }));
+        await user.click(await screen.findByRole("button", { name: "Reject change" }));
         await waitFor(() => expect(document.querySelectorAll("[data-conflict]")).toHaveLength(0), RENDER_STEP);
     });
 
-    test("roles that cannot review still see the highlight, but no Confirm / Revoke", async () => {
+    test("roles that cannot review still see the highlight, but no Accept / Reject", async () => {
         candidateBackend([PLACE], "JOB_HANDLER");
         renderApp("/candidates/N0000002?stage=CANDIDATE_DETAILS&field=basic.birthPlace");
         await screen.findByTestId("submitted-hint-basic.birthPlace", undefined, RENDER_STEP);
         expect(fieldBox("basic.birthPlace")).toHaveAttribute("data-conflict", "focused");
-        expect(screen.queryByRole("button", { name: "Confirm Place of birth" })).toBeNull();
-        expect(screen.queryByRole("button", { name: "Revoke Place of birth" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Accept Place of birth" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Reject Place of birth" })).toBeNull();
     });
 });
 

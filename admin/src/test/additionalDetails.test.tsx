@@ -327,11 +327,11 @@ describe("Additional Details", () => {
         const hint = await screen.findByTestId("submitted-hint-qualifications.englishKnowledge", undefined, RENDER_STEP);
         expect(hint).toHaveTextContent("Candidate submitted: ENGLISH 8");
         const user = userEvent.setup();
-        await user.click(within(hint).getByRole("button", { name: "Confirm English Knowledge" }));
-        const dialog = await screen.findByRole("dialog", { name: "Update English Knowledge?" });
+        await user.click(within(hint).getByRole("button", { name: "Accept English Knowledge" }));
+        const dialog = await screen.findByRole("dialog", { name: "Accept English Knowledge?" });
         expect(within(dialog).getByText("ENGLISH 6")).toBeInTheDocument();
         expect(within(dialog).getByText("ENGLISH 8")).toBeInTheDocument();
-        await user.click(within(dialog).getByRole("button", { name: "Confirm change" }));
+        await user.click(within(dialog).getByRole("button", { name: "Accept change" }));
         await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
         expect(calls.filter((c) => c.method === "POST")[0].body).toEqual({ field: "qualifications.englishKnowledge", expectedCurrentValue: "BASIC", expectedSubmittedValue: "GOOD" });
     });
@@ -355,7 +355,7 @@ describe("Additional Details", () => {
         expect(puts(calls)).toHaveLength(0);
     });
 
-    test("FORM-FIELDS-003 a candidate-submitted value shows its Confirm / Revoke hint under the new field, and the distance to Bucharest under City in Romania", async () => {
+    test("FORM-FIELDS-003 a candidate-submitted value shows its Accept / Reject hint under the new field, and the distance to Bucharest under City in Romania", async () => {
         const pending = [
             { field: "guardian.name", current: null, submitted: "KAMAL PERERA" },
             { field: "basic.bloodGroup", current: null, submitted: "O+" },
@@ -370,8 +370,8 @@ describe("Additional Details", () => {
         renderApp("/candidates/N0000002?tab=additional");
         const guardian = await screen.findByTestId("submitted-hint-guardian.name", undefined, RENDER_STEP);
         expect(guardian).toHaveTextContent("Candidate submitted: KAMAL PERERA");
-        expect(within(guardian).getByRole("button", { name: "Confirm Guardian Name" })).toBeInTheDocument();
-        expect(within(screen.getByTestId("submitted-hint-basic.bloodGroup")).getByRole("button", { name: "Revoke Blood Group" })).toBeInTheDocument();
+        expect(within(guardian).getByRole("button", { name: "Accept Guardian Name" })).toBeInTheDocument();
+        expect(within(screen.getByTestId("submitted-hint-basic.bloodGroup")).getByRole("button", { name: "Reject Blood Group" })).toBeInTheDocument();
         expect(screen.getByTestId("distance-to-bucharest")).toHaveTextContent("approx. 323 km to Bucharest (straight line, not by road)");
         // The old read-only card is gone: each submitted value is shown once, under its field.
         expect(screen.queryByTestId("submitted-personal-details")).toBeNull();

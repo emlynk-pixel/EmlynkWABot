@@ -73,29 +73,29 @@ describe("Candidate submitted hints", () => {
         open();
         const birth = await hint("basic.birthDate");
         expect(birth).toHaveTextContent("Candidate submitted: 06 May 2003");
-        expect(within(birth).getByRole("button", { name: "Confirm Date of birth" })).toBeInTheDocument();
+        expect(within(birth).getByRole("button", { name: "Accept Date of birth" })).toBeInTheDocument();
         expect(await hint("contact.address")).toHaveTextContent("Candidate submitted: 12 GALLE ROAD");
         // The record's own value stays the main value.
         expect(screen.getByLabelText("Date of birth")).toHaveValue("2003-06-05");
         expect(screen.getByLabelText("Address")).toHaveValue("1 Main Street");
         // No change submitted for these (or no home in the record): no hint, no button.
         for (const field of ["basic.surname", "basic.sex", "passport.expiryDate", "contact.email", "guardian.name", "contact.district"]) expect(screen.queryByTestId(`submitted-hint-${field}`), field).toBeNull();
-        expect(screen.getAllByRole("button", { name: /^Confirm (?!All$)/ })).toHaveLength(2);
+        expect(screen.getAllByRole("button", { name: /^Accept / })).toHaveLength(2);
     });
 
     test("additional-details fields get the hint too", async () => {
         backend();
         open("?tab=additional");
         expect(await hint("measurements.shirtSize")).toHaveTextContent("Candidate submitted: M");
-        expect(within(screen.getByTestId("submitted-hint-measurements.shirtSize")).getByRole("button", { name: "Confirm T-shirt size" })).toBeInTheDocument();
+        expect(within(screen.getByTestId("submitted-hint-measurements.shirtSize")).getByRole("button", { name: "Accept T-shirt size" })).toBeInTheDocument();
     });
 
     test("CONFIRM-003 / 004 / 006 / 012 Confirm asks first, sends one field and only the values it saw, then refreshes: that hint is gone, the others stay", async () => {
         const ctl = backend();
         const user = userEvent.setup();
         open();
-        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Confirm Date of birth" }));
-        const dialog = await screen.findByRole("dialog", { name: "Update Date of birth?" });
+        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Accept Date of birth" }));
+        const dialog = await screen.findByRole("dialog", { name: "Accept Date of birth?" });
         expect(within(dialog).getByText("05 Jun 2003")).toBeInTheDocument();
         expect(within(dialog).getByText("06 May 2003")).toBeInTheDocument();
         await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -103,9 +103,9 @@ describe("Candidate submitted hints", () => {
         // The hint is not hidden before the server answers.
         expect(screen.getByTestId("submitted-hint-basic.birthDate")).toBeInTheDocument();
 
-        await user.click(within(screen.getByTestId("submitted-hint-basic.birthDate")).getByRole("button", { name: "Confirm Date of birth" }));
+        await user.click(within(screen.getByTestId("submitted-hint-basic.birthDate")).getByRole("button", { name: "Accept Date of birth" }));
         ctl.apply("basic.birthDate"); // what the server does on this POST
-        await user.click(within(await screen.findByRole("dialog", { name: "Update Date of birth?" })).getByRole("button", { name: "Confirm change" }));
+        await user.click(within(await screen.findByRole("dialog", { name: "Accept Date of birth?" })).getByRole("button", { name: "Accept change" }));
         await waitFor(() => expect(screen.queryByTestId("submitted-hint-basic.birthDate")).toBeNull());
         const posts = ctl.calls.filter((c) => c.method === "POST");
         expect(posts).toHaveLength(1);
@@ -118,7 +118,7 @@ describe("Candidate submitted hints", () => {
         expect(screen.queryByRole("dialog")).toBeNull();
     });
 
-    test("while it is being confirmed the button is disabled and says Confirming…", async () => {
+    test("while it is being confirmed the button is disabled and says Accepting…", async () => {
         let release: () => void = () => {};
         const ctl = backend("ADMIN", [BIRTH], {
             [`POST ${PATH}/form-submission/confirm-field`]: async () => {
@@ -129,9 +129,9 @@ describe("Candidate submitted hints", () => {
         });
         const user = userEvent.setup();
         open();
-        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Confirm Date of birth" }));
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm change" }));
-        const busy = await screen.findByRole("button", { name: "Confirming…" });
+        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Accept Date of birth" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Accept change" }));
+        const busy = await screen.findByRole("button", { name: "Accepting…" });
         expect(busy).toBeDisabled();
         expect(screen.getByTestId("submitted-hint-basic.birthDate")).toBeInTheDocument();
         release();
@@ -144,8 +144,8 @@ describe("Candidate submitted hints", () => {
         });
         const user = userEvent.setup();
         open();
-        await user.click(within(await hint("contact.address")).getByRole("button", { name: "Confirm Address" }));
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm change" }));
+        await user.click(within(await hint("contact.address")).getByRole("button", { name: "Accept Address" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Accept change" }));
         expect(await screen.findByRole("alert")).toHaveTextContent("This value changed since you opened the page. Refresh and review again.");
         expect(screen.getByTestId("submitted-hint-contact.address")).toBeInTheDocument();
         expect(ctl.calls.filter((c) => c.method === "POST")).toHaveLength(1);
@@ -157,8 +157,8 @@ describe("Candidate submitted hints", () => {
         backend("OWNER", [ADDRESS], { [`POST ${PATH}/form-submission/confirm-field`]: { status: 400, body: { message: "This field cannot be confirmed from the Candidate Form.", code: "FIELD_NOT_CONFIRMABLE" } } });
         const user = userEvent.setup();
         open();
-        await user.click(within(await hint("contact.address")).getByRole("button", { name: "Confirm Address" }));
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm change" }));
+        await user.click(within(await hint("contact.address")).getByRole("button", { name: "Accept Address" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Accept change" }));
         expect(await screen.findByRole("alert")).toHaveTextContent("cannot be confirmed");
     });
 });
@@ -168,7 +168,7 @@ describe("who can confirm (CONFIRM-013 / 014)", () => {
         for (const role of ["ADMIN", "OWNER"]) {
             backend(role);
             const view = open();
-            expect(within(await hint("basic.birthDate")).getByRole("button", { name: "Confirm Date of birth" })).toBeInTheDocument();
+            expect(within(await hint("basic.birthDate")).getByRole("button", { name: "Accept Date of birth" })).toBeInTheDocument();
             view.unmount();
         }
     });
@@ -178,7 +178,7 @@ describe("who can confirm (CONFIRM-013 / 014)", () => {
             backend(role);
             const view = open();
             expect(await hint("basic.birthDate")).toHaveTextContent("Candidate submitted: 06 May 2003");
-            expect(screen.queryByRole("button", { name: /^Confirm / })).toBeNull();
+            expect(screen.queryByRole("button", { name: /^Accept / })).toBeNull();
             view.unmount();
         }
     });
@@ -208,18 +208,18 @@ describe("the full submission panel is gone; only inline hints remain (CLEAN-001
         open();
         const address = await hint("contact.address");
         expect(address).toHaveTextContent("Candidate submitted: 12 GALLE ROAD");
-        expect(within(address).getByRole("button", { name: "Confirm Address" })).toBeInTheDocument();
+        expect(within(address).getByRole("button", { name: "Accept Address" })).toBeInTheDocument();
         expect(screen.queryByTestId("submitted-hint-basic.birthDate")).toBeNull();
-        expect(screen.getAllByRole("button", { name: /^Confirm (?!All$)/ })).toHaveLength(1);
+        expect(screen.getAllByRole("button", { name: /^Accept / })).toHaveLength(1);
     });
 
     test("CLEAN-006 / 007 / 008 / 009 confirming updates the current field and removes only that hint; the others stay; only a GET and the one POST are sent", async () => {
         const ctl = backend("OWNER", [BIRTH, ADDRESS]);
         const user = userEvent.setup();
         open();
-        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Confirm Date of birth" }));
+        await user.click(within(await hint("basic.birthDate")).getByRole("button", { name: "Accept Date of birth" }));
         ctl.apply("basic.birthDate");
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm change" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Accept change" }));
         await waitFor(() => expect(screen.getByLabelText("Date of birth")).toHaveValue("2003-05-06"));
         expect(screen.queryByTestId("submitted-hint-basic.birthDate")).toBeNull();
         expect(screen.getByTestId("submitted-hint-contact.address")).toBeInTheDocument();
@@ -235,7 +235,7 @@ describe("the full submission panel is gone; only inline hints remain (CLEAN-001
             const view = open();
             const address = await hint("contact.address");
             expect(address).toHaveTextContent("Candidate submitted: 12 GALLE ROAD");
-            expect(within(address).queryByRole("button", { name: "Confirm Address" }) !== null, role).toBe(confirms);
+            expect(within(address).queryByRole("button", { name: "Accept Address" }) !== null, role).toBe(confirms);
             view.unmount();
         }
     });
@@ -251,9 +251,9 @@ describe("the full submission panel is gone; only inline hints remain (CLEAN-001
         const address = screen.getByLabelText("Address");
         await user.clear(address);
         await user.type(address, "Typed but not saved");
-        await user.click(within(screen.getByTestId("submitted-hint-basic.birthDate")).getByRole("button", { name: "Confirm Date of birth" }));
+        await user.click(within(screen.getByTestId("submitted-hint-basic.birthDate")).getByRole("button", { name: "Accept Date of birth" }));
         ctl.apply("basic.birthDate");
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm change" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Accept change" }));
         await waitFor(() => expect(screen.getByLabelText("Date of birth")).toHaveValue("2003-05-06"));
         // The unrelated edits survive the refresh, and the form still knows they are unsaved.
         expect(screen.getByLabelText("Place of birth")).toHaveValue("KANDY");
@@ -268,9 +268,9 @@ describe("the full submission panel is gone; only inline hints remain (CLEAN-001
         open("?tab=additional");
         await hint("measurements.shirtSize");
         await user.type(await screen.findByLabelText("Other job skills"), "Welding");
-        await user.click(within(screen.getByTestId("submitted-hint-measurements.shirtSize")).getByRole("button", { name: "Confirm T-shirt size" }));
+        await user.click(within(screen.getByTestId("submitted-hint-measurements.shirtSize")).getByRole("button", { name: "Accept T-shirt size" }));
         ctl.apply("measurements.shirtSize");
-        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm change" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Accept change" }));
         await waitFor(() => expect(screen.getByLabelText("T-shirt size")).toHaveValue("M"));
         expect(screen.getByLabelText("Other job skills")).toHaveValue("Welding");
         expect(screen.queryByTestId("submitted-hint-measurements.shirtSize")).toBeNull();

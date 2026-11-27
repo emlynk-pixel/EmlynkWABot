@@ -284,15 +284,9 @@ describe("submission (once)", () => {
         assert.equal(saved.jobCategoryOther, null);
         const after = await rowOf(A.passportId);
         assert.deepEqual([after.candidate, after.stages], [before.candidate, before.stages], "candidate and stages are unchanged");
-        // Additional details: every value on record is kept as it was; only the EMPTY fields took the
-        // submitted value (applyAutoFill), never "N/A".
-        for (const [column, value] of Object.entries(before.details)) {
-            if (["updatedDate"].includes(column)) continue;
-            const empty = value === null || (typeof value === "string" && value.trim() === "");
-            if (!empty) assert.deepEqual(after.details[column], value, column);
-        }
-        assert.equal(after.details.guardianNic, "901234567V", "an empty field was filled");
-        assert.ok(Object.values(after.details).every((value) => value !== "N/A"));
+        // Additional details: nothing is written by the submission (every changed value waits for staff to accept or reject it).
+        assert.deepEqual(after.details, before.details, "the submission writes nothing to Additional details");
+        assert.ok(Object.values(after.details ?? {}).every((value) => value !== "N/A"));
         assert.equal((await prisma.candidateFormAccess.findUnique({ where: { passportId: A.passportId } })).status, "SUBMITTED");
         await assert.rejects(pg.exec(`UPDATE candidate_form_response SET full_name = 'X'`), /cannot be changed/);
     });

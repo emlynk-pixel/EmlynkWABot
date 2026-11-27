@@ -116,9 +116,9 @@ describe("Confirm All (BULK-001 .. 006)", () => {
         await submitForm();
         const before = (await view()).body;
         assert.ok(before.pending.length > 10, "a submission that differs from the record has many pending changes");
-        // The fields that were empty were filled by the submission, so they are not part of Confirm All.
-        assert.equal(before.pending.find((p) => p.field === "contact.district"), undefined);
-        assert.equal((await detailsRow()).district, "GAMPAHA");
+        // A field that was empty is pending like any other (the submission fills nothing).
+        assert.deepEqual(before.pending.find((p) => p.field === "contact.district"), { field: "contact.district", current: null, submitted: "GAMPAHA" });
+        assert.equal((await detailsRow()).district, null);
         const responseBefore = JSON.stringify(await responseRow());
         const r = await confirmAll(USERS.OWNER, seenBody(before.pending));
         assert.equal(r.status, 200, JSON.stringify(r.body));
@@ -192,8 +192,8 @@ describe("Confirm All (BULK-001 .. 006)", () => {
         await submitForm();
         const { changes } = await seen();
         const variants = [
-            { changes: changes.slice(1) },
             { changes: [...changes.slice(0, -1), changes[0]] },
+            { changes: [...changes, { field: "family.child3", expectedCurrentValue: null, expectedSubmittedValue: "SOMEONE" }] },
             { changes: changes.map((c, i) => (i === 0 ? { ...c, expectedSubmittedValue: "SOMETHING ELSE" } : c)) },
             { changes: changes.map((c, i) => (i === 0 ? { ...c, expectedCurrentValue: "OLD THING" } : c)) },
         ];
@@ -207,6 +207,40 @@ describe("Confirm All (BULK-001 .. 006)", () => {
         assert.equal((await rejectAll(USERS.ADMIN, { changes })).body.code, "FORM_FIELD_STALE");
         assert.deepEqual(await reviews(), {});
         assert.equal((await decisionAudits()).length, 0);
+    });
+
+    test("SUBSET-001 .. 004: Confirm All decides only the fields listed; the others stay Pending, untouched; they can be reviewed later; an empty or unknown list decides nothing", async () => {
+        await prisma.candidateAdditionalDetails.create({ data: CONFLICTING_DETAILS });
+        await submitForm();
+        const { changes } = await seen();
+        const kept = ["contact.email", "guardian.name", "contact.address"];
+        const chosen = changes.filter((c) => !kept.includes(c.field));
+        assert.ok(kept.every((field) => changes.some((c) => c.field === field)) && chosen.length > 3);
+        const recordBefore = { candidate: JSON.stringify(await candidateRow()), details: await detailsRow() };
+
+        const r = await confirmAll(USERS.ADMIN, { changes: chosen });
+        assert.equal(r.status, 200, JSON.stringify(r.body));
+        // Only the chosen fields have a decision and an audit entry; the kept ones are still pending.
+        assert.deepEqual(Object.keys(await reviews()).sort(), chosen.map((c) => c.field).sort());
+        assert.equal((await decisionAudits()).length, chosen.length);
+        assert.deepEqual(r.body.pending.map((p) => p.field).sort(), [...kept].sort());
+        // Their values in the record are exactly as before; a chosen one was written.
+        const details = await detailsRow();
+        assert.deepEqual([details.email, details.guardianName], [recordBefore.details.email, recordBefore.details.guardianName]);
+        assert.equal((await candidateRow()).address, JSON.parse(recordBefore.candidate).address);
+        assert.equal(details.shoeSize, "42", "a chosen field was confirmed");
+
+        // The kept ones are reviewed later: one by one, then with another Confirm All.
+        const email = r.body.pending.find((p) => p.field === "contact.email");
+        assert.equal((await reject(USERS.ADMIN, { field: email.field, expectedCurrentValue: email.current, expectedSubmittedValue: email.submitted })).status, 200);
+        assert.equal((await confirmAll(USERS.ADMIN, await seen())).status, 200);
+        assert.equal((await detailsRow()).guardianName, "KAMAL PERERA");
+        assert.equal((await detailsRow()).email, "old@example.com", "the rejected one was never written");
+        assert.deepEqual((await view()).body.pending, []);
+
+        // Nothing chosen is refused (400), and a field that is not pending is refused (409): nothing written.
+        const none = await confirmAll(USERS.ADMIN, { changes: [] });
+        assert.equal(none.status, 400);
     });
 
     test("double submit: two Confirm All at once give one winner; the other is refused and nothing is decided twice", async () => {
@@ -301,10 +335,10 @@ describe("Admin view: the record's value of every reviewable field (FIELD-MAP)",
         const { body } = await view();
         assert.deepEqual(
             [body.current["contact.email"], body.current["guardian.name"], body.current["basic.bloodGroup"], body.current["measurements.shoeSize"], body.current["contact.address"]],
-            // (Blood Group was empty: the submission filled it, so it is not a pending change)
-            ["old@example.com", "OLD GUARDIAN", "O+", "9", "1 old road"],
+            // (Blood Group was empty: nothing is on record, and the submitted one is pending)
+            ["old@example.com", "OLD GUARDIAN", null, "9", "1 old road"],
         );
-        assert.equal(body.pending.find((p) => p.field === "basic.bloodGroup"), undefined);
+        assert.deepEqual(body.pending.find((p) => p.field === "basic.bloodGroup"), { field: "basic.bloodGroup", current: null, submitted: "O+" });
         const email = body.pending.find((p) => p.field === "contact.email");
         assert.deepEqual([email.current, email.submitted], ["old@example.com", "new@example.com"]);
         // A UK size on record is a change against the EU size submitted; it is offered, never converted.

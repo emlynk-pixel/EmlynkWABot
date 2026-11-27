@@ -143,6 +143,9 @@ export type CandidateDetails = {
     // The same derived Status the lists show (absent from an older server), and the recorded final status (null: none).
     workflowStatus?: WorkflowStatus | null;
     finalStatus?: FinalStatus | null;
+    // Who the candidate is allocated to, as far as the signed-in role may see (the server leaves out the
+    // users it may not show); absent for roles that get no "Allocated To" at all.
+    allocatedTo?: { adminId: string; name: string; role: string }[];
     candidate: {
         passportId: string;
         uniqueId: string;

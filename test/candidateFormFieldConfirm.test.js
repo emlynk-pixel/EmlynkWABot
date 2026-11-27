@@ -112,14 +112,11 @@ describe("which changes are offered (CONFIRM-001, 002, 017)", () => {
         // "N/A" answer (children, passports) never.
         for (const field of Object.keys(pending)) assert.ok(Object.hasOwn(CONFIRMABLE_FIELDS, field), field);
         for (const field of ["family.father.name", "family.father.surname", "family.child1", "family.father.passportNumber", "qualifications.otherSkills1"]) assert.equal(pending[field], undefined, field);
-        // The EMPTY Additional Details fields were filled at submission (no Confirm): no longer pending.
-        for (const field of ["basic.fullName", "guardian.name", "basic.civilStatus", "family.father.fullName"]) assert.equal(pending[field], undefined, field);
+        // The EMPTY Additional Details fields are not filled by the submission: they are pending like any other change.
+        assert.deepEqual(pending["basic.fullName"], { field: "basic.fullName", current: null, submitted: "ANUSHA DE SOYSA" });
+        for (const field of ["guardian.name", "basic.civilStatus", "family.father.fullName"]) assert.equal(pending[field].current, null, field);
         const details = await detailsRow();
-        assert.deepEqual([details.nameAsInPassport, details.guardianName, details.maritalStatus, details.fatherFullName, details.tshirtSize], ["ANUSHA DE SOYSA", "KAMAL PERERA", "SINGLE", "SUNIL DE SOYSA", "S"]);
-        // Only Additional Details fields that are conflicts (both sides have a value) and core fields remain.
-        for (const change of Object.values(pending)) {
-            if (CONFIRMABLE_FIELDS[change.field].table === "details") assert.notEqual(change.current, null, change.field);
-        }
+        assert.deepEqual([details.nameAsInPassport, details.guardianName, details.maritalStatus, details.fatherFullName, details.tshirtSize], [null, null, null, null, "S"]);
     });
 
     test("nothing is pending before a submission", async () => {
@@ -292,93 +289,47 @@ describe("roles and the public API (CONFIRM-013, 014, 015)", () => {
     });
 });
 
-// ---------------------------------------------------------------- automatic fill (AUTOFILL-001 ..)
-// The submission fills the EMPTY Additional Details fields at once (no Confirm / Reject); a field that
-// already has a value is never written and, when the submitted value differs, stays a pending change.
-describe("automatic fill of empty Additional Details at submission (AUTOFILL-001 .. 009)", () => {
-    test("AUTOFILL-001 empty fields are filled; a field with a value is untouched and pending; no review row and no audit entry", async () => {
+// ---------------------------------------------------------------- no automatic fill (NOFILL-001 ..)
+// A submission never writes to the record: an empty Additional Details field is a pending change like any other.
+describe("a submission does not fill the record (NOFILL-001 .. 004); retired automatic-fill helpers (AUTOFILL-009, 010)", () => {
+    test("NOFILL-001 empty Additional Details fields stay empty and are pending; values already there are untouched and pending; no review row, no audit entry", async () => {
         await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, tshirtSize: "S", city: "KANDY" } });
         await submitForm();
         const details = await detailsRow();
-        // Filled: empty before, valid and not N/A in the submission.
-        assert.deepEqual(
-            [details.nameAsInPassport, details.pantSize, details.shoeSize, details.email, details.district, details.guardianName, details.guardianNic, details.bloodGroup, details.drivingLicence, details.canReadDrawings, String(Number(details.weightKg)), details.maritalStatus],
-            ["ANUSHA DE SOYSA", "32", "EU 42", "new@example.com", "GAMPAHA", "KAMAL PERERA", "901234567V", "O+", true, false, "70", "SINGLE"],
-        );
-        // Kept: the values that were there; the submitted ones are pending changes.
+        assert.deepEqual([details.nameAsInPassport, details.pantSize, details.email, details.guardianName, details.bloodGroup], [null, null, null, null, null], "nothing was filled");
         assert.deepEqual([details.tshirtSize, details.city], ["S", "KANDY"]);
         const pending = pendingOf(await view());
+        assert.deepEqual(pending["guardian.name"], { field: "guardian.name", current: null, submitted: "KAMAL PERERA" });
+        assert.deepEqual(pending["contact.email"], { field: "contact.email", current: null, submitted: "new@example.com" });
         assert.deepEqual(pending["measurements.shirtSize"], { field: "measurements.shirtSize", current: "S", submitted: "M" });
-        assert.deepEqual(pending["contact.city"], { field: "contact.city", current: "KANDY", submitted: "NEGOMBO" });
-        assert.equal(pending["basic.fullName"], undefined, "a filled field is not pending");
-        // "N/A" answers are never written (children, the parents' passport numbers, other skills).
-        assert.deepEqual([details.child1Name, details.fatherPassportNumber, details.otherJobSkills, details.otherJobSkills2], [null, null, null, null]);
         assert.equal(await prisma.candidateFormFieldReview.count(), 0);
         assert.equal(await prisma.auditLog.count({ where: { action: { in: ["CANDIDATE_FORM_FIELD_CONFIRMED", "CANDIDATE_FORM_FIELD_REJECTED"] } } }), 0);
     });
 
-    test("AUTOFILL-002 the core candidate record is never filled automatically", async () => {
+    test("NOFILL-002 the core candidate record is not filled either", async () => {
         await prisma.candidate.update({ where: { passportId: A.passportId }, data: { placeOfBirth: null } });
         await submitForm();
         assert.equal((await candidateRow()).placeOfBirth, null);
         assert.deepEqual(pendingOf(await view())["basic.birthPlace"], { field: "basic.birthPlace", current: null, submitted: "NEGOMBO" });
     });
 
-    test("AUTOFILL-003 blank text counts as empty; an unusual stored value is never replaced", async () => {
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, email: "   ", tshirtSize: "XXXL" } });
-        await submitForm();
-        const details = await detailsRow();
-        assert.equal(details.email, "new@example.com", "blank text is empty");
-        assert.equal(details.tshirtSize, "XXXL", "a stored value is never overwritten, even an unusual one");
-    });
-
-    test("AUTOFILL-004 Married with a spouse is filled in order (civil status first)", async () => {
+    test("NOFILL-003 Married with a spouse is left pending (civil status and spouse), the submission succeeds", async () => {
         await submitForm(answers({
             basic: { ...answers().basic, civilStatus: "MARRIED" },
             family: { ...answers().family, spouse: { name: "nimali", surname: "perera", passportNumber: "N7654321", birthDate: "2004-01-02" } },
         }));
         const details = await detailsRow();
-        assert.deepEqual([details.maritalStatus, details.wifeFullName, details.spousePassportNumber, details.wifeBirthday.toISOString().slice(0, 10)], ["MARRIED", "NIMALI PERERA", "N7654321", "2004-01-02"]);
-    });
-
-    test("AUTOFILL-005 a value the Additional Details rules refuse is skipped (it stays pending) and the submission still succeeds", async () => {
-        // The record says Single: the submitted Married is a conflict, and a spouse is only kept when Married.
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, maritalStatus: "SINGLE" } });
-        await submitForm(answers({
-            basic: { ...answers().basic, civilStatus: "MARRIED" },
-            family: { ...answers().family, spouse: { name: "nimali", surname: "perera", passportNumber: "N7654321", birthDate: "2004-01-02" } },
-        }));
-        const details = await detailsRow();
-        assert.deepEqual([details.maritalStatus, details.wifeFullName, details.spousePassportNumber, details.wifeBirthday], ["SINGLE", null, null, null]);
-        assert.equal(details.guardianName, "KAMAL PERERA", "the other empty fields were still filled");
+        assert.deepEqual([details?.maritalStatus ?? null, details?.wifeFullName ?? null], [null, null]);
         const pending = pendingOf(await view());
-        assert.deepEqual(pending["basic.civilStatus"], { field: "basic.civilStatus", current: "SINGLE", submitted: "MARRIED" });
-        assert.ok(pending["family.spouse.fullName"], "the spouse stays a pending change for staff");
+        assert.equal(pending["basic.civilStatus"].submitted, "MARRIED");
+        assert.ok(pending["family.spouse.fullName"]);
         assert.equal((await prisma.candidateFormAccess.findUnique({ where: { passportId: A.passportId } })).status, "SUBMITTED");
     });
 
-    test("AUTOFILL-006 a retried submission (same key) fills nothing twice, and a filled value staff changed later is not refilled", async () => {
+    test("NOFILL-004 a retried submission (same key) still writes nothing", async () => {
         const token = await submitForm();
-        await prisma.candidateAdditionalDetails.update({ where: { passportId: A.passportId }, data: { guardianName: "STAFF VALUE" } });
         const again = await pub("/submit", { token, body: { answers: answers(), idempotencyKey: "key-0000000000000001" } });
         assert.equal(again.status, 200);
-        assert.equal((await detailsRow()).guardianName, "STAFF VALUE");
-    });
-
-    test("AUTOFILL-007 a staff save based on the details as they were before the fill is refused (409), nothing lost", async () => {
-        await prisma.candidateAdditionalDetails.create({ data: { passportId: A.passportId, tshirtSize: "S" } });
-        const loaded = (await call(app(USERS.ADMIN), "GET", `/api/admin/candidates/${A.passportId}/additional-details`)).body;
-        await submitForm();
-        const save = await call(app(USERS.ADMIN), "PUT", `/api/admin/candidates/${A.passportId}/additional-details`, { body: { ...loaded.details, pantSize: "34", expectedUpdatedDate: loaded.updatedDate } });
-        assert.deepEqual([save.status, save.body.code], [409, "DETAILS_CHANGED"]);
-        assert.equal((await detailsRow()).guardianName, "KAMAL PERERA", "the fill is kept");
-    });
-
-    test("AUTOFILL-008 a refused (second) submission fills nothing", async () => {
-        const token = await submitForm();
-        await pg.exec(`DELETE FROM "candidate_additional_details"`);
-        const second = await pub("/submit", { token, body: { answers: answers(), idempotencyKey: "key-0000000000000002" } });
-        assert.equal(second.status, 409);
         assert.equal(await detailsRow(), null);
     });
 
