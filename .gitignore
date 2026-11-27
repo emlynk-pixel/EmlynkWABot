@@ -40,3 +40,6 @@ CLAUDE.md
 
 # End-to-end Playwright suite: ignore the whole folder
 e2e/
+
+# Docs live on the separate docs/restructure branch, never on dev or stage
+Docs/
