@@ -28,22 +28,54 @@ export const looksLikeAccessToken = (token) =>
 
 // How the session was signed in: the access token's `amr` claim (Supabase: [{ method, timestamp }],
 // e.g. "password", "otp", "invite", "recovery"). Read only AFTER Supabase verified the token, so the
-// payload is genuine; never used for authorization, only to recognise a password sign-in.
-export function amrMethods(token) {
+// payload is genuine; never used to grant access, only to recognise a password sign-in and to
+// end sessions older than MAX_SESSION_AGE_MS.
+function tokenAmr(token) {
     try {
         const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
-        if (!Array.isArray(payload?.amr)) return [];
-        return payload.amr.map((entry) => (typeof entry === "string" ? entry : entry?.method)).filter((method) => typeof method === "string");
+        return Array.isArray(payload?.amr) ? payload.amr : [];
     } catch {
         return [];
     }
 }
 
+export function amrMethods(token) {
+    return tokenAmr(token).map((entry) => (typeof entry === "string" ? entry : entry?.method)).filter((method) => typeof method === "string");
+}
+
+// Longest a session is accepted after its sign-in, whatever Supabase allows.
+export const MAX_SESSION_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+// amr methods that are not a sign-in. Second factors (TOTP, phone, WebAuthn, "mfa/...")
+// are added to an EXISTING session, and a refresh is not an authentication; counting
+// them would let a session restart its 30 days without the user signing in again.
+const NOT_A_SIGN_IN = new Set(["totp", "phone", "webauthn", "token_refresh"]);
+const isSignInMethod = (method) => typeof method === "string" && !NOT_A_SIGN_IN.has(method) && !method.startsWith("mfa/");
+
+// When the session signed in, in ms: the LATEST timestamp (Unix seconds) among the amr
+// sign-in methods, so a re-authentication (e.g. a password recovery) starts a new period.
+// Unlike `iat`, amr timestamps survive token refreshes. null when no sign-in method has a
+// timestamp (the caller then fails closed).
+export function signedInAt(token) {
+    const seconds = tokenAmr(token)
+        .filter((entry) => isSignInMethod(entry?.method))
+        .map((entry) => entry.timestamp)
+        .filter((t) => Number.isFinite(t) && t > 0);
+    return seconds.length ? Math.max(...seconds) * 1000 : null;
+}
+
 // Returns verifyAccessToken(token) -> { authUserId, email, amr } | null.
-// null: the token is not a valid, current Supabase session. Any other failure
-// (Supabase unreachable, misconfigured) throws, so the request fails closed
-// with a 500 instead of being treated as anonymous or authenticated.
-export function createAccessTokenVerifier({ client }) {
+// null: the token is not a valid, current Supabase session, or the session is
+// older than maxSessionAgeMs. Any other failure (Supabase unreachable,
+// misconfigured) throws, so the request fails closed with a 500 instead of
+// being treated as anonymous or authenticated.
+//
+// Maximum session age: Supabase owns the session and the admin app signs in
+// with Supabase directly, so the backend cannot record a lifetime per sign-in.
+// This cap is the server-side lifetime behind the "Remember me" option: every
+// session ends maxSessionAgeMs after its sign-in, however often it is
+// refreshed. A token with no sign-in time is refused (fails closed).
+export function createAccessTokenVerifier({ client, now = Date.now, maxSessionAgeMs = MAX_SESSION_AGE_MS }) {
     if (!client?.auth?.getUser) throw new Error("A Supabase client is required");
 
     return async function verifyAccessToken(token) {
@@ -55,6 +87,9 @@ export function createAccessTokenVerifier({ client }) {
         }
         const user = data?.user;
         if (!user?.id) return null;
+        // Read only now that Supabase verified the token, so the payload is genuine.
+        const signedIn = signedInAt(token);
+        if (signedIn === null || now() - signedIn > maxSessionAgeMs) return null;
         return { authUserId: user.id, email: typeof user.email === "string" ? user.email.toLowerCase() : null, amr: amrMethods(token) };
     };
 }

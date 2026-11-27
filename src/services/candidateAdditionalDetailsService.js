@@ -30,6 +30,7 @@ import { businessDateOf } from "../utils/businessDay.js";
 import { clientName } from "../utils/clientName.js";
 import { CandidateError } from "./candidateService.js";
 import { BLOOD_GROUPS, ENGLISH_LEVELS } from "./candidateFormDataService.js";
+import { codeOf } from "./englishKnowledgeLevels.js";
 import { canonicalPhoneNumber } from "../utils/phoneNumber.js";
 
 export const TSHIRT_SIZES = Object.freeze(["XS", "S", "M", "L", "XL", "XXL"]);
@@ -171,7 +172,8 @@ export function parseAdditionalDetailsBody(body, { now = new Date() } = {}) {
                 values[field] = BLOOD_GROUPS.includes(value.toUpperCase()) ? value.toUpperCase() : fail(field, `must be one of: ${BLOOD_GROUPS.join(", ")}`);
                 break;
             case "english":
-                values[field] = ENGLISH_LEVELS.includes(value.toUpperCase()) ? value.toUpperCase() : fail(field, `must be one of: ${ENGLISH_LEVELS.join(", ")}`);
+                // A stored code, or its ENGLISH n label: always stored as the code.
+                values[field] = codeOf(value) ?? fail(field, `must be one of: ${ENGLISH_LEVELS.join(", ")}`);
                 break;
             case "weight": {
                 // kg, as the record keeps it (DECIMAL(5,2)).

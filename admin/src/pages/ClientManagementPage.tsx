@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { getAgentOptions, type AgentOption, type EntityStatus } from "../api/agents";
 import { createClient, listClients, setClientStatus, updateClient, type ClientListItem, type ClientRecord } from "../api/clientManagement";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { canManageMasterData, useAuth } from "../auth/AuthProvider";
 import { Pager } from "../components/ClientTable";
 import { ActionDialog, DialogError, primaryButton, secondaryButton } from "../components/Dialog";
@@ -25,11 +26,14 @@ export function ClientManagementPage() {
     return <ClientsView />;
 }
 
+// The filters remembered for the next visit (hooks/useRememberedSearchParams.ts).
+const REMEMBERED_KEYS = ["search", "country", "agentId", "status"];
+
 type Dialog = { kind: "create" } | { kind: "edit"; client: ClientRecord } | { kind: "status"; client: ClientRecord } | null;
 
 function ClientsView() {
     const { token } = useAuth();
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("client-management", REMEMBERED_KEYS);
     const search = searchParams.get("search") || undefined;
     const country = searchParams.get("country") || undefined;
     const agentId = searchParams.get("agentId") || undefined;
@@ -41,6 +45,7 @@ function ClientsView() {
     useEffect(() => setSearchText(search ?? ""), [search]);
     const [dialog, setDialog] = useState<Dialog>(null);
     const list = useAdminResource(`client-management?${searchParams.toString()}`, (t, signal) => listClients(t, { search, country, status, agentId, page }, signal));
+    useDiscardRestoredOnBadRequest(list, remembered);
     const agents = useAdminResource("agent-options", (t, signal) => getAgentOptions(t, signal));
 
     const go = (changes: Record<string, string | null>) => {

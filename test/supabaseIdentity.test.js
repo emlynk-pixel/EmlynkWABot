@@ -8,6 +8,9 @@ import { bearerToken, createAccessTokenVerifier, looksLikeAccessToken } from "..
 import { AuthAdminError, createSupabaseAuthAdmin } from "../src/auth/supabaseAuthAdmin.js";
 
 const TOKEN = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
+// A token signed in just now: the verifier refuses sessions with no (or an old) amr timestamp.
+const tokenWith = (claims) => `eyJhbGciOiJFUzI1NiJ9.${Buffer.from(JSON.stringify({ sub: "x", ...claims })).toString("base64url")}.c2lnbmF0dXJl`;
+const CURRENT_TOKEN = tokenWith({ amr: [{ method: "otp", timestamp: Math.floor(Date.now() / 1000) }] });
 const USER_ID = "7d0c2f0e-1111-4222-8333-444455556666";
 
 function fakeClient(answer) {
@@ -40,14 +43,13 @@ describe("bearerToken", () => {
 describe("createAccessTokenVerifier", () => {
     test("a current session -> the Supabase user ID and email; never a role", async () => {
         const client = fakeClient({ data: { user: { id: USER_ID, email: "Person@Example.invalid", app_metadata: { role: "ADMIN" }, user_metadata: { role: "ADMIN" } } }, error: null });
-        const identity = await createAccessTokenVerifier({ client })(TOKEN);
-        assert.deepEqual(identity, { authUserId: USER_ID, email: "person@example.invalid", amr: [] });
-        assert.deepEqual(client.calls, [TOKEN], "verified by Supabase itself");
+        const identity = await createAccessTokenVerifier({ client })(CURRENT_TOKEN);
+        assert.deepEqual(identity, { authUserId: USER_ID, email: "person@example.invalid", amr: ["otp"] });
+        assert.deepEqual(client.calls, [CURRENT_TOKEN], "verified by Supabase itself");
     });
 
     test("how the session signed in (amr) is read from the verified token: a password sign-in says password", async () => {
-        const payload = Buffer.from(JSON.stringify({ sub: "x", amr: [{ method: "password", timestamp: 1 }] })).toString("base64url");
-        const token = `eyJhbGciOiJFUzI1NiJ9.${payload}.c2lnbmF0dXJl`;
+        const token = tokenWith({ amr: [{ method: "password", timestamp: Math.floor(Date.now() / 1000) }] });
         const client = fakeClient({ data: { user: { id: USER_ID, email: "p@example.invalid" } }, error: null });
         assert.deepEqual((await createAccessTokenVerifier({ client })(token)).amr, ["password"]);
         const notVerified = createAccessTokenVerifier({ client: fakeClient({ data: { user: null }, error: { status: 401 } }) });

@@ -22,8 +22,15 @@
 // Only codes and counts are stored (error class, HTTP status / Google status
 // code, action names): never candidate data, Google message text or tokens.
 // Nothing here calls Google.
+//
+// A failure is also an in-app notification (E9 to ADMIN / TEAM_LEAD, F1 to OWNER;
+// notificationEvents.js notifySheetSyncFailed), sent best-effort after the write that
+// recorded it: a run that ends FAILED or is abandoned (once per run), and dead-lettered
+// queue rows (at most once an hour). It never changes or delays the sync itself.
 
 import { randomUUID } from "node:crypto";
+
+import { notifySheetSyncFailed, sheetSyncHourKey } from "./notificationEvents.js";
 
 export const QUEUE_STATUS = Object.freeze({ PENDING: "PENDING", PROCESSING: "PROCESSING", COMPLETED: "COMPLETED", FAILED: "FAILED" });
 export const RUN_KIND = Object.freeze({ RECONCILE: "RECONCILE", TEST_CONNECTION: "TEST_CONNECTION" });
@@ -106,6 +113,7 @@ export function createSheetSyncStore({ db } = {}) {
             where: ownedBy(row),
             data: { status: QUEUE_STATUS.FAILED, lastErrorClass: errorClass, lastErrorCode: errorCode, updatedAt: now, leaseOwner: null, leaseExpiresAt: null },
         });
+        if (count === 1) await notifySheetSyncFailed(db, { eventKey: sheetSyncHourKey("queue", now) });
         return count === 1;
     }
 
@@ -242,7 +250,8 @@ export function createSheetSyncStore({ db } = {}) {
         for (const run of candidates) {
             const where = { runId: run.runId, status: run.status, attempts: run.attempts };
             if (run.attempts >= maxAttempts) {
-                await db.sheetSyncRun.updateMany({ where, data: { status: RUN_STATUS.FAILED, errorClass: "RUN_ABANDONED", finishedAt: now, updatedAt: now, leaseOwner: null, leaseExpiresAt: null } });
+                const { count } = await db.sheetSyncRun.updateMany({ where, data: { status: RUN_STATUS.FAILED, errorClass: "RUN_ABANDONED", finishedAt: now, updatedAt: now, leaseOwner: null, leaseExpiresAt: null } });
+                if (count === 1) await notifySheetSyncFailed(db, { eventKey: `run:${run.runId}` });
                 continue;
             }
             const data = { status: RUN_STATUS.RUNNING, attempts: run.attempts + 1, leaseOwner: owner, leaseExpiresAt: later(now, leaseMs), startedAt: run.startedAt ?? now, updatedAt: now };
@@ -264,6 +273,9 @@ export function createSheetSyncStore({ db } = {}) {
             where: runOwnedBy(run),
             data: { status, summary, errorClass, errorCode, dryRun, finishedAt: now, updatedAt: now, leaseOwner: null, leaseExpiresAt: null },
         });
+        // The run's failure (a reconciliation or a connection test; the integration state set with it
+        // is the same event, so it is not notified again).
+        if (count === 1 && status === RUN_STATUS.FAILED) await notifySheetSyncFailed(db, { eventKey: `run:${run.runId}` });
         return count === 1;
     }
 

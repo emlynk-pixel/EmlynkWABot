@@ -122,6 +122,42 @@ export async function uploadToSignedUrl(url: string, file: File): Promise<void> 
     }
 }
 
+// POST with a JSON body, answered by a file (a report). The file name comes from
+// Content-Disposition (null when absent or unusable). Errors carry the server's
+// message (4xx) like apiRequest; nothing from the body is logged.
+export async function apiPostForFile(path: string, body: unknown, { signal, token }: Pick<RequestOptions, "signal" | "token"> = {}): Promise<{ blob: Blob; filename: string | null }> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const effectiveToken = authorizationToken(token);
+    if (effectiveToken) headers["Authorization"] = `Bearer ${effectiveToken}`;
+
+    let response: Response;
+    try {
+        response = await fetch(path, { method: "POST", headers, body: JSON.stringify(body), credentials: "omit", cache: "no-store", signal });
+    } catch (error) {
+        if ((error as Error)?.name === "AbortError") throw error;
+        throw new ApiError(0, "Cannot reach the server. Check your connection and try again.");
+    }
+    if (!response.ok) {
+        const data = await readErrorData(response);
+        const message = response.status >= 500 && response.status !== 502 ? FALLBACK_MESSAGE : data.message ?? FALLBACK_MESSAGE;
+        throw new ApiError(response.status, message, data.resetTime ? new Date(data.resetTime) : undefined);
+    }
+    return { blob: await response.blob(), filename: filenameFromDisposition(response.headers.get("Content-Disposition")) };
+}
+
+function filenameFromDisposition(value: string | null): string | null {
+    if (!value) return null;
+    const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(value)?.[1];
+    let name: string | undefined;
+    if (encoded) {
+        try { name = decodeURIComponent(encoded.trim()); } catch { name = undefined; }
+    }
+    name ??= /filename\s*=\s*"([^"]+)"/i.exec(value)?.[1] ?? /filename\s*=\s*([^;]+)/i.exec(value)?.[1]?.trim();
+    // A bare file name only: no path, no control characters.
+    const clean = name?.replace(/[\\/\u0000-\u001f]/g, "_").trim();
+    return clean ? clean : null;
+}
+
 // Same rules as apiRequest, for a binary response (the review file preview).
 export async function apiRequestBlob(path: string, { signal, token }: Pick<RequestOptions, "signal" | "token"> = {}): Promise<Blob> {
     const headers: Record<string, string> = {};

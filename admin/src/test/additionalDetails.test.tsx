@@ -284,6 +284,58 @@ describe("Additional Details", () => {
         expect(puts(calls)[0].body).toMatchObject({ ...answers, bloodGroup: "A-", drivingLicence: false, guardianName: "NIMAL PERERA", spousePassportNumber: null });
     });
 
+    test("ENGLISH-LABELS the English Knowledge dropdown shows NO KNOWLEDGE and ENGLISH 6..10 over the stored codes; a stored GOOD shows ENGLISH 8; saving sends the code", async () => {
+        const view = { ...SAVED_VIEW, details: { ...SAVED, englishKnowledge: "GOOD" } };
+        const { calls } = backend(view, { [`PUT ${PATH}`]: { status: 200, body: view } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const select = screen.getByLabelText("English Knowledge") as HTMLSelectElement;
+        const options = within(select).getAllByRole("option").filter((o) => (o as HTMLOptionElement).value !== "");
+        expect(options.map((o) => [(o as HTMLOptionElement).value, o.textContent])).toEqual([
+            ["NO KNOWLEDGE", "NO KNOWLEDGE"], ["BASIC", "ENGLISH 6"], ["FAIR", "ENGLISH 7"], ["GOOD", "ENGLISH 8"], ["VERY GOOD", "ENGLISH 9"], ["FLUENT", "ENGLISH 10"],
+        ]);
+        expect(select).toHaveValue("GOOD");
+        expect(select.options[select.selectedIndex].textContent).toBe("ENGLISH 8");
+        const user = userEvent.setup();
+        await user.selectOptions(select, "ENGLISH 10");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        expect(puts(calls)[0].body).toMatchObject({ englishKnowledge: "FLUENT" });
+    });
+
+    test("ENGLISH-LABELS choosing ENGLISH 8 saves the code GOOD", async () => {
+        const { calls } = backend(SAVED_VIEW, { [`PUT ${PATH}`]: { status: 200, body: SAVED_VIEW } });
+        renderApp("/candidates/N0000002?tab=additional");
+        await screen.findByRole("form", { name: "Additional details" }, RENDER_STEP);
+        const user = userEvent.setup();
+        await user.selectOptions(screen.getByLabelText("English Knowledge"), "ENGLISH 8");
+        await user.click(screen.getByRole("button", { name: "Save additional details" }));
+        await vi.waitFor(() => expect(puts(calls)).toHaveLength(1));
+        expect(puts(calls)[0].body).toMatchObject({ englishKnowledge: "GOOD" });
+    });
+
+    test("ENGLISH-LABELS a pending English Knowledge change shows labels, but Confirm sends the codes", async () => {
+        const view = { ...SAVED_VIEW, details: { ...SAVED, englishKnowledge: "BASIC" } };
+        const pending = [{ field: "qualifications.englishKnowledge", current: "BASIC", submitted: "GOOD" }];
+        const { calls } = backend(view, {
+            "GET /api/admin/candidates/N0000002/form-submission": { status: 200, body: {
+                passportId: "N0000002", formStatus: "SUBMITTED", submittedAt: "2026-10-17T06:30:00.000Z", submitted: { "qualifications.englishKnowledge": "GOOD" }, original: null, changed: [], pending,
+            } },
+            "POST /api/admin/candidates/N0000002/form-submission/confirm-field": { status: 200, body: { passportId: "N0000002", formStatus: "SUBMITTED", submittedAt: null, submitted: null, original: null, changed: [], pending: [] } },
+        }, { ...ADMIN, role: "OWNER" });
+        renderApp("/candidates/N0000002?tab=additional");
+        const hint = await screen.findByTestId("submitted-hint-qualifications.englishKnowledge", undefined, RENDER_STEP);
+        expect(hint).toHaveTextContent("Candidate submitted: ENGLISH 8");
+        const user = userEvent.setup();
+        await user.click(within(hint).getByRole("button", { name: "Confirm English Knowledge" }));
+        const dialog = await screen.findByRole("dialog", { name: "Update English Knowledge?" });
+        expect(within(dialog).getByText("ENGLISH 6")).toBeInTheDocument();
+        expect(within(dialog).getByText("ENGLISH 8")).toBeInTheDocument();
+        await user.click(within(dialog).getByRole("button", { name: "Confirm change" }));
+        await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
+        expect(calls.filter((c) => c.method === "POST")[0].body).toEqual({ field: "qualifications.englishKnowledge", expectedCurrentValue: "BASIC", expectedSubmittedValue: "GOOD" });
+    });
+
     test("FORM-FIELDS-002 the new fields are checked before sending (weight, email, NIC, passport numbers, guardian birth date)", async () => {
         const { calls } = backend(SAVED_VIEW);
         renderApp("/candidates/N0000002?tab=additional");

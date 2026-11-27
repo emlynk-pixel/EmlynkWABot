@@ -102,6 +102,23 @@ describe("OWNER in the admin app", () => {
         expect(within(await rowOf("Olga Owner")).getByText("Owner", { selector: "span" })).toBeInTheDocument();
     });
 
+    test("Change Roles: a failed load shows the shared error state with Try again, which reloads the accounts", async () => {
+        let attempts = 0;
+        as("OWNER", { "GET /api/admin/users": () => (++attempts === 1 ? { status: 500, body: { message: "Users are unavailable." } } : { status: 200, body: { users: USERS } }) });
+        renderApp("/settings/roles");
+        const alert = await screen.findByRole("alert", {}, RENDER_STEP);
+        expect(within(alert).getByText("Something went wrong. Please try again.")).toBeInTheDocument();
+        await userEvent.setup().click(within(alert).getByRole("button", { name: "Try again" }));
+        expect(await screen.findByRole("combobox", { name: "Change role for Adam Admin" }, RENDER_STEP)).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    });
+
+    test("Change Roles: no accounts shows the shared empty state", async () => {
+        as("OWNER", { "GET /api/admin/users": { status: 200, body: { users: [] } } });
+        renderApp("/settings/roles");
+        expect(await screen.findByText("No accounts found", {}, RENDER_STEP)).toBeInTheDocument();
+    });
+
     test("Invite User: Admin and below, never Owner; re-invite an Admin; no buttons on the Owner's row", async () => {
         as("OWNER");
         renderApp("/settings/invite");

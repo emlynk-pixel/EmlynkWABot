@@ -1,6 +1,7 @@
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { getReviewQueue, type ReviewQueueParams } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { Confidence } from "../components/Confidence";
 import { documentTypeLabel, formatDateTime, formatNumber, shortId } from "../components/format";
 import { Icon, type IconName } from "../components/Icon";
@@ -10,6 +11,9 @@ import { StatusBadge, ToneBadge } from "../components/StatusBadge";
 import { filterControl, tableCell, tableHead } from "../components/ui";
 
 const PAGE_SIZE = 25;
+
+// The filters remembered for the next visit (hooks/useRememberedSearchParams.ts).
+const REMEMBERED_KEYS = ["kind", "documentType", "reviewReason", "order"];
 
 function paramsFrom(search: URLSearchParams): ReviewQueueParams {
     const page = Number(search.get("page"));
@@ -38,10 +42,11 @@ function StatCard({ label, value, icon }: { label: string; value: number | undef
 // Review Queue: the list of items waiting for a
 // person. The actions are on the Review Detail page.
 export function ReviewQueuePage() {
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("review", REMEMBERED_KEYS);
     const params = paramsFrom(searchParams);
     const key = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString();
     const queue = useAdminResource(`review?${key}`, (token, signal) => getReviewQueue(token, params, signal));
+    useDiscardRestoredOnBadRequest(queue, remembered);
 
     const update = (changes: Record<string, string | undefined>, { keepPage = false } = {}) => {
         const next = new URLSearchParams(searchParams);

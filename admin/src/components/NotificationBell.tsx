@@ -1,283 +1,243 @@
-import { useEffect, useState, useRef, useCallback } from "react";
-import { Link } from "react-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../auth/AuthProvider";
-import type { NotificationSource } from "../auth/roles";
-import { getReviewQueue } from "../api/admin";
-import { listFollowUps } from "../api/followUps";
+import { getUnreadCount, listNotifications, markNotificationRead, type AdminNotification } from "../api/notifications";
 import { Icon } from "./Icon";
-import { reviewReasonLabel } from "./reviewLabels";
 
-// The header bell. Its source is chosen by role (roles.ts notificationSource) and is
-// always data the role can already open, linking only to a page it can open:
-//   review      the Review Queue (GET /review), each item linking to its review page
-//   follow-ups  the open Need Attention follow-ups (GET /follow-ups?status=OPEN), each
-//               linking to Need Attention: TEAM_LEAD, which has no Review Queue
-//   none        no feed yet (REGISTRATION_DESK, JOB_HANDLER): the bell is shown empty and
-//               requests nothing
+// The header bell: the signed-in admin's server-side notification feed (every role). Read state lives on
+// the server. The unread count is polled while the tab is visible; the list loads when the panel opens.
+// Notifications are informational: no navigation or other actions.
 
-// Extract base type for items from the queue
-type ReviewItem = {
-    reviewId: string;
-    documentType: string;
-    receivedDate: string;
-    reviewReason: string | null;
-    confidence?: number | null; // Available on document items
-    processingStatus?: string;
-    verificationStatus?: string;
-    identityStatus?: string;
-};
+const POLL_MS = 30_000;
+const dateFormat = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Colombo", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 
-// One row of the dropdown, whatever its source.
-type NotificationItem = { id: string; title: string; body: string; meta: string; at: string; to: string; linkLabel: string };
-
-const STORAGE_KEY_PREFIX = "emlynk.admin.readNotifications.";
-
-function getReadIds(userId: string): string[] {
-    try {
-        const stored = window.localStorage.getItem(STORAGE_KEY_PREFIX + userId);
-        if (stored) {
-            const parsed = JSON.parse(stored);
-            return Array.isArray(parsed) ? parsed.map(String) : [];
-        }
-    } catch {
-        // safe fallback for malformed localStorage
-    }
-    return [];
+function formatWhen(iso: string): string {
+    const date = new Date(iso);
+    return Number.isNaN(date.getTime()) ? "" : dateFormat.format(date);
 }
 
-function saveReadIds(userId: string, ids: string[]) {
-    try {
-        window.localStorage.setItem(STORAGE_KEY_PREFIX + userId, JSON.stringify(ids));
-    } catch {
-        // safe fallback if storage is full/unavailable
-    }
-}
-
-function reviewNotification(item: ReviewItem): NotificationItem {
-    let title = "Document requires review";
-    let body = "A document requires manual attention.";
-    let meta = "";
-
-    if (item.reviewReason === "DOCUMENT_TYPE_UNCLEAR") {
-        title = "Unrecognized document received";
-        body = "A document could not be identified automatically.";
-        meta = "Document type unclear";
-    } else if (item.reviewReason === "IDENTITY_NOT_CONFIRMED") {
-        body = "A document could not be securely matched to a candidate.";
-        meta = "Identity not confirmed";
-    } else if (item.reviewReason) {
-        // Some type coercion since reviewReasonLabel expects specific enum values
-        meta = reviewReasonLabel(item.reviewReason as any) || "Manual review required";
-    } else {
-        meta = "Manual review required";
-    }
-
-    if (item.confidence != null && item.confidence > 0) {
-        meta += ` · ${item.confidence}% confidence`;
-    }
-    // Relative to the router's basename (/admin), like every other link in the app.
-    return { id: item.reviewId, title, body, meta, at: item.receivedDate, to: `/review/${encodeURIComponent(item.reviewId)}`, linkLabel: "Review document" };
-}
-
-async function loadReviewNotifications(token: string, signal?: AbortSignal): Promise<NotificationItem[]> {
-    let page = 1;
-    const pageSize = 100; // max allowed page size
-    const allItems: ReviewItem[] = [];
-    let keepFetching = true;
-
-    // Fetch pages until we get all active items up to the maximum queue window
-    while (keepFetching) {
-        const res = await getReviewQueue(token, { page, pageSize, order: "desc" }, signal);
-        const fetchedItems = res.items as unknown as ReviewItem[];
-        allItems.push(...fetchedItems);
-
-        if (allItems.length >= res.summary.total || fetchedItems.length < pageSize) {
-            keepFetching = false;
-        } else {
-            page++;
-        }
-    }
-    return allItems.map(reviewNotification);
-}
-
-// Open follow-ups only (the server scopes them to the user's candidates), newest flag first.
-async function loadFollowUpNotifications(token: string, signal?: AbortSignal): Promise<NotificationItem[]> {
-    const list = await listFollowUps(token, "OPEN", signal);
-    return list.groups
-        .flatMap((group) => group.followUps.map((followUp) => {
-            const name = group.candidate.name ?? group.candidate.passportId;
-            const note = followUp.callLog.outcome === "NO_ANSWER" ? "No answer" : followUp.callLog.note;
-            return {
-                id: followUp.followUpId,
-                title: "Needs attention",
-                body: note ? `${name}: ${note}` : name,
-                meta: followUp.flaggedByName ? `Flagged by ${followUp.flaggedByName}` : "Flagged for follow-up",
-                at: followUp.flaggedAt,
-                to: "/follow-ups",
-                linkLabel: "Open Need Attention",
-            };
-        }))
-        .sort((a, b) => b.at.localeCompare(a.at));
-}
-
-const LOADERS: Record<NotificationSource, (token: string, signal?: AbortSignal) => Promise<NotificationItem[]>> = {
-    review: loadReviewNotifications,
-    "follow-ups": loadFollowUpNotifications,
-    none: async () => [],
-};
-
-export function NotificationBell({ source = "review" }: { source?: NotificationSource }) {
+export function NotificationBell() {
     const { user, token } = useAuth();
     const [isOpen, setIsOpen] = useState(false);
-    const [items, setItems] = useState<NotificationItem[]>([]);
-    const [readIds, setReadIds] = useState<Set<string>>(new Set());
+    const [items, setItems] = useState<AdminNotification[]>([]);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [unreadCount, setUnreadCount] = useState(0);
     const [loading, setLoading] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const countRef = useRef(0);
+    const openRef = useRef(false);
+    const seenIdsRef = useRef(new Set<string>());
+    const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
+    const badgeRef = useRef({ count: 0, dir: "up" });
+    countRef.current = unreadCount;
+    openRef.current = isOpen;
+    if (badgeRef.current.count !== unreadCount) {
+        badgeRef.current = { count: unreadCount, dir: unreadCount < badgeRef.current.count ? "down" : "up" };
+    }
+
+    const loadList = useCallback(async (signal?: AbortSignal) => {
+        if (!token) return;
+        setLoading(true);
+        setError(false);
+        try {
+            const page = await listNotifications(token, { limit: 30 }, signal);
+            // Presentation only: a refresh while the panel is open that brings ids not seen before is a
+            // genuine arrival. The load that happens as the panel opens never animates.
+            const seen = seenIdsRef.current;
+            if (openRef.current && seen.size > 0) {
+                const arrived = page.items.filter((i) => !seen.has(i.id)).map((i) => i.id);
+                if (arrived.length > 0) setFreshIds((current) => new Set([...current, ...arrived]));
+            }
+            page.items.forEach((i) => seen.add(i.id));
+            setItems(page.items);
+            setNextCursor(page.nextCursor);
+            setUnreadCount(page.unreadCount);
+        } catch (e) {
+            if ((e as Error)?.name !== "AbortError") setError(true);
+        } finally {
+            setLoading(false);
+        }
+    }, [token]);
+
+    const refreshCount = useCallback(async (signal?: AbortSignal) => {
+        if (!token) return;
+        try {
+            const { unreadCount: next } = await getUnreadCount(token, signal);
+            const increased = next > countRef.current;
+            setUnreadCount(next);
+            if (increased && openRef.current) void loadList();
+        } catch {
+            // A failed poll keeps the last count; the next tick retries.
+        }
+    }, [token, loadList]);
+
+    // Initial count, then every 30s while the tab is visible; refetch when the tab returns.
+    useEffect(() => {
+        if (!token) return;
+        const controller = new AbortController();
+        void refreshCount(controller.signal);
+        const timer = window.setInterval(() => {
+            if (!document.hidden) void refreshCount();
+        }, POLL_MS);
+        const onVisible = () => {
+            if (!document.hidden) void refreshCount();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        return () => {
+            controller.abort();
+            window.clearInterval(timer);
+            document.removeEventListener("visibilitychange", onVisible);
+        };
+    }, [token, refreshCount]);
 
     // Close on click outside
     useEffect(() => {
         if (!isOpen) return;
         const handleDocumentClick = (e: MouseEvent) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-                setIsOpen(false);
-            }
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setIsOpen(false);
         };
         document.addEventListener("mousedown", handleDocumentClick);
         return () => document.removeEventListener("mousedown", handleDocumentClick);
     }, [isOpen]);
 
-    const fetchNotifications = useCallback(async (abortSignal?: AbortSignal) => {
-        if (!token || !user) return;
-        setLoading(true);
-        setError(false);
-        try {
-            const allItems = await LOADERS[source](token, abortSignal);
-            setItems(allItems);
-
-            // Reconcile read IDs: remove stale ones no longer active in the source
-            const currentIds = new Set(allItems.map(i => i.id));
-            const storedRead = getReadIds(user.userId);
-            const validReadIds = storedRead.filter(id => currentIds.has(id));
-
-            saveReadIds(user.userId, validReadIds);
-            setReadIds(new Set(validReadIds));
-        } catch (e: unknown) {
-            if ((e as Error)?.name !== "AbortError") {
-                setError(true);
-            }
-        } finally {
-            setLoading(false);
-        }
-    }, [token, user, source]);
-
-    // Initial fetch
-    useEffect(() => {
-        const controller = new AbortController();
-        fetchNotifications(controller.signal);
-        return () => controller.abort();
-    }, [fetchNotifications]);
-
-    // Refresh when dropdown is opened
     const handleToggle = () => {
         if (!isOpen) {
-            fetchNotifications();
+            setFreshIds(new Set());
+            void loadList();
+            void refreshCount();
         }
         setIsOpen(!isOpen);
     };
 
-    const markAsRead = (id: string) => {
-        if (!user || readIds.has(id)) return;
-        const next = new Set(readIds);
-        next.add(id);
-        setReadIds(next);
-        saveReadIds(user.userId, Array.from(next));
+    const loadMore = async () => {
+        if (!token || !nextCursor || loadingMore) return;
+        setLoadingMore(true);
+        try {
+            const page = await listNotifications(token, { limit: 30, cursor: nextCursor });
+            setItems((current) => {
+                const seen = new Set(current.map((i) => i.id));
+                return [...current, ...page.items.filter((i) => !seen.has(i.id))];
+            });
+            setNextCursor(page.nextCursor);
+            setUnreadCount(page.unreadCount);
+        } catch {
+            setError(true);
+        } finally {
+            setLoadingMore(false);
+        }
     };
 
-    const markAllAsRead = () => {
-        if (!user) return;
-        const allIds = items.map(i => i.id);
-        setReadIds(new Set(allIds));
-        saveReadIds(user.userId, allIds);
+    const markRead = async (item: AdminNotification) => {
+        if (!token || item.readAt) return;
+        const optimisticAt = new Date().toISOString();
+        setItems((current) => current.map((i) => (i.id === item.id ? { ...i, readAt: optimisticAt } : i)));
+        setUnreadCount((c) => Math.max(0, c - 1));
+        try {
+            const result = await markNotificationRead(token, item.id);
+            setItems((current) => current.map((i) => (i.id === item.id ? { ...i, readAt: result.readAt } : i)));
+            setUnreadCount(result.unreadCount);
+        } catch {
+            // Roll back.
+            setItems((current) => current.map((i) => (i.id === item.id ? { ...i, readAt: null } : i)));
+            setUnreadCount((c) => c + 1);
+        }
     };
 
-    const unreadCount = items.length - readIds.size;
-    const badgeText = unreadCount > 99 ? "99+" : unreadCount > 0 ? unreadCount.toString() : null;
+    if (!user) return null;
+
+    const badgeText = unreadCount > 99 ? "99+" : unreadCount > 0 ? String(unreadCount) : null;
 
     return (
         <div className="relative" ref={dropdownRef}>
             <button
                 type="button"
                 onClick={handleToggle}
+                aria-haspopup="true"
+                aria-expanded={isOpen}
                 className="relative flex h-8 items-center justify-center rounded-lg border border-border-strong bg-surface px-2 text-ink-soft hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label={badgeText ? `Notifications (${badgeText} unread)` : "Notifications"}
+                aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : "Notifications"}
             >
                 <Icon name={badgeText ? "notifications_active" : "notifications"} className="size-4" />
                 {badgeText && (
-                    <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-critical px-1 text-label-sm font-medium leading-none text-on-critical">
-                        {badgeText}
+                    // Keyed by the count so each change replays the pop; the number slides in when it goes down.
+                    <span key={unreadCount} aria-hidden="true" className="notif-badge-pop absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center overflow-hidden rounded-full bg-critical px-1 text-label-sm font-medium leading-none text-on-critical">
+                        <span className={badgeRef.current.dir === "down" ? "notif-badge-down" : undefined}>{badgeText}</span>
                     </span>
                 )}
             </button>
 
             {isOpen && (
-                <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 rounded-xl border border-border bg-surface shadow-lg z-50 flex flex-col max-h-[85vh]">
-                    <div className="flex items-center justify-between border-b border-border px-4 py-3 shrink-0">
+                <div className="absolute right-0 top-full z-50 mt-2 flex max-h-[85vh] w-80 flex-col rounded-xl border border-border bg-surface shadow-lg sm:w-96">
+                    <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
                         <h3 className="font-medium text-ink">Notifications</h3>
-                        {unreadCount > 0 && (
-                            <button
-                                type="button"
-                                onClick={markAllAsRead}
-                                className="text-label-sm text-primary hover:underline"
-                            >
-                                Mark all as read
-                            </button>
-                        )}
                     </div>
 
-                    <div className="flex-1 overflow-y-auto min-h-[100px]">
+                    <div className="min-h-[100px] flex-1 overflow-y-auto">
                         {loading && items.length === 0 ? (
-                            <div className="flex h-32 items-center justify-center text-ink-subtle text-body-sm">
-                                <Icon name="progress_activity" className="size-5 animate-spin mr-2" /> Loading...
+                            <div className="flex h-32 items-center justify-center text-body-sm text-ink-subtle">
+                                <Icon name="progress_activity" className="mr-2 size-5 animate-spin" /> Loading...
                             </div>
                         ) : error && items.length === 0 ? (
-                            <div className="flex h-32 items-center justify-center text-critical text-body-sm px-4 text-center">
+                            <div role="alert" className="flex h-32 items-center justify-center px-4 text-center text-body-sm text-critical">
                                 Could not load notifications. Please try again.
                             </div>
                         ) : items.length === 0 ? (
-                            <div className="flex h-32 items-center justify-center text-ink-subtle text-body-sm">
+                            <div className="flex h-32 items-center justify-center text-body-sm text-ink-subtle">
                                 You have no notifications.
                             </div>
                         ) : (
-                            <ul className="divide-y divide-border">
-                                {items.map(item => {
-                                    const isRead = readIds.has(item.id);
-                                    const time = new Date(item.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-                                    const date = new Date(item.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-                                    const receivedStr = `${date}, ${time}`;
-
-                                    return (
-                                        <li key={item.id} className={`relative flex flex-col p-4 transition-colors hover:bg-canvas-muted ${isRead ? "opacity-60" : "bg-primary-soft/10"}`}>
-                                            {!isRead && <span className="absolute left-1.5 top-5 size-1.5 rounded-full bg-primary" aria-hidden="true" />}
-                                            <div className="pl-3">
-                                                <p className="text-label-md text-ink">{item.title}</p>
-                                                <p className="mt-0.5 text-body-sm text-ink-soft [overflow-wrap:anywhere]">{item.body}</p>
-                                                <p className="mt-1 text-label-sm text-ink-subtle">{item.meta} · {receivedStr}</p>
-                                                <Link
-                                                    to={item.to}
-                                                    onClick={() => {
-                                                        markAsRead(item.id);
-                                                        setIsOpen(false);
-                                                    }}
-                                                    className="mt-2 inline-flex text-label-sm text-primary hover:underline"
+                            <>
+                                <ul className="divide-y divide-border">
+                                    {items.map((item) => {
+                                        const unread = !item.readAt;
+                                        return (
+                                            <li
+                                                key={item.id}
+                                                data-unread={unread ? "true" : "false"}
+                                                className={`transition-colors duration-300 motion-reduce:transition-none ${unread ? "bg-primary-soft" : "bg-surface"} ${freshIds.has(item.id) ? "notif-arrive" : ""}`}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void markRead(item)}
+                                                    className="relative flex w-full flex-col p-4 pl-6 text-left transition-colors hover:bg-canvas-muted"
                                                 >
-                                                    {item.linkLabel}
-                                                </Link>
-                                            </div>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
+                                                    {/* Bar and dot are always rendered so the row never shifts; only opacity/transform change. */}
+                                                    <span
+                                                        data-testid="notif-bar"
+                                                        aria-hidden="true"
+                                                        className={`absolute inset-y-0 left-0 w-1 origin-center bg-primary transition-transform duration-300 ease-out motion-reduce:transition-none ${unread ? "scale-y-100" : "scale-y-0"}`}
+                                                    />
+                                                    <span
+                                                        data-testid="notif-dot"
+                                                        aria-hidden="true"
+                                                        className={`absolute left-3 top-[22px] size-2 rounded-full bg-primary transition-opacity duration-200 motion-reduce:transition-none ${unread ? "opacity-100" : "opacity-0"}`}
+                                                    />
+                                                    <span className={`text-label-md transition-colors duration-300 motion-reduce:transition-none ${unread ? "font-bold text-ink" : "font-normal text-ink-muted"}`}>{item.title}</span>
+                                                    <span className={`mt-0.5 text-body-sm transition-colors duration-300 motion-reduce:transition-none [overflow-wrap:anywhere] ${unread ? "text-ink-soft" : "text-ink-muted"}`}>{item.message}</span>
+                                                    <span className={`mt-1 text-label-sm transition-colors duration-300 motion-reduce:transition-none ${unread ? "text-ink-muted" : "text-ink-subtle"}`}>{formatWhen(item.createdAt)}</span>
+                                                    <span className="sr-only">{unread ? "Unread" : "Read"}</span>
+                                                </button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                                {error && (
+                                    <p role="alert" className="px-4 py-2 text-center text-body-sm text-critical">Could not load notifications. Please try again.</p>
+                                )}
+                                {nextCursor && (
+                                    <div className="border-t border-border p-2 text-center">
+                                        <button
+                                            type="button"
+                                            onClick={() => void loadMore()}
+                                            disabled={loadingMore}
+                                            className="text-label-sm text-primary hover:underline disabled:opacity-60"
+                                        >
+                                            {loadingMore ? "Loading..." : "Load more"}
+                                        </button>
+                                    </div>
+                                )}
+                            </>
                         )}
                     </div>
                 </div>

@@ -582,6 +582,7 @@ describe("security and error handling", () => {
             "PATCH /job-types/:id",
             "PATCH /jobs/:jobId/import-suffix", // last two digits of a sheet-upload Job: ADMIN, JOB_HANDLER, ANALYST (scoped), audited (importJobGroups.test.js) // Settings > Job Types: rename / activate / deactivate, ADMIN only, audited (jobTypes.test.js)
             "POST /agents",
+            "POST /audit-logs/export", // ADMIN only, reads only: the filters are a JSON body (auditLogExport.test.js)
             "POST /candidates", // candidate management (ANALYST and above, see candidates.test.js)
             "POST /candidates/:passportId/call-logs",
             "POST /candidates/:passportId/call-logs/:callLogId/follow-up", // flag a call for follow-up, audited
@@ -606,6 +607,7 @@ describe("security and error handling", () => {
             "POST /jobs/:jobId/complete",
             "POST /jobs/:jobId/form-share", // job-group Candidate Form link: ADMIN only, audited (jobGroupShare.test.js)
             "POST /jobs/:jobId/form-share/revoke",
+            "POST /notifications/:id/read", // every role, the caller's own notification only; read_at only (notifications.test.js)
             "POST /review/:reviewId/approve",
             "POST /review/:reviewId/assign-client",
             "POST /review/:reviewId/document-type",

@@ -107,7 +107,7 @@ describe("POST /review/:reviewId/remove", () => {
         const queue = await call("GET", "/review");
         assert.deepEqual(queue.body.items.map((i) => i.reviewId).sort(), [`document-${DOC}`, `pending-${OTHER}`].sort());
         assert.equal((await call("GET", `/review/pending-${TEMP}`)).status, 404);
-        assert.equal((await call("GET", "/overview")).body.reviewQueue.pendingFiles, 1);
+        assert.equal(queue.body.summary.pending, 1, "one waiting file left in the Review Queue count");
         assert.equal((await remove(`pending-${TEMP}`)).status, 404);
     });
 

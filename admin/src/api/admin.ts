@@ -1,4 +1,4 @@
-import { apiRequest, apiRequestBlob } from "./client";
+import { apiPostForFile, apiRequest, apiRequestBlob } from "./client";
 
 // Admin dashboard API (src/routes/admin.js, /api/admin/*). Reads, plus the
 // review actions and corrections (all audited on the server). Every call
@@ -33,26 +33,25 @@ export type PendingItem = {
     client: ClientRef | null;
 };
 
+// The role-scoped Overview tab (GET /api/admin/overview). The server decides the view from the
+// signed-in user: ADMIN / OWNER "system"; TEAM_LEAD "mine" (default) or "full"; ANALYST "mine".
+// `view` in the request is only a request (never sent for an Analyst, who gets 403 for "full").
+export type OverviewView = "mine" | "full" | "system";
+
 export type Overview = {
     businessDate: string;
-    kpis: { totalClients: number; totalDocuments: number; pendingReview: number; receivedToday: number };
-    submissionsByStatus: Record<string, number>;
-    submissionsByType: Record<string, number>;
-    recentDocuments: DocumentItem[];
-    reviewQueue: {
-        total: number;
-        pendingFiles: number;
-        reviewRequiredDocuments: number;
-        pendingByStatus: Record<string, number>;
-        items: PendingItem[];
-        // H3: submissions whose processing failed (not part of `total`).
-        failedSubmissions?: number;
+    view: OverviewView;
+    canChooseView: boolean;
+    overview: {
+        activeAllocated: number;
+        jobAllocated: number;
+        policeReportsYetToReceive: { total: number; byVariant: { ROMANIA: number; SL_VERIFIED: number } };
+        agreementsYetToReceive: number;
+        detailsNotCompleted: number;
+        newlyAllocated: number;
+        visaSubmissionCompleted: number;
     };
-    // Police Workflow: final police reports by countdown status.
-    police: { dueSoon: number; dueToday: number; overdue: number; missingSlipDate: number; notUploaded: number };
-    // Required-document completeness of every client, now.
-    clients: CompletenessSummary;
-    requiredDocumentTypes: string[];
+    daily: { formSubmissions: number; newlyAllocated: number; callsTaken: number };
 };
 
 export type CompletenessSummary = {
@@ -260,28 +259,6 @@ export function getDailyRoleSummary(token: string, date: string | undefined, rol
     return apiRequest<DailyRoleSummary>(`/api/admin/reports/daily/roles${queryString({ date, role })}`, { token, signal });
 }
 
-// ---------------------------------------------------------------- monthly overview
-// Counts for one business month (Sri Lanka); months are "YYYY-MM".
-
-export type MonthlyOverview = {
-    month: string;
-    thisMonth: string;
-    isCurrentMonth: boolean;
-    timeZone: string;
-    range: { start: string; end: string };
-    candidatesRegistered: number;
-    documentsSubmitted: number;
-    successfullyProcessed: number;
-    pending: number;
-    rejected: number;
-    manualReview: number;
-    sources: { whatsappSubmissions: number; adminUploads: number };
-};
-
-export function getMonthlyOverview(token: string, month: string | undefined, signal?: AbortSignal): Promise<MonthlyOverview> {
-    return apiRequest<MonthlyOverview>(`/api/admin/reports/monthly${queryString({ month })}`, { token, signal });
-}
-
 // ---------------------------------------------------------------- police workflow
 // Calculated by the backend every time; dates are "YYYY-MM-DD" (Sri Lanka).
 
@@ -317,8 +294,8 @@ export function getPoliceWorkflow(token: string, params: PoliceListParams, signa
     return apiRequest<PoliceList>(`/api/admin/police${suffix ? `?${suffix}` : ""}`, { token, signal });
 }
 
-export function getOverview(token: string, signal?: AbortSignal): Promise<Overview> {
-    return apiRequest<Overview>("/api/admin/overview", { token, signal });
+export function getOverview(token: string, view: "mine" | "full" | undefined, signal?: AbortSignal): Promise<Overview> {
+    return apiRequest<Overview>(`/api/admin/overview${queryString({ view })}`, { token, signal });
 }
 
 export function listDocuments(token: string, params: DocumentListParams, signal?: AbortSignal): Promise<DocumentList> {
@@ -659,4 +636,16 @@ export type AuditLogList = {
 
 export function listAuditLogs(token: string, params: AuditLogParams, signal?: AbortSignal): Promise<AuditLogList> {
     return apiRequest<AuditLogList>(`/api/admin/audit-logs${queryString(params)}`, { token, signal });
+}
+
+export type AuditLogExportFormat = "xlsx" | "pdf";
+
+// Downloads the report of the entries matching the filters (no page / pageSize).
+// The filters go in the POST body, never the URL (a passport number is personal data).
+export function exportAuditLogs(token: string, format: AuditLogExportFormat, filters: Omit<AuditLogParams, "page" | "pageSize">, signal?: AbortSignal): Promise<{ blob: Blob; filename: string | null }> {
+    const body: Record<string, string> = { format };
+    for (const [name, value] of Object.entries(filters)) {
+        if (value !== undefined && value !== "") body[name] = String(value);
+    }
+    return apiPostForFile("/api/admin/audit-logs/export", body, { token, signal });
 }

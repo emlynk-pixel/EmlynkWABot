@@ -21,7 +21,10 @@ const { startSubmissionWorker } = await import("./services/submissionQueue.js");
 const { createShutdown } = await import("./shutdown.js");
 const { default: prisma } = await import("./config/prisma.js");
 
-const app = createApp();
+const { createSystemAlertReporter } = await import("./services/notificationEvents.js");
+
+// A 500 tells the Owner (System Alert, once a business day per issue).
+const app = createApp({ onServerError: createSystemAlertReporter({ getDb: () => prisma }) });
 
 const PORT = process.env.PORT || 3000;
 

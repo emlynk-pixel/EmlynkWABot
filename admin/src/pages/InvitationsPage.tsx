@@ -3,6 +3,7 @@ import { canInviteUsers, invitableRoles, useAuth } from "../auth/AuthProvider";
 import { ROLE_LABELS, ROLES, canManageUser, roleLabel, type Role } from "../auth/roles";
 import { OwnerBadge } from "../components/OwnerBadge";
 import { Icon } from "../components/Icon";
+import { LoadingState } from "../components/States";
 import { deactivateUser, inviteUser, listUsers, type UserSummary } from "../api/admin";
 import { ApiError } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -249,10 +250,7 @@ export function InvitationsPage({ embedded = false }: { embedded?: boolean } = {
                 {actionError && <div role="alert" className="mb-4 rounded-lg border border-critical-border bg-critical-bg p-3 text-body-sm text-critical">{actionError}</div>}
 
                 {loading ? (
-                    <div className="py-12 text-center text-ink-muted">
-                        <Icon name="progress_activity" className="mx-auto mb-2 size-6 animate-spin text-primary" />
-                        <p className="text-body-sm">Loading users…</p>
-                    </div>
+                    <LoadingState label="Loading users…" />
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-left text-body-sm">

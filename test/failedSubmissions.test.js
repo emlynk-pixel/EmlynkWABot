@@ -152,10 +152,6 @@ describe("H3 admin API", () => {
         assert.equal(all.summary.total, 1);
         assert.equal(all.summary.failed, 2);
         assert.equal((await call("GET", "/review?kind=PENDING")).body.items.length, 1);
-        const overview = (await call("GET", "/overview")).body;
-        assert.equal(overview.kpis.pendingReview, 1, "FAILED not added to Pending review");
-        assert.equal(overview.reviewQueue.failedSubmissions, 2);
-        assert.equal(overview.submissionsByStatus.FAILED, 3, "the status breakdown already counted them");
     });
 
     test("filters and validation follow the queue conventions", async () => {

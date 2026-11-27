@@ -2,15 +2,15 @@ import { getFormBranding, parseBrandingBody, updateFormBranding } from "../servi
 import express from "express";
 
 import { createRequireActiveUser } from "../middleware/requireActiveUser.js";
-import { hasRole, requireRole, ROLES } from "../middleware/requireRole.js";
+import { ALL_ROLES, hasRole, requireRole, ROLES } from "../middleware/requireRole.js";
 import { createApiRateLimiter } from "../middleware/apiRateLimiter.js";
 import {
-    getOverview,
     listDocuments,
     getClientDetails,
     parseDocumentListQuery,
     isValidPassportIdParam,
 } from "../services/adminDashboardService.js";
+import { getOverview, parseOverviewQuery, resolveOverviewView } from "../services/overviewService.js";
 import {
     listReviewQueue,
     getReviewFile,
@@ -46,9 +46,21 @@ import {
     setDocumentType,
     setPoliceSubmittedDate,
 } from "../services/adminCorrectionService.js";
-import { getDailyReport, getMonthlyOverview, parseDailyReportQuery, parseMonthlyOverviewQuery } from "../services/adminReportService.js";
+import { getDailyReport, parseDailyReportQuery } from "../services/adminReportService.js";
 import { getDailyRoleSummary, getDailySummary, getIncompleteCandidates, parseIncompleteQuery, parseRoleQuery } from "../services/dailyReportService.js";
-import { listAuditLogs, parseAuditLogQuery } from "../services/auditLogService.js";
+import {
+    MAX_AUDIT_EXPORT_ROWS,
+    NO_AUDIT_EXPORT_MATCHES_MESSAGE,
+    auditExportTooLargeMessage,
+    auditLogExportItems,
+    listAuditLogs,
+    parseAuditLogExportBody,
+    parseAuditLogQuery,
+    prepareAuditLogExport,
+} from "../services/auditLogService.js";
+import { AUDIT_EXPORT_CONTENT_TYPES, loadAuditLogExportWriter } from "../services/auditLogExportWriters.js";
+import { businessDateOf } from "../utils/businessDay.js";
+import { safeErrorInfo } from "../utils/safeLog.js";
 import { getAdditionalDetails, parseAdditionalDetailsBody, saveAdditionalDetails } from "../services/candidateAdditionalDetailsService.js";
 import {
     completeFollowUp,
@@ -100,6 +112,8 @@ import { activeJobTypeNames, NO_PREFERRED_JOB_TYPE, resolveCandidateJobTypes } f
 import { CONFIRMABLE_FIELDS, confirmAllFormFields, confirmFormField, isConfirmableField, rejectAllFormFields, rejectFormField } from "../services/candidateFormFieldConfirmService.js";
 import { createJobGroupShareLink, getJobGroupShareStatus, revokeJobGroupShareLink } from "../services/candidateFormJobGroupService.js";
 import { createFormShareLink, getFormShareStatus, revokeFormShareLink } from "../services/candidateFormShareService.js";
+import { countUnread, listNotifications, markNotificationRead, NotificationError, parseNotificationListQuery } from "../services/notificationService.js";
+import { isFormLinkSystemError, notifyFormLinkFailed } from "../services/notificationEvents.js";
 import { parseCandidateFormOrigin } from "../config/candidateForm.js";
 import {
     createAgent,
@@ -172,8 +186,8 @@ function contentDisposition(fileName) {
 
 // Phase 12 RBAC: role shorthand constants for this router.
 // ANALYST: only the candidates allocated to them: their workflow (the candidate's page and its
-// changes) and Need Attention. No dashboard, documents, review queue, police workflow, reports
-// or jobs.
+// changes), Need Attention and their own Overview figures. No dashboard, documents, review queue,
+// police workflow, reports or jobs.
 // ADMIN: full access, including user management, Settings, Work Allocation,
 // verification, police-date corrections and confirming Candidate Form values
 // (an OWNER holds every ADMIN permission: requireRole.js hasRole).
@@ -192,7 +206,8 @@ function contentDisposition(fileName) {
 // area for every candidate (the CANDIDATE_STAFF / CANDIDATE_READERS /
 // REGISTRATION_STAFF routes), Need Attention (list, flag, complete), Work
 // Allocation, Jobs (JOB_READERS / JOB_MANAGERS), Agents and Clients
-// (MASTER_DATA_STAFF) and the standard Daily Report (REPORT_READERS). It is in no
+// (MASTER_DATA_STAFF) and the standard Daily Report (REPORT_READERS); plus the
+// role-scoped Overview (OVERVIEW_READERS, as an ANALYST also has). It is in no
 // ADMINS_ONLY route: verification, follow-up
 // delete, the job-group form link, Summary by Roles, Job Types, police-date
 // corrections, Settings, users and Audit Logs stay ADMIN only; and it is not in the
@@ -200,7 +215,9 @@ function contentDisposition(fileName) {
 // TEAM_LEAD, ANALYST), each within its candidate scope.
 const { ADMIN, TEAM_LEAD, ANALYST, REGISTRATION_DESK, JOB_HANDLER } = ROLES;
 // The set of roles allowed for each endpoint tier.
-const DASHBOARD_READERS = [ADMIN];                                      // overview, documents, review, police, monthly
+const DASHBOARD_READERS = [ADMIN];                                      // documents, review, police
+// The Overview: each role sees its own figures (overviewService.js decides the view from req.user).
+const OVERVIEW_READERS = [ADMIN, TEAM_LEAD, ANALYST];
 const REPORT_READERS = [ADMIN, TEAM_LEAD];                              // the Daily Report
 const CANDIDATE_STAFF = [ADMIN, TEAM_LEAD, ANALYST];                    // the Candidates area and Need Attention
 const REVIEWERS = [ADMIN];                                              // review actions
@@ -242,6 +259,8 @@ export function createAdminRouter({
     // Where Candidate Form share links point (the public form's own origin;
     // never taken from a request header). Unset: no link can be created.
     candidateFormOrigin = process.env.CANDIDATE_FORM_ORIGIN,
+    // The audit log export file writers (tests replace it).
+    loadExportWriter = loadAuditLogExportWriter,
 } = {}) {
     const router = express.Router();
     const formOrigin = parseCandidateFormOrigin(candidateFormOrigin);
@@ -254,11 +273,53 @@ export function createAdminRouter({
     });
     router.use(requireAdmin);
 
+    // ---------------------------------------------------------------- notifications (every role)
+    // The signed-in user's own in-app notifications (notificationService.js). Always scoped to
+    // req.user.adminId: no request names a recipient, and another user's notification is 404.
+    const NOTIFICATION_READERS = ALL_ROLES;
+    const notificationAction = async (res, run) => {
+        try {
+            return await run();
+        } catch (error) {
+            if (error instanceof NotificationError) {
+                return res.status(error.status).json({ message: error.message, code: error.code, ...(error.status === 400 ? { errors: [{ field: "cursor", message: "must be the nextCursor of the previous page" }] } : {}) });
+            }
+            throw error;
+        }
+    };
+
+    router.get("/notifications", requireRole(NOTIFICATION_READERS), async (req, res) => {
+        const parsed = parseNotificationListQuery(req.query);
+        if (parsed.errors) return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        const client = await resolveDb(db);
+        return notificationAction(res, async () => res.json(await listNotifications({ db: client, recipientId: req.user.adminId, params: parsed.params })));
+    });
+
+    router.get("/notifications/unread-count", requireRole(NOTIFICATION_READERS), async (req, res) => {
+        const client = await resolveDb(db);
+        return res.json({ unreadCount: await countUnread({ db: client, recipientId: req.user.adminId }) });
+    });
+
+    router.post("/notifications/:id/read", requireRole(NOTIFICATION_READERS), async (req, res) => {
+        const client = await resolveDb(db);
+        return notificationAction(res, async () => res.json(await markNotificationRead({ db: client, recipientId: req.user.adminId, id: req.params.id })));
+    });
+
     // ---------------------------------------------------------------- read-only (VIEWER and above)
 
-    router.get("/overview", requireRole(DASHBOARD_READERS), async (req, res) => {
+    // ?view=mine|full. The view served is decided from req.user, never from the request:
+    // ADMIN / OWNER always the whole system, TEAM_LEAD mine (default) or full, ANALYST mine only.
+    router.get("/overview", requireRole(OVERVIEW_READERS), async (req, res) => {
+        const parsed = parseOverviewQuery(req.query);
+        if (parsed.errors) {
+            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
+        }
+        const resolved = resolveOverviewView(req.user, parsed.params.view);
+        if (resolved.forbidden) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
         const client = await resolveDb(db);
-        res.json(await getOverview({ db: client, scope: candidateScope(req.user) }));
+        return res.json(await getOverview({ db: client, ...resolved, adminId: req.user.adminId ?? null }));
     });
 
     // Incomplete clients and their missing required documents. Registered
@@ -330,16 +391,6 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return res.json(await getDailyRoleSummary({ db: client, date: date.params.date, role: role.params.role }));
-    });
-
-    // Monthly overview for one business month (Sri Lanka), default this month.
-    router.get("/reports/monthly", requireRole(DASHBOARD_READERS), async (req, res) => {
-        const parsed = parseMonthlyOverviewQuery(req.query);
-        if (parsed.errors) {
-            return res.status(400).json({ message: "Invalid query parameters", errors: parsed.errors });
-        }
-        const client = await resolveDb(db);
-        return res.json(await getMonthlyOverview({ db: client, month: parsed.params.month, scope: candidateScope(req.user) }));
     });
 
     router.get("/clients/:passportId", requireRole(DASHBOARD_READERS), async (req, res) => {
@@ -584,6 +635,17 @@ export function createAdminRouter({
     // A candidate as the user may see it: REGISTRATION_DESK gets the registration view only.
     const candidateFor = (req, details) => (registrationOnly(req) ? registrationView(details) : details);
     const forbidden = (res) => res.status(403).json({ message: "Insufficient permissions" });
+    // Creating a Candidate Form link: a system problem (the form not configured, an unexpected
+    // error; never a refusal such as 409 FORM_SUBMITTED) also notifies the Admins and Team Leads
+    // (E10, at most once an hour). The error is answered exactly as before.
+    const reportingFormLinkFailure = async (client, create) => {
+        try {
+            return await create();
+        } catch (error) {
+            if (isFormLinkSystemError(error)) await notifyFormLinkFailed(client);
+            throw error;
+        }
+    };
 
     // The advanced filters (candidateListFilters.js) only ever narrow the user's own candidates: the
     // scope is AND-ed with them in the database. A filter the role may not use is refused (400).
@@ -920,9 +982,10 @@ export function createAdminRouter({
     router.post("/candidates/:passportId/form-share", requireRole(CANDIDATE_STAFF), async (req, res) => {
         if (!isValidCandidateIdParam(req.params.passportId)) return invalidCandidateId(res);
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.status(201).json(await createFormShareLink({
-            db: client, actor: req.user, formOrigin, passportId: await storedCandidateId(client, req.params.passportId, req.user),
-        })));
+        return candidateAction(res, async () => {
+            const passportId = await storedCandidateId(client, req.params.passportId, req.user);
+            return res.status(201).json(await reportingFormLinkFailure(client, () => createFormShareLink({ db: client, actor: req.user, formOrigin, passportId })));
+        });
     });
 
     router.post("/candidates/:passportId/form-share/revoke", requireRole(CANDIDATE_STAFF), async (req, res) => {
@@ -1091,7 +1154,7 @@ export function createAdminRouter({
     router.post("/jobs/:jobId/form-share", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
         const client = await resolveDb(db);
-        return candidateAction(res, async () => res.status(201).json(await createJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), formOrigin })));
+        return candidateAction(res, async () => res.status(201).json(await reportingFormLinkFailure(client, () => createJobGroupShareLink({ db: client, actor: req.user, jobId: req.params.jobId.toLowerCase(), formOrigin }))));
     });
     router.post("/jobs/:jobId/form-share/revoke", requireRole(ADMINS_ONLY), async (req, res) => {
         if (!jobParam(req, res)) return undefined;
@@ -1226,6 +1289,43 @@ export function createAdminRouter({
         }
         const client = await resolveDb(db);
         return res.json(await listAuditLogs({ db: client, params: parsed.params }));
+    });
+
+    // Every entry matching the list filters (JSON body, no pagination) as an
+    // Excel workbook or a PDF, streamed. 400 invalid filters, 404 none match,
+    // 413 more than MAX_AUDIT_EXPORT_ROWS match; each with a user-facing
+    // `message` that never repeats a submitted value.
+    router.post("/audit-logs/export", requireRole(ADMINS_ONLY), async (req, res) => {
+        const parsed = parseAuditLogExportBody(req.body);
+        if (parsed.errors) {
+            return res.status(400).json({ error: "INVALID_EXPORT_REQUEST", message: parsed.message, errors: parsed.errors });
+        }
+        const client = await resolveDb(db);
+        const asOf = new Date();
+        const { where, total } = await prepareAuditLogExport({ db: client, params: parsed.params, asOf });
+        if (total === 0) {
+            return res.status(404).json({ error: "NO_MATCHING_RECORDS", message: NO_AUDIT_EXPORT_MATCHES_MESSAGE });
+        }
+        if (total > MAX_AUDIT_EXPORT_ROWS) {
+            return res.status(413).json({ error: "EXPORT_TOO_LARGE", message: auditExportTooLargeMessage(total), total, limit: MAX_AUDIT_EXPORT_ROWS });
+        }
+        const write = await loadExportWriter(parsed.format);
+        res.status(200);
+        res.setHeader("Content-Type", AUDIT_EXPORT_CONTENT_TYPES[parsed.format]);
+        res.setHeader("Content-Disposition", `attachment; filename="audit-log-${businessDateOf(asOf)}.${parsed.format}"`);
+        res.setHeader("Cache-Control", "no-store");
+        try {
+            await write({ items: auditLogExportItems({ db: client, where }), out: res, total, generatedAt: asOf });
+        } catch (error) {
+            if (!res.headersSent) {
+                for (const name of ["Content-Type", "Content-Disposition"]) res.removeHeader(name);
+                throw error;
+            }
+            // The file has started: it can only be cut off (the download fails).
+            console.error("Audit log export failed while streaming:", { format: parsed.format, ...safeErrorInfo(error) });
+            res.destroy();
+        }
+        return undefined;
     });
 
     // ---------------------------------------------------------------- users (ADMIN only)

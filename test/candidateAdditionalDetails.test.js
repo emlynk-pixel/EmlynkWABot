@@ -241,6 +241,22 @@ describe("the Candidate Form's other answers on the Additional Details form", ()
         });
         assert.equal(await prisma.candidateAdditionalDetails.count(), 0);
     });
+
+    test("English Knowledge: an ENGLISH 8 label is stored as GOOD and read back as GOOD; a code is stored as it is", async () => {
+        await withServer("ADMIN", async (call) => {
+            const saved = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, englishKnowledge: "ENGLISH 8" } });
+            assert.equal(saved.status, 200, JSON.stringify(saved.body));
+            assert.equal(saved.body.details.englishKnowledge, "GOOD");
+            assert.equal((await prisma.candidateAdditionalDetails.findUnique({ where: { passportId: "N1023757" } })).englishKnowledge, "GOOD");
+            assert.equal((await call("/N1023757/additional-details")).body.details.englishKnowledge, "GOOD");
+            const code = await call("/N1023757/additional-details", { method: "PUT", body: { ...FULL, englishKnowledge: "FAIR", expectedUpdatedDate: saved.body.updatedDate } });
+            assert.equal(code.status, 200, JSON.stringify(code.body));
+            assert.equal((await prisma.candidateAdditionalDetails.findUnique({ where: { passportId: "N1023757" } })).englishKnowledge, "FAIR");
+        });
+        assert.equal(parseAdditionalDetailsBody({ ...FULL, englishKnowledge: " english   10 " }).values.englishKnowledge, "FLUENT");
+        assert.equal(parseAdditionalDetailsBody({ ...FULL, englishKnowledge: "NO KNOWLEDGE" }).values.englishKnowledge, "NO KNOWLEDGE");
+        assert.deepEqual(parseAdditionalDetailsBody({ ...FULL, englishKnowledge: "ENGLISH 5" }).errors, [{ field: "englishKnowledge", message: "must be one of: NO KNOWLEDGE, BASIC, FAIR, GOOD, VERY GOOD, FLUENT" }]);
+    });
 });
 
 describe("audit", () => {

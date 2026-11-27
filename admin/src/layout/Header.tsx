@@ -1,6 +1,6 @@
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { useAuth } from "../auth/AuthProvider";
-import { canRegisterCandidates, notificationSource } from "../auth/roles";
+import { canRegisterCandidates } from "../auth/roles";
 import { Breadcrumbs } from "../components/Breadcrumbs";
 import { Icon } from "../components/Icon";
 import { useSync } from "../sync/SyncProvider";
@@ -18,11 +18,17 @@ export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: {
     const { user } = useAuth();
     const { syncing, result, sync } = useSync();
     const { theme, toggle } = useTheme();
+    const navigate = useNavigate();
+    const location = useLocation();
+    // Back steps one entry back in this app's history; off on the first entry
+    // (key "default"). BrowserRouter keeps the entry's index in history.state
+    // (idx), which also catches a first entry that was replaced (a redirect);
+    // MemoryRouter (tests) keeps none there.
+    const historyIndex = (window.history.state as { idx?: unknown } | null)?.idx;
+    const canGoBack = location.key !== "default" && (typeof historyIndex !== "number" || historyIndex > 0);
     // Quick access to the registration form (the existing /candidates/new
     // route) on every page, for the roles that can register candidates.
     const showRegister = canRegisterCandidates(user);
-    // The bell's source for this role (roles.ts): the review queue, Need Attention, or none (an empty bell).
-    const bellSource = notificationSource(user);
     const trigger = "-ml-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-muted transition-colors hover:bg-canvas-muted hover:text-ink";
     const control = "flex h-8 items-center gap-1.5 rounded-lg border border-border-strong bg-surface px-2.5 text-label-md text-ink-soft transition-colors hover:border-border-focus hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -49,6 +55,16 @@ export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: {
             >
                 <Icon name="panel_left" />
                 <span className="sr-only">Toggle sidebar</span>
+            </button>
+            <button
+                type="button"
+                onClick={() => navigate(-1)}
+                disabled={!canGoBack}
+                className={`${trigger} disabled:cursor-not-allowed disabled:opacity-50`}
+                title="Go back to the previous page"
+            >
+                <Icon name="arrow_back" />
+                <span className="sr-only">Back</span>
             </button>
             <span aria-hidden="true" className="mr-1 hidden h-4 w-px bg-border sm:block" />
 
@@ -86,8 +102,8 @@ export function Header({ onOpenMenu, menuOpen, collapsed, onToggleCollapsed }: {
                     <Icon name={theme === "dark" ? "light_mode" : "dark_mode"} className="size-4" />
                     <span className="sr-only">Dark mode</span>
                 </button>
-                {/* Every role has the bell; it reads only data the role may already open (never the Review Queue for a role without it). */}
-                {user && <NotificationBell source={bellSource} />}
+                {/* Every role has the bell: the server-side notification feed of the signed-in admin. */}
+                {user && <NotificationBell />}
             </div>
         </header>
     );

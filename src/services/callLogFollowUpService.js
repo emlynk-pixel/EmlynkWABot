@@ -27,6 +27,7 @@ import crypto from "node:crypto";
 
 import { clientName } from "../utils/clientName.js";
 import { CandidateError, documentStatusByCandidate } from "./candidateService.js";
+import { notifyNeedAttention } from "./notificationEvents.js";
 
 export const FOLLOW_UP_STATUS = Object.freeze({ OPEN: "OPEN", COMPLETED: "COMPLETED" });
 const STATUSES = Object.values(FOLLOW_UP_STATUS);
@@ -72,8 +73,9 @@ export async function flagCallLog({ db, actor, passportId, callLogId }) {
     const callLog = await db.candidateCallLog.findFirst({ where: { callLogId, passportId }, select: { callLogId: true } });
     if (!callLog) throw new CandidateError(404, "CALL_LOG_NOT_FOUND", "Call log not found");
     const exists = () => new CandidateError(409, "FOLLOW_UP_EXISTS", "This call is already marked for follow-up.");
+    let result;
     try {
-        return await db.$transaction(async (tx) => {
+        result = await db.$transaction(async (tx) => {
             const open = await tx.callLogFollowUp.findFirst({ where: { callLogId, status: FOLLOW_UP_STATUS.OPEN }, select: { followUpId: true } });
             if (open) throw exists();
             return { followUp: await openFollowUp(tx, { actor, passportId, callLogId }) };
@@ -82,6 +84,9 @@ export async function flagCallLog({ db, actor, passportId, callLogId }) {
         if (isUniqueViolation(error)) throw exists();
         throw error;
     }
+    // After the commit, best-effort (E2).
+    await notifyNeedAttention(db, { followUpId: result?.followUp?.followUpId, passportId, actorId: actor.adminId });
+    return result;
 }
 
 // The OPEN follow-up row and its audit entry, inside the caller's

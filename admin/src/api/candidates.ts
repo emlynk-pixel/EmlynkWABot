@@ -80,9 +80,17 @@ export type StageState = StageProgress & {
 // candidate data, never edited, never stored. VISA_NOT_GOING, CANCELLED and REJECTED are recorded final
 // outcomes (the import's VISA STATUS, or an Admin's final status) and outrank everything.
 export type WorkflowStatusCode =
-    | "REGISTERED" | "STOPPED_WITH_TEST" | "TEST_PASSED" | "JOB_ASSIGNED" | "FORM_SUBMITTED" | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED"
+    | "REGISTERED" | "STOPPED_WITH_TEST" | "TEST_PASSED" | "JOB_ASSIGNED" | "CANDIDATE_DETAILS_COLLECTED" | "FORM_SUBMITTED" | "CANDIDATE_DETAILS_VERIFIED" | "ADDITIONAL_DETAILS_COLLECTED"
+    | "DETAILS_VERIFIED" | "DOCUMENTS_VERIFIED"
     | "VISA_DOCUMENT_READY" | "VISA_SUBMITTED" | "VISA_APPROVED" | "DEPARTED" | "VISA_NOT_GOING" | "CANCELLED" | "REJECTED";
-export type WorkflowStatus = { code: WorkflowStatusCode; label: string };
+// While step 4 is partial, `group` is the main status (Candidate Details Verified) and `subStatus` the part
+// reached; `code` stays the flat code the ?workflowStatus= filter uses.
+export type WorkflowStatus = {
+    code: WorkflowStatusCode;
+    label: string;
+    group?: { code: WorkflowStatusCode; label: string };
+    subStatus?: { code: WorkflowStatusCode; label: string };
+};
 
 // A recorded final status (src/services/candidateFinalStatusService.js): Departed, or an outcome. ADMIN only.
 export const FINAL_STATUS_OPTIONS = [
@@ -375,6 +383,14 @@ export const MARITAL_STATUS_OPTIONS = [
 // The Candidate Form's choices (candidateFormDataService.js), stored as these codes.
 export const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
 export const ENGLISH_LEVELS = ["NO KNOWLEDGE", "BASIC", "FAIR", "GOOD", "VERY GOOD", "FLUENT"] as const;
+// Stored codes stay as they are; admins see these labels (display only, the API takes codes).
+export const ENGLISH_LEVEL_LABELS: Record<string, string> = {
+    "NO KNOWLEDGE": "NO KNOWLEDGE", BASIC: "ENGLISH 6", FAIR: "ENGLISH 7", GOOD: "ENGLISH 8", "VERY GOOD": "ENGLISH 9", FLUENT: "ENGLISH 10",
+};
+export function englishLevelLabel(code: string | null | undefined): string {
+    const value = (code ?? "").trim();
+    return value === "" ? "" : ENGLISH_LEVEL_LABELS[value] ?? value;
+}
 
 // Dates as YYYY-MM-DD; every field may be null (collected over time).
 export type AdditionalDetails = {

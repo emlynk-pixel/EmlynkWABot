@@ -396,12 +396,12 @@ describe("Daily Report", () => {
 });
 
 describe("forbidden areas (backend enforced)", () => {
-    test("no Settings, Sheet Sync, import, Audit Logs, dashboards, review, police or monthly report", async () => {
+    test("no Settings, Sheet Sync, import, Audit Logs, dashboards, review or police", async () => {
         for (const [method, path, body] of [
             ["GET", "/settings/sheet-sync/status"], ["POST", "/settings/sheet-sync/run", {}], ["POST", "/settings/sheet-sync/test", {}],
             ["POST", "/settings/sheet-sync/import/preview", {}], ["GET", "/audit-logs"],
-            ["GET", "/overview"], ["GET", "/documents"], ["GET", "/documents/missing"], ["GET", "/clients"], ["GET", `/clients/${FREE}`],
-            ["GET", "/review"], ["POST", "/review/pending-x/approve", {}], ["GET", "/police"], ["GET", "/reports/monthly"],
+            ["GET", "/documents"], ["GET", "/documents/missing"], ["GET", "/clients"], ["GET", `/clients/${FREE}`],
+            ["GET", "/review"], ["POST", "/review/pending-x/approve", {}], ["GET", "/police"],
             ["POST", `/documents/${NO_ID}/police-date`, {}], ["DELETE", `/temporary-documents/${NO_ID}`],
         ]) forbidden(await api(TL, method, path, body), `${method} ${path}`);
     });
@@ -413,9 +413,9 @@ const P = "ZZ0000009";
 const REVIEW = "pending-11111111-1111-4111-8111-111111111111";
 const TEAM_LEAD_ROUTES = [
     // [method, path, TEAM_LEAD allowed?]
-    ["GET", "/overview", false], ["GET", "/documents/missing", false], ["GET", "/documents", false], ["GET", "/clients", false],
+    ["GET", "/overview", true], ["GET", "/documents/missing", false], ["GET", "/documents", false], ["GET", "/clients", false],
     ["GET", "/reports/daily", true], ["GET", "/reports/daily/summary", true], ["GET", "/reports/daily/incomplete", true],
-    ["GET", "/reports/daily/roles?role=ANALYST", false], ["GET", "/reports/daily/roles?role=ADMIN", false], ["GET", "/reports/monthly", false],
+    ["GET", "/reports/daily/roles?role=ANALYST", false], ["GET", "/reports/daily/roles?role=ADMIN", false],
     ["GET", `/clients/${P}`, false], ["GET", "/review", false], ["GET", "/police", false],
     ["GET", `/review/${REVIEW}`, false], ["GET", `/review/${REVIEW}/file`, false],
     ["POST", `/review/${REVIEW}/approve`, false], ["POST", `/review/${REVIEW}/keep-pending`, false], ["POST", `/review/${REVIEW}/remove`, false],

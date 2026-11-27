@@ -1,34 +1,152 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, test } from "vitest";
-import { CLIENT_DETAILS, OVERVIEW, documentList, makeDocument, renderApp, signedInBackend, stubBackend, SESSION_TOKEN, fakeAuth, renderAppSignedIn, RENDER_STEP } from "./helpers";
+import { CLIENT_DETAILS, OVERVIEW, documentList, makeDocument, renderApp, signedInBackend, stubBackend, SESSION_TOKEN, fakeAuth, renderAppSignedIn, RENDER_STEP, userWithRole, type FetchRoutes } from "./helpers";
 
 const lastRequest = (calls: { path: string }[], prefix: string) => [...calls].reverse().find((c) => c.path.startsWith(prefix));
 
+// The role-scoped Overview tab (GET /api/admin/overview). Synthetic figures only.
+const ZERO_OVERVIEW = {
+    ...OVERVIEW,
+    overview: {
+        activeAllocated: 0, jobAllocated: 0, policeReportsYetToReceive: { total: 0, byVariant: { ROMANIA: 0, SL_VERIFIED: 0 } },
+        agreementsYetToReceive: 0, detailsNotCompleted: 0, newlyAllocated: 0, visaSubmissionCompleted: 0,
+    },
+    daily: { formSubmissions: 0, newlyAllocated: 0, callsTaken: 0 },
+};
+const OVERVIEW_LABELS = ["Active Allocated Candidates", "Job Allocated Candidates", "Police reports", "Agreements", "Candidate details", "Newly allocated", "Visa submission completed"];
+const DAILY_LABELS = ["Form submissions", "New allocated candidates", "Calls taken"];
+// A card's big number: the paragraph right after the card's label.
+const cardValue = (label: string) => screen.getByText(label, { selector: "p" }).nextElementSibling?.textContent;
+const overviewCalls = (calls: { path: string }[]) => calls.filter((c) => c.path.startsWith("/api/admin/overview"));
+const viewParam = (path: string) => new URL(path, "http://x").searchParams.get("view");
+const asRole = (role: string, body: unknown, routes: FetchRoutes = {}) =>
+    signedInBackend({ "GET /auth/me": { status: 200, body: { user: userWithRole(role) } }, "GET /api/admin/overview": { status: 200, body }, ...routes });
+
 describe("Overview", () => {
-    test("renders KPIs, summaries, recent documents and the review queue from the API", async () => {
+    test("renders the 7 Overview cards and the 3 Daily cards from the API", async () => {
         const { calls } = signedInBackend();
         renderApp("/");
 
         expect(await screen.findByText("1,428")).toBeInTheDocument();
-        expect(screen.getByText("8,942")).toBeInTheDocument();
-        expect(screen.getByText("42")).toBeInTheDocument();
-        expect(screen.getByRole("heading", { name: "Review queue — 17 items" })).toBeInTheDocument();
-        expect(screen.getByText("Document processing statuses")).toBeInTheDocument();
-        expect(screen.getByText("(75.0%)")).toBeInTheDocument(); // 30 of 40 verified
+        expect(screen.getByRole("heading", { name: "Overview", level: 2 })).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "Daily Overview", level: 2 })).toBeInTheDocument();
+        expect(screen.getByText("Today's updates · 25 Sept 2026")).toBeInTheDocument();
+        expect(screen.getByText("Welcome, Test Admin. Current figures; Sri Lanka time.")).toBeInTheDocument();
 
-        const recent = screen.getByRole("table", { name: "Recent documents" });
-        expect(within(recent).getAllByRole("row")).toHaveLength(3);
-        expect(within(recent).getByText("3F2B8C1E")).toBeInTheDocument();
-        expect(within(recent).getByText("52.3%")).toBeInTheDocument();
-        expect(within(recent).getAllByText("KAMAL NIMAL PERERA")).toHaveLength(2);
+        expect(OVERVIEW_LABELS.map(cardValue)).toEqual(["1,428", "312", "57", "44", "91", "13", "208"]);
+        expect(DAILY_LABELS.map(cardValue)).toEqual(["27", "9", "64"]);
+        expect(screen.getByText("Yet to receive · Romania 21 · SL 36")).toBeInTheDocument();
+        expect(screen.getByText("Yet to receive (job allocated only)")).toBeInTheDocument();
+        expect(screen.getByText("Visa Submission stage completed")).toBeInTheDocument();
 
-        const queue = screen.getByRole("table", { name: "Latest files waiting for review" });
-        expect(within(queue).getByText("Police slip")).toBeInTheDocument();
-        expect(within(queue).getByText("Manual review")).toBeInTheDocument();
-
-        const request = lastRequest(calls, "/api/admin/overview")!;
+        const request = overviewCalls(calls).at(-1)!;
         expect((request as unknown as { headers: Record<string, string> }).headers.Authorization).toBe(`Bearer ${SESSION_TOKEN}`);
+        expect(viewParam(request.path)).toBeNull(); // an Admin sends no view
+    });
+
+    test("zeros are shown as 0 on every card", async () => {
+        signedInBackend({ "GET /api/admin/overview": { status: 200, body: ZERO_OVERVIEW } });
+        renderApp("/");
+        await screen.findByText("Active Allocated Candidates");
+        expect([...OVERVIEW_LABELS, ...DAILY_LABELS].map(cardValue)).toEqual(Array(10).fill("0"));
+        expect(screen.getByText("Yet to receive · Romania 0 · SL 0")).toBeInTheDocument();
+    });
+
+    test("only the new cards: no client text, no Monthly overview, no old dashboard cards or links", async () => {
+        signedInBackend();
+        renderApp("/");
+        await screen.findByText("1,428");
+        const page = screen.getByRole("heading", { name: "Overview", level: 1 }).closest("section")!;
+        expect(page.textContent).not.toMatch(/client/i);
+        for (const el of page.querySelectorAll("[aria-label]")) expect(el.getAttribute("aria-label")).not.toMatch(/client/i);
+        for (const gone of ["Monthly overview", "Client documents", "Total clients", "Total documents", "Pending review", "Received today", "Recent documents", "Document processing statuses", "Review queue", "Police due", "Daily Report"]) {
+            expect(within(page).queryByText(gone, { exact: false }), gone).toBeNull();
+        }
+        expect(within(page).queryByRole("button", { name: "Monthly overview" })).toBeNull();
+        expect(within(page).queryAllByRole("link")).toHaveLength(0);
+        expect(within(page).queryAllByRole("table")).toHaveLength(0);
+        expect(within(page).queryByRole("group", { name: "Overview view" })).toBeNull(); // Admin: no choice
+    });
+
+    test("Team Lead: My Overview by default; Full Overview requests view=full", async () => {
+        const mine = { ...OVERVIEW, view: "mine", canChooseView: true };
+        const full = { ...OVERVIEW, view: "full", canChooseView: true, overview: { ...OVERVIEW.overview, activeAllocated: 5000 } };
+        const { calls } = asRole("TEAM_LEAD", mine, {
+            "GET /api/admin/overview": (url: URL) => ({ status: 200, body: url.searchParams.get("view") === "full" ? full : mine }),
+        });
+        renderApp("/");
+        expect(await screen.findByText("1,428")).toBeInTheDocument();
+        const chooser = screen.getByRole("group", { name: "Overview view" });
+        expect(within(chooser).getByRole("button", { name: "My Overview" })).toHaveAttribute("aria-pressed", "true");
+        expect(within(chooser).getByRole("button", { name: "Full Overview" })).toHaveAttribute("aria-pressed", "false");
+        expect(overviewCalls(calls).map((c) => viewParam(c.path))).toEqual(["mine"]);
+
+        await userEvent.setup().click(within(chooser).getByRole("button", { name: "Full Overview" }));
+        expect(await screen.findByText("5,000")).toBeInTheDocument();
+        expect(viewParam(overviewCalls(calls).at(-1)!.path)).toBe("full");
+        expect(within(screen.getByRole("group", { name: "Overview view" })).getByRole("button", { name: "Full Overview" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    test("Team Lead: while Full Overview loads, My Overview's figures are not shown under it", async () => {
+        const mine = { ...OVERVIEW, view: "mine", canChooseView: true };
+        const full = { ...OVERVIEW, view: "full", canChooseView: true, overview: { ...OVERVIEW.overview, activeAllocated: 5000 } };
+        let release: (value: { status: number; body: unknown }) => void = () => {};
+        asRole("TEAM_LEAD", mine, {
+            "GET /api/admin/overview": (url: URL) =>
+                url.searchParams.get("view") === "full" ? new Promise((resolve) => { release = resolve; }) : { status: 200, body: mine },
+        });
+        renderApp("/");
+        expect(await screen.findByText("1,428")).toBeInTheDocument();
+        await userEvent.setup().click(screen.getByRole("button", { name: "Full Overview" }));
+        expect(await screen.findByText("Loading overview…")).toBeInTheDocument();
+        expect(screen.queryByText("1,428")).toBeNull();
+        expect(screen.queryByText("Active Allocated Candidates")).toBeNull();
+        release({ status: 200, body: full });
+        expect(await screen.findByText("5,000")).toBeInTheDocument();
+        expect(screen.queryByText("Loading overview…")).toBeNull();
+    });
+
+    test("Team Lead: a failed Full Overview shows the error with a retry, not My Overview's figures", async () => {
+        const mine = { ...OVERVIEW, view: "mine", canChooseView: true };
+        const full = { ...OVERVIEW, view: "full", canChooseView: true, overview: { ...OVERVIEW.overview, activeAllocated: 5000 } };
+        let fail = true;
+        const { calls } = asRole("TEAM_LEAD", mine, {
+            "GET /api/admin/overview": (url: URL) =>
+                url.searchParams.get("view") === "full" ? (fail ? { status: 500, body: { message: "boom" } } : { status: 200, body: full }) : { status: 200, body: mine },
+        });
+        renderApp("/");
+        expect(await screen.findByText("1,428")).toBeInTheDocument();
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("button", { name: "Full Overview" }));
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Something went wrong. Please try again.");
+        expect(screen.queryByText("1,428")).toBeNull();
+        expect(screen.queryByText("Active Allocated Candidates")).toBeNull();
+        // The choice stays visible and on Full Overview, so the Team Lead can retry or switch back.
+        expect(screen.getByRole("button", { name: "Full Overview" })).toHaveAttribute("aria-pressed", "true");
+        fail = false;
+        await user.click(within(alert).getByRole("button", { name: "Try again" }));
+        expect(await screen.findByText("5,000")).toBeInTheDocument();
+        expect(viewParam(overviewCalls(calls).at(-1)!.path)).toBe("full");
+    });
+
+    test("Analyst: no view choice and never sends a view", async () => {
+        const { calls } = asRole("ANALYST", { ...OVERVIEW, view: "mine", canChooseView: false });
+        renderApp("/");
+        expect(await screen.findByText("1,428")).toBeInTheDocument();
+        expect(screen.queryByRole("group", { name: "Overview view" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Full Overview" })).toBeNull();
+        expect(overviewCalls(calls).map((c) => viewParam(c.path))).toEqual([null]);
+    });
+
+    test("Refresh reloads the figures", async () => {
+        const { calls } = signedInBackend();
+        renderApp("/");
+        await screen.findByText("1,428");
+        const before = overviewCalls(calls).length;
+        await userEvent.setup().click(screen.getByRole("button", { name: "Refresh" }));
+        await waitFor(() => expect(overviewCalls(calls).length).toBe(before + 1));
     });
 
     test("shows a loading state first", async () => {
@@ -50,19 +168,6 @@ describe("Overview", () => {
         fail = false;
         await userEvent.setup().click(within(alert).getByRole("button", { name: "Try again" }));
         expect(await screen.findByText("1,428")).toBeInTheDocument();
-    });
-
-    test("empty data -> empty states instead of blank tables", async () => {
-        signedInBackend({
-            "GET /api/admin/overview": {
-                status: 200,
-                body: { ...OVERVIEW, submissionsByStatus: {}, submissionsByType: {}, recentDocuments: [], reviewQueue: { total: 0, pendingFiles: 0, reviewRequiredDocuments: 0, pendingByStatus: {}, items: [] } },
-            },
-        });
-        renderApp("/");
-        expect(await screen.findByText("No documents stored yet")).toBeInTheDocument();
-        expect(screen.getByText("Nothing waiting for review")).toBeInTheDocument();
-        expect(screen.getAllByText("No submissions yet")).toHaveLength(2);
     });
 
     test("a 401 from the API (session ended) signs the admin out", async () => {

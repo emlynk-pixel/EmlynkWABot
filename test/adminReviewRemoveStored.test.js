@@ -115,12 +115,11 @@ describe("A: Remove from Review for a stored REVIEW_REQUIRED document", () => {
         assert.equal("fileSha256" in response.body.audit, false, "checksum never returned");
     });
 
-    test("afterwards: gone from the queue and the Overview count; detail 404; the entry can't be changed", async () => {
+    test("afterwards: gone from the queue and its Pending review count; detail 404; the entry can't be changed", async () => {
         const { db } = use(setup());
         assert.equal((await call("GET", "/review")).body.summary.total, 1);
         await remove(`document-${REVIEW_ID}`);
         assert.equal((await call("GET", "/review")).body.summary.total, 0);
-        assert.equal((await call("GET", "/overview")).body.kpis.pendingReview, 0);
         assert.equal((await call("GET", `/review/document-${REVIEW_ID}`)).status, 404);
         assert.equal((await remove(`document-${REVIEW_ID}`)).status, 404, "no second removal");
         await assert.rejects(db.client.auditLog.delete({ where: { auditId: db.tables.auditLog[0].auditId } }), /append-only/);

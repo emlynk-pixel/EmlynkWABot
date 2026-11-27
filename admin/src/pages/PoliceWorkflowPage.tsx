@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 import { getPoliceWorkflow, type PoliceListParams, type PoliceStatus } from "../api/admin";
 import { useAdminResource } from "../api/useAdminResource";
+import { useDiscardRestoredOnBadRequest, useRememberedSearchParams } from "../hooks/useRememberedSearchParams";
 import { formatDay, formatNumber } from "../components/format";
 import { Icon, type IconName } from "../components/Icon";
 import { POLICE_STATUSES, daysLeftLabel, policeStatusLabel } from "../components/policeLabels";
@@ -11,6 +12,9 @@ import { filterControl, tableCell, tableHead } from "../components/ui";
 
 const PAGE_SIZE = 25;
 const STATUS_VALUES = POLICE_STATUSES.map((s) => s.status);
+
+// The filters remembered for the next visit (hooks/useRememberedSearchParams.ts).
+const REMEMBERED_KEYS = ["status", "search"];
 
 function paramsFrom(search: URLSearchParams): PoliceListParams {
     const page = Number(search.get("page"));
@@ -46,10 +50,11 @@ function StatCard({ label, value, icon, status, active, onSelect }: { label: str
 // final police report of every client, calculated by the backend. Read-only;
 // the search only narrows the list (passport ID, unique ID or name).
 export function PoliceWorkflowPage() {
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams, setSearchParams, remembered] = useRememberedSearchParams("police", REMEMBERED_KEYS);
     const params = paramsFrom(searchParams);
     const key = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString();
     const list = useAdminResource(`police?${key}`, (token, signal) => getPoliceWorkflow(token, params, signal));
+    useDiscardRestoredOnBadRequest(list, remembered);
 
     const update = (changes: Record<string, string | undefined>, { keepPage = false } = {}) => {
         const next = new URLSearchParams(searchParams);

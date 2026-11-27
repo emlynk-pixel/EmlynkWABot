@@ -171,7 +171,7 @@ async function call(method, path, body) {
 }
 
 describe("M4 admin review", () => {
-    test("the duplicate is in the Review Queue and the Overview's Pending review count", async () => {
+    test("the duplicate is in the Review Queue and its Pending review count", async () => {
         use(setup());
         const queue = await call("GET", "/review");
         assert.equal(queue.body.items.length, 1);
@@ -179,7 +179,7 @@ describe("M4 admin review", () => {
         assert.deepEqual([item.reviewId, item.kind, item.documentType, item.processingStatus, item.reviewReason, item.client.passportId],
             [`pending-${T}`, "PENDING", "PASSPORT", "DUPLICATE", "DUPLICATE_OF_VERIFIED", "N1234567"]);
         assert.equal((await call("GET", "/review?reviewReason=DUPLICATE_OF_VERIFIED")).body.items.length, 1);
-        assert.equal((await call("GET", "/overview")).body.kpis.pendingReview, 1);
+        assert.equal(queue.body.summary.total, 1);
     });
 
     test("TEST 5: Review Detail explains the duplicate and names the existing verified document; Approve blocked with the reason", async () => {

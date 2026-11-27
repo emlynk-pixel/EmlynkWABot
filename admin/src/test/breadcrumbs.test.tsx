@@ -84,7 +84,7 @@ describe("BREADCRUMB-002: the links navigate", () => {
         expect(await screen.findByRole("table", { name: "Agents" }, RENDER_STEP)).toBeInTheDocument();
         await waitFor(() => expect(crumbs()).toEqual(["Admin", "Agents"]), RENDER_STEP);
         await user.click(within(breadcrumb()).getByRole("link", { name: "Admin" }));
-        expect(await screen.findByRole("list", { name: "Clients by completeness" }, RENDER_STEP)).toBeInTheDocument();
+        expect(await screen.findByText("Active Allocated Candidates", {}, RENDER_STEP)).toBeInTheDocument();
         await waitFor(() => expect(crumbs()).toEqual(["Admin", "Overview"]), RENDER_STEP);
     });
 

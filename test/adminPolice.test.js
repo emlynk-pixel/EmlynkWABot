@@ -223,10 +223,10 @@ describe("GET /api/admin/police", () => {
         assert.deepEqual(calls.map((c) => c.method).sort(), ["candidate.findMany", "document.findMany", "temporaryData.groupBy"]);
     });
 
-    test("overview counts police reports due soon, due today and overdue", async () => {
-        const { status, body } = await http.call("GET", "/overview");
+    test("the Daily Report counts police reports due soon, due today and overdue", async () => {
+        const { status, body } = await http.call("GET", "/reports/daily");
         assert.equal(status, 200);
-        assert.deepEqual(body.police, { dueSoon: 1, dueToday: 1, overdue: 1, missingSlipDate: 1, notUploaded: 1 });
+        assert.deepEqual(body.current.police, { dueSoon: 1, dueToday: 1, overdue: 1, missingSlipDate: 1, notUploaded: 1 });
     });
 
     test("client details carry the countdown", async () => {

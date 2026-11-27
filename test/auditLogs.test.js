@@ -379,7 +379,8 @@ describe("GET /api/admin/audit-logs", () => {
         await seed();
         const router = createAdminRouter({ db: prisma, requireAdmin: (req, res, next) => next(), apiLimiter: noRateLimit });
         const auditRoutes = router.stack.filter((layer) => layer.route?.path.includes("audit")).map((layer) => [layer.route.path, Object.keys(layer.route.methods)]);
-        assert.deepEqual(auditRoutes, [["/audit-logs", ["get"]]]);
+        // The export is a POST (its filters are a JSON body) but only reads (auditLogExport.test.js).
+        assert.deepEqual(auditRoutes, [["/audit-logs", ["get"]], ["/audit-logs/export", ["post"]]]);
         await withServer("ADMIN", async (call) => {
             const [entry] = (await call("/audit-logs?pageSize=1")).body.items;
             for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {

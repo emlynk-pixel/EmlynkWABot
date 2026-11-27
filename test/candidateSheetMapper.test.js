@@ -234,6 +234,11 @@ describe("candidate -> Sheet row", () => {
         assert.equal(map({ user: user() }).at(SHEET_COLUMNS.find((c) => c.header === "FULL NAME").index), "", "no details: blank, never derived from the two names");
     });
 
+    test("ENGLISH KNOWLEDGE is mirrored as the admins' label: GOOD as ENGLISH 8, NO KNOWLEDGE as it is", () => {
+        const english = (englishKnowledge) => map({ user: user(), details: { englishKnowledge } })[SHEET_COLUMNS.find((c) => c.header === "ENGLISH KNOWLEDGE").index];
+        assert.deepEqual(["GOOD", "BASIC", "FLUENT", "NO KNOWLEDGE", null].map(english), ["ENGLISH 8", "ENGLISH 6", "ENGLISH 10", "NO KNOWLEDGE", ""]);
+    });
+
     test("stage statuses: stored stages as saved, automatic stages from the record", () => {
         const complete = [
             doc("PASSPORT"), doc("MEDICAL"), doc("SCAN"),

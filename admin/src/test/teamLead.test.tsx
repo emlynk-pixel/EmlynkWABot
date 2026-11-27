@@ -67,17 +67,17 @@ describe("roles.ts", () => {
 });
 
 describe("TEAM_LEAD in the admin app", () => {
-    test("the sidebar has exactly the operational areas and lands on Candidates", { timeout: 20_000 }, async () => {
+    test("the sidebar has the Overview and exactly the operational areas, and lands on the Overview", { timeout: 20_000 }, async () => {
         const { calls } = backend();
         renderApp("/");
-        await screen.findByRole("navigation", { name: "Main navigation" }, RENDER_STEP);
-        await waitFor(() => expect(calls.some((c) => c.path.startsWith("/api/admin/candidates"))).toBe(true), RENDER_STEP);
-        expect(navLinks()).toEqual(["Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Daily Report"]);
-        for (const name of ["Overview", "Documents", "Review Queue", "Missing Documents", "Police Workflow", "Audit Logs", "Settings"]) {
+        await expectRedirectedHome("TEAM_LEAD");
+        await waitFor(() => expect(calls.some((c) => c.path === "/api/admin/overview?view=mine")).toBe(true), RENDER_STEP);
+        expect(navLinks()).toEqual(["Overview", "Candidates", "Need Attention", "Work Allocation", "Jobs", "Agents", "Client Management", "Daily Report"]);
+        for (const name of ["Documents", "Review Queue", "Missing Documents", "Police Workflow", "Audit Logs", "Settings"]) {
             expect(within(screen.getByRole("navigation", { name: "Main navigation" })).queryByRole("link", { name })).not.toBeInTheDocument();
         }
         expect(screen.getByText("Team Lead")).toBeInTheDocument();
-        expect(calls.some((c) => c.path.startsWith("/api/admin/overview") || c.path.startsWith("/api/admin/review"))).toBe(false);
+        expect(calls.some((c) => c.path.startsWith("/api/admin/review"))).toBe(false);
     });
 
     test("Settings, Audit Logs and the dashboard pages are blocked, with no request for their data", { timeout: 60_000 }, async () => {
@@ -85,7 +85,7 @@ describe("TEAM_LEAD in the admin app", () => {
             const { calls } = backend();
             const { unmount } = renderApp(path);
             await expectRedirectedHome("TEAM_LEAD");
-            expect(calls.some((c) => /\/api\/admin\/(users|settings|audit-logs|documents|review|police|clients|overview)/.test(c.path)), path).toBe(false);
+            expect(calls.some((c) => /\/api\/admin\/(users|settings|audit-logs|documents|review|police|clients)/.test(c.path)), path).toBe(false);
             unmount();
         }
     });
